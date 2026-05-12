@@ -1,0 +1,533 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,ital@9..144,400..900,0;9..144,400..900,1&family=Patrick+Hand&family=Caveat:wght@500;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  /* === Construction Paper Collage palette === */
+  --paper:        #F1E4C8;   /* craft paper base */
+  --paper-light:  #FAF1DA;   /* lighter paper for cards/inputs */
+  --paper-deep:   #E8D9B5;   /* hover state */
+  --ink:          #1F1A12;
+  --ink-soft:     #4A3F2C;
+  --ink-faint:    #756A4F;
+
+  --red:          #E04A3F;
+  --red-deep:     #B83A30;
+  --yellow:       #F2C744;
+  --yellow-deep:  #D9AC2D;
+  --blue:         #2F75C9;
+  --blue-deep:    #225BA0;
+  --green:        #4FA764;
+  --green-deep:   #3F8552;
+  --orange:       #EA8534;
+  --pink:         #F49AB6;
+
+  --tape:         rgba(255, 230, 140, 0.72);
+  --tape-deep:    rgba(255, 210, 100, 0.85);
+  --shadow-paper: 0 6px 0 rgba(31, 26, 18, 0.12);
+  --shadow-card:  0 12px 28px -10px rgba(31, 26, 18, 0.18);
+
+  /* Legacy aliases (existing component code uses these) */
+  --primary:        var(--blue);
+  --primary-light:  #5994DA;
+  --primary-dark:   var(--blue-deep);
+  --secondary:      var(--yellow);
+  --success:        var(--green);
+  --danger:         var(--red);
+  --warning:        var(--orange);
+  --info:           var(--blue);
+  --bg:             var(--paper);
+  --white:          var(--paper-light);
+  --text:           var(--ink);
+  --text-light:     var(--ink-soft);
+  --border:         rgba(31, 26, 18, 0.18);
+  --shadow:         var(--shadow-paper);
+  --shadow-md:      var(--shadow-card);
+  --radius:         0px;
+  --radius-lg:      0px;
+
+  /* Typography */
+  --display: 'Fraunces', 'Times New Roman', serif;
+  --body:    'Patrick Hand', cursive;
+  --accent:  'Caveat', cursive;
+  --mono:    'JetBrains Mono', ui-monospace, monospace;
+
+  /* Cut-paper clip-paths — each one is a slightly different scissor-edge irregularity */
+  --cut-1: polygon(0 6%, 8% 0, 92% 3%, 100% 12%, 98% 92%, 90% 100%, 4% 96%, 0 86%);
+  --cut-2: polygon(0 4%, 6% 0, 94% 6%, 100% 14%, 99% 88%, 94% 100%, 6% 96%, 1% 90%);
+  --cut-3: polygon(0 8%, 12% 0, 88% 4%, 100% 18%, 98% 90%, 92% 100%, 8% 95%, 0 85%);
+  --cut-4: polygon(2% 4%, 10% 0, 90% 6%, 100% 16%, 96% 90%, 88% 100%, 8% 96%, 0 88%);
+  --cut-pill: polygon(0 14%, 8% 0, 94% 4%, 100% 20%, 98% 80%, 92% 100%, 6% 96%, 0 82%);
+}
+
+html, body { background: var(--paper); color: var(--ink); }
+
+/* Subtle craft-paper grain (radial dots) */
+body {
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.55;
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(31, 26, 18, 0.045) 0, transparent 1.5px),
+    radial-gradient(circle at 70% 60%, rgba(31, 26, 18, 0.035) 0, transparent 1.4px),
+    radial-gradient(circle at 50% 85%, rgba(31, 26, 18, 0.04) 0, transparent 1.5px);
+  background-size: 8px 8px, 12px 12px, 10px 10px;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+a { text-decoration: none; color: inherit; }
+button { cursor: pointer; font-family: inherit; border: none; outline: none; background: none; color: inherit; }
+input, select, textarea { font-family: inherit; outline: none; color: inherit; background: transparent; }
+
+/* === Typography === */
+.serif   { font-family: var(--display); }
+.body    { font-family: var(--body); }
+.accent  { font-family: var(--accent); }
+.mono    { font-family: var(--mono); }
+.tnum    { font-variant-numeric: tabular-nums; }
+
+h1, h2, h3, h4 {
+  font-family: var(--display);
+  font-weight: 900;
+  line-height: 1.0;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+h1 { font-size: clamp(48px, 6.5vw, 96px); }
+h2 { font-size: clamp(36px, 4vw, 64px); }
+h3 { font-size: clamp(22px, 2vw, 32px); }
+h4 { font-size: 19px; }
+
+p { color: var(--ink); font-size: 17px; }
+
+/* === Eyebrow / labels in handwriting === */
+.eyebrow {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--red);
+  display: inline-block;
+  transform: rotate(-2deg);
+}
+.tag-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* === Cut-paper shape utilities === */
+.cut-1 { clip-path: var(--cut-1); }
+.cut-2 { clip-path: var(--cut-2); }
+.cut-3 { clip-path: var(--cut-3); }
+.cut-4 { clip-path: var(--cut-4); }
+.cut-pill { clip-path: var(--cut-pill); }
+
+/* Word block — used inside h1 .word.<color> */
+.word {
+  display: inline-block;
+  padding: 0.05em 0.35em;
+  margin: 0 0.12em 0.18em 0;
+  color: var(--paper-light);
+  background: var(--ink);
+  clip-path: var(--cut-1);
+  font-family: var(--display);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}
+.word.r { background: var(--red);    transform: rotate(2deg); }
+.word.y { background: var(--yellow); color: var(--ink); transform: rotate(-2deg); clip-path: var(--cut-2); }
+.word.b { background: var(--blue);   transform: rotate(1deg); clip-path: var(--cut-3); }
+.word.g { background: var(--green);  transform: rotate(-1deg); clip-path: var(--cut-2); }
+.word.o { background: var(--orange); transform: rotate(2deg); clip-path: var(--cut-4); }
+.word.k { background: var(--ink);    transform: rotate(-1deg); }
+.word.p { background: var(--paper-light); color: var(--ink); transform: rotate(1deg); clip-path: var(--cut-3); }
+
+/* === Buttons === */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 26px;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: var(--paper-light);
+  background: var(--ink);
+  clip-path: var(--cut-1);
+  border: none;
+  transition: transform 0.18s cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+.btn:hover { transform: translateY(-2px) rotate(-1deg); }
+.btn:active { transform: translateY(0) rotate(0); }
+
+.btn-primary  { background: var(--ink); color: var(--paper-light); }
+.btn-primary:hover { background: var(--ink); }
+.btn-secondary{ background: var(--blue); color: var(--paper-light); }
+.btn-danger   { background: var(--red); color: var(--paper-light); }
+.btn-warm     { background: var(--orange); color: var(--paper-light); }
+.btn-yellow   { background: var(--yellow); color: var(--ink); }
+.btn-green    { background: var(--green); color: var(--paper-light); }
+.btn-outline  { background: var(--paper-light); color: var(--ink); border: 2px solid var(--ink); clip-path: var(--cut-2); }
+.btn-outline:hover { background: var(--paper); }
+
+.btn:disabled, .btn[disabled] { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+/* Pencil link — Caveat with hand-drawn underline */
+.pencil-link {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--blue);
+  position: relative;
+  display: inline-block;
+  padding-bottom: 4px;
+}
+.pencil-link::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 3px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 4'%3E%3Cpath d='M0 2 Q 25 0 50 2 T 100 2' stroke='%232F75C9' stroke-width='2' fill='none'/%3E%3C/svg%3E");
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  transform: scaleX(0); transform-origin: left;
+  transition: transform 0.4s cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+.pencil-link:hover::after { transform: scaleX(1); }
+
+/* === Badges (status pills as little colored paper tags) === */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 16px;
+  padding: 4px 14px;
+  color: var(--paper-light);
+  background: var(--green);
+  clip-path: var(--cut-pill);
+  letter-spacing: 0.01em;
+  transform: rotate(-2deg);
+  line-height: 1.25;
+}
+.badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,0.6); }
+.badge-present  { background: var(--green); transform: rotate(-2deg); }
+.badge-absent   { background: var(--red);   transform: rotate(2deg); }
+.badge-late     { background: var(--orange);transform: rotate(-1deg); }
+.badge-info     { background: var(--blue);  transform: rotate(1deg); }
+.badge-yellow   { background: var(--yellow); color: var(--ink); transform: rotate(-2deg); }
+.badge-yellow::before { background: rgba(31,26,18,0.5); }
+
+/* === Year Badge (header context indicator) === */
+.year-badge {
+  display: inline-block;
+  font-family: var(--accent);
+  font-size: 0.55em;
+  font-weight: 700;
+  color: #fff;
+  background: var(--blue);
+  padding: 2px 12px;
+  border-radius: 12px;
+  margin-left: 12px;
+  vertical-align: middle;
+  letter-spacing: 0.5px;
+  transform: rotate(-1deg);
+  box-shadow: 1px 2px 0 rgba(31, 26, 18, 0.15);
+}
+.year-badge-all {
+  background: var(--ink);
+  opacity: 0.6;
+  font-size: 0.45em;
+}
+
+/* Pencil-link inside tables and card headings: inherit font size */
+table .pencil-link,
+.student-name .pencil-link {
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+/* === Cards as cut paper === */
+.card {
+  background: var(--paper-light);
+  padding: 28px 32px;
+  clip-path: var(--cut-2);
+  position: relative;
+  box-shadow: var(--shadow-paper);
+}
+/* When you want cards to be slightly tilted (use sparingly) */
+.card.tilt-l { transform: rotate(-1deg); }
+.card.tilt-r { transform: rotate(1deg); }
+
+/* Stat cell — cut paper rectangle with big serif numeral */
+.stat-card {
+  background: var(--paper-light);
+  padding: 28px;
+  clip-path: var(--cut-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+.stat-card .icon-box { display: none; }
+.stat-card .stat-info { width: 100%; }
+.stat-card .stat-info h3 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 80px;
+  line-height: 0.85;
+  color: var(--ink);
+  letter-spacing: -0.03em;
+}
+.stat-card .stat-info p {
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink-soft);
+  margin-top: 4px;
+}
+
+/* Stat colour variants */
+.stat-card.s-red    { background: var(--red);    color: var(--paper-light); }
+.stat-card.s-red    .stat-info h3, .stat-card.s-red    .stat-info p { color: var(--paper-light); }
+.stat-card.s-yellow { background: var(--yellow); }
+.stat-card.s-blue   { background: var(--blue);   color: var(--paper-light); }
+.stat-card.s-blue   .stat-info h3, .stat-card.s-blue   .stat-info p { color: var(--paper-light); }
+.stat-card.s-green  { background: var(--green);  color: var(--paper-light); }
+.stat-card.s-green  .stat-info h3, .stat-card.s-green  .stat-info p { color: var(--paper-light); }
+.stat-card.s-orange { background: var(--orange); color: var(--paper-light); }
+.stat-card.s-orange .stat-info h3, .stat-card.s-orange .stat-info p { color: var(--paper-light); }
+
+/* Masking tape strip — use as a decorative absolutely-positioned div */
+.tape {
+  position: absolute;
+  width: 90px; height: 26px;
+  background: var(--tape);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  pointer-events: none;
+  z-index: 2;
+}
+.tape.tl { top: -10px; left: 14px; transform: rotate(-12deg); }
+.tape.tr { top: -10px; right: 14px; transform: rotate(12deg); }
+.tape.bl { bottom: -10px; left: 14px; transform: rotate(8deg); }
+.tape.br { bottom: -10px; right: 14px; transform: rotate(-8deg); }
+
+/* === Tables (the daily roll) === */
+table { width: 100%; border-collapse: collapse; }
+table th, table td {
+  padding: 14px 14px;
+  text-align: left;
+}
+table th {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  border-bottom: 2px dashed var(--ink);
+  padding-top: 18px; padding-bottom: 12px;
+}
+table td {
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink);
+  border-bottom: 2px dotted rgba(31,26,18,0.22);
+}
+table td.tnum, table td .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 14px; }
+table tr:hover { background: var(--paper-deep); }
+
+th.sortable { cursor: pointer; user-select: none; display: table-cell; }
+th.sortable:hover { color: var(--red); }
+th.sortable svg { display: inline; vertical-align: middle; margin-left: 4px; }
+
+.empty-state { text-align: center; padding: 40px 16px !important; color: var(--ink-faint); font-size: 17px; font-family: var(--accent); font-size: 22px; }
+
+/* === Form fields — tape-anchored, hand-labeled === */
+.search-input {
+  padding: 12px 18px;
+  border: 2px solid var(--ink);
+  background: var(--paper-light);
+  font-family: var(--body);
+  font-size: 16px;
+  width: 100%;
+  max-width: 320px;
+  clip-path: var(--cut-2);
+  color: var(--ink);
+}
+.search-input::placeholder { color: var(--ink-faint); font-style: italic; }
+.search-input:focus { background: var(--yellow); }
+
+.form-group { margin-bottom: 20px; }
+.form-group label {
+  display: block;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  margin-bottom: 6px;
+  color: var(--red);
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: 12px 16px;
+  border: 2px solid var(--ink);
+  background: var(--paper-light);
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink);
+  clip-path: var(--cut-2);
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus { background: var(--yellow); }
+
+.input-error { border-color: var(--red) !important; background: rgba(224, 74, 63, 0.08) !important; }
+.field-error { color: var(--red); font-family: var(--accent); font-size: 18px; margin-top: 4px; display: block; transform: rotate(-1deg); }
+
+/* === Modals === */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(31, 26, 18, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+.modal {
+  background: var(--paper-light);
+  padding: 36px;
+  max-width: 540px;
+  width: 92%;
+  max-height: 90vh;
+  overflow-y: auto;
+  clip-path: var(--cut-2);
+  position: relative;
+  transform: rotate(-1deg);
+}
+.modal::before {
+  content: ''; position: absolute; top: -10px; left: 50%; transform: translateX(-50%) rotate(-3deg);
+  width: 110px; height: 24px; background: var(--tape);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
+.modal h2 { margin-bottom: 20px; }
+
+/* === Avatar — colored paper square with serif initials === */
+.avatar {
+  width: 44px; height: 44px;
+  background: var(--blue);
+  color: var(--paper-light);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  clip-path: var(--cut-pill);
+  transform: rotate(-2deg);
+  line-height: 1;
+}
+.avatar.r { background: var(--red); }
+.avatar.y { background: var(--yellow); color: var(--ink); }
+.avatar.g { background: var(--green); }
+.avatar.o { background: var(--orange); }
+.avatar.k { background: var(--ink); }
+
+/* === Page headers === */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 3px dashed var(--ink);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.page-header h1 {
+  font-size: 64px;
+  font-weight: 900;
+  line-height: 0.95;
+  color: var(--ink);
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+
+.card-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 18px; }
+.card-header h2 { font-family: var(--display); font-size: 26px; font-weight: 900; }
+
+/* === Grids === */
+.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+
+@media (max-width: 1024px) {
+  .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* === Reveal on load === */
+@keyframes paper-rise {
+  from { opacity: 0; transform: translateY(18px) rotate(-3deg); }
+  to   { opacity: 1; transform: translateY(0) rotate(0); }
+}
+.reveal { animation: paper-rise 0.7s cubic-bezier(0.2, 0.6, 0.2, 1) both; }
+.reveal-1 { animation-delay: 0.05s; }
+.reveal-2 { animation-delay: 0.15s; }
+.reveal-3 { animation-delay: 0.25s; }
+.reveal-4 { animation-delay: 0.35s; }
+.reveal-5 { animation-delay: 0.45s; }
+.reveal-6 { animation-delay: 0.55s; }
+
+/* Selection */
+::selection { background: var(--yellow); color: var(--ink); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: var(--paper); }
+::-webkit-scrollbar-thumb { background: var(--ink); border: 3px solid var(--paper); }
+::-webkit-scrollbar-thumb:hover { background: var(--red); }
+
+/* === Recharts overrides — apply M look to charts === */
+.recharts-text {
+  font-family: var(--mono) !important;
+  font-size: 11px !important;
+  fill: var(--ink-soft) !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line {
+  stroke: var(--ink) !important;
+}
+.recharts-cartesian-grid-horizontal line, .recharts-cartesian-grid-vertical line {
+  stroke: rgba(31, 26, 18, 0.16) !important;
+  stroke-dasharray: 3 4;
+}
+.recharts-default-tooltip {
+  background: var(--paper-light) !important;
+  border: 2px solid var(--ink) !important;
+  border-radius: 0 !important;
+  font-family: var(--body) !important;
+  padding: 10px 14px !important;
+  clip-path: var(--cut-2);
+}
+.recharts-tooltip-label { font-family: var(--display) !important; font-weight: 900 !important; color: var(--ink) !important; }
+
+/* === Doodle arrow — re-usable === */
+.doodle-arrow {
+  display: inline-block;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 28px;
+  color: var(--red);
+  transform: rotate(-3deg);
+  line-height: 1;
+}

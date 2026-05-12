@@ -1,0 +1,562 @@
+/* ============================================================
+   STUDENT PROFILE — M · Construction Paper Collage
+   Globals (btn, badge, card, avatar, tape, word, eyebrow,
+   stat-card, page-header, pencil-link, mono, accent, reveal)
+   live in index.css and are used as-is.
+   ============================================================ */
+
+.sprofile-page {
+  position: relative;
+  padding-bottom: 48px;
+}
+
+/* ---------- Back link ---------- */
+.sprofile-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+  font-size: 20px;
+}
+
+/* ---------- Page header ---------- */
+.sprofile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 32px;
+  padding-bottom: 20px;
+  border-bottom: 3px dashed var(--ink);
+}
+.sprofile-header-left {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.sprofile-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sprofile-header h1 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(36px, 4.5vw, 64px);
+  line-height: 0.95;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0;
+}
+
+.sprofile-avatar {
+  width: 88px;
+  height: 88px;
+  font-size: 34px;
+  flex-shrink: 0;
+  transform: rotate(-4deg);
+  box-shadow: var(--shadow-paper);
+}
+
+.sprofile-subtitle {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--ink-soft);
+  margin: 0;
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.sprofile-class-accent {
+  font-weight: 700;
+}
+
+/* ---------- Info cards row (3 columns) ---------- */
+.sprofile-info-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.sprofile-info-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px 22px 22px;
+}
+.sprofile-info-card:nth-child(1) { transform: rotate(-0.8deg); }
+.sprofile-info-card:nth-child(2) { transform: rotate(0.5deg); clip-path: var(--cut-3); }
+.sprofile-info-card:nth-child(3) { transform: rotate(-0.6deg); clip-path: var(--cut-1); }
+
+.sprofile-info-card:hover {
+  transform: translateY(-2px) rotate(-0.5deg);
+  transition: transform 0.25s ease;
+  z-index: 2;
+}
+
+.sprofile-card-title {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 2px dashed rgba(31, 26, 18, 0.22);
+}
+
+/* Personal info 2x2 grid */
+.sprofile-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 16px;
+}
+.sprofile-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sprofile-info-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sprofile-info-value {
+  font-family: var(--body);
+  font-size: 18px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Face registration badge */
+.sprofile-face-status {
+  margin-top: 2px;
+}
+.sprofile-face-badge {
+  font-size: 15px;
+  padding: 3px 12px;
+}
+
+/* Parent contact */
+.sprofile-parent-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: -0.015em;
+}
+.sprofile-contact-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sprofile-contact-icon {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+.sprofile-contact-text {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  word-break: break-all;
+}
+
+/* Homeroom teacher */
+.sprofile-teacher-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 22px;
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: -0.015em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sprofile-teacher-none {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--ink-faint);
+  margin: 0;
+  transform: rotate(-1deg);
+}
+
+/* ---------- Attendance stats row ---------- */
+.sprofile-att-row {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  flex-wrap: wrap;
+  margin-bottom: 32px;
+  padding: 28px 32px;
+  background: var(--paper-light);
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(0.3deg);
+}
+
+.sprofile-att-rate {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+.sprofile-att-number {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 72px;
+  line-height: 0.85;
+  letter-spacing: -0.04em;
+}
+.sprofile-att-pct {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 32px;
+  opacity: 0.7;
+}
+.sprofile-att-label {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--ink-soft);
+  margin-left: 8px;
+  transform: rotate(-2deg);
+  display: inline-block;
+}
+
+.sprofile-att-today {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.sprofile-att-today-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sprofile-today-badge {
+  font-size: 16px;
+  padding: 4px 14px;
+}
+.sprofile-no-record {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--ink-faint);
+}
+
+.sprofile-att-timein {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sprofile-timein-icon {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+.sprofile-timein-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sprofile-timein-value {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 24px;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Sections ---------- */
+.sprofile-section {
+  margin-bottom: 32px;
+}
+.sprofile-section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 2px dashed var(--ink);
+}
+.sprofile-section-title h2 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0;
+}
+
+/* ---------- Teacher notes ---------- */
+.sprofile-notes-count {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 4px 12px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-pill);
+}
+
+.sprofile-notes-card {
+  position: relative;
+  background: var(--paper-light);
+  padding: 28px 28px 22px;
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-0.3deg);
+}
+
+/* Notepad ruled-line effect */
+.sprofile-notes-card::after {
+  content: '';
+  position: absolute;
+  left: 60px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(224, 74, 63, 0.18);
+  pointer-events: none;
+}
+
+/* Note form */
+.sprofile-note-form {
+  margin-bottom: 18px;
+  position: relative;
+  z-index: 1;
+}
+.sprofile-note-textarea {
+  width: 100%;
+  padding: 14px 18px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink);
+  clip-path: var(--cut-2);
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.5;
+  /* Notepad lines */
+  background-image: repeating-linear-gradient(
+    transparent,
+    transparent 25px,
+    rgba(31, 26, 18, 0.08) 25px,
+    rgba(31, 26, 18, 0.08) 26px
+  );
+  background-position: 0 14px;
+}
+.sprofile-note-textarea:focus {
+  background-color: var(--yellow);
+  background-image: repeating-linear-gradient(
+    transparent,
+    transparent 25px,
+    rgba(31, 26, 18, 0.1) 25px,
+    rgba(31, 26, 18, 0.1) 26px
+  );
+}
+.sprofile-note-textarea::placeholder {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--ink-faint);
+  font-style: normal;
+}
+
+.sprofile-note-form-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+}
+.sprofile-note-hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+.sprofile-note-btn {
+  font-size: 14px;
+  padding: 10px 22px;
+}
+
+/* Notes list */
+.sprofile-notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+  z-index: 1;
+}
+.sprofile-note-item {
+  padding: 16px 18px;
+  background: var(--paper);
+  clip-path: var(--cut-2);
+  box-shadow: 0 2px 0 rgba(31, 26, 18, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: transform 0.18s ease;
+}
+.sprofile-note-item:nth-child(odd) { transform: rotate(-0.5deg); }
+.sprofile-note-item:nth-child(even) { transform: rotate(0.4deg); clip-path: var(--cut-3); }
+.sprofile-note-item:hover {
+  transform: translateY(-2px) rotate(-0.3deg);
+}
+
+.sprofile-note-text {
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.sprofile-note-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  align-self: flex-end;
+}
+
+/* Empty notes */
+.sprofile-notes-empty {
+  text-align: center;
+  padding: 32px 16px;
+  position: relative;
+  z-index: 1;
+}
+.sprofile-notes-empty p {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--ink-faint);
+  transform: rotate(-1deg);
+  margin: 0;
+}
+
+/* ---------- Not found state ---------- */
+.sprofile-notfound {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--ink-soft);
+}
+.sprofile-notfound svg {
+  color: var(--red);
+  transform: rotate(-4deg);
+}
+.sprofile-notfound h3 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  color: var(--ink);
+  margin: 0;
+}
+.sprofile-notfound p {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--ink-soft);
+  margin: 0;
+  transform: rotate(-1deg);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 1024px) {
+  .sprofile-info-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sprofile-info-card:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .sprofile-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .sprofile-header-left {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .sprofile-header h1 {
+    font-size: 36px;
+  }
+  .sprofile-info-row {
+    grid-template-columns: 1fr;
+  }
+  .sprofile-info-card:nth-child(1),
+  .sprofile-info-card:nth-child(2),
+  .sprofile-info-card:nth-child(3) {
+    transform: none;
+    clip-path: var(--cut-2);
+    grid-column: auto;
+  }
+  .sprofile-att-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+    padding: 22px 24px;
+    transform: none;
+  }
+  .sprofile-att-number {
+    font-size: 56px;
+  }
+  .sprofile-notes-card {
+    padding: 22px 20px 18px;
+    transform: none;
+  }
+  .sprofile-notes-card::after {
+    left: 40px;
+  }
+}
+
+@media (max-width: 560px) {
+  .sprofile-avatar {
+    width: 68px;
+    height: 68px;
+    font-size: 26px;
+  }
+  .sprofile-att-row {
+    padding: 18px 16px;
+  }
+  .sprofile-att-number {
+    font-size: 48px;
+  }
+  .sprofile-note-form-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .sprofile-note-hint {
+    text-align: center;
+  }
+}

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>B · Soft Schoolyard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Nunito:wght@400;600;800&display=swap" rel="stylesheet" />
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --paper:#FFF7ED;--ink:#1F2937;--ink-soft:#6B7280;
+    --sage:#7CA982;--sage-deep:#5D8A66;--peach:#FFB997;--cream:#FFE8D2;--sky:#A8DADC;
+    --radius:28px;--shadow:0 12px 40px -16px rgba(31,41,55,.18);
+  }
+  body{font-family:'Nunito',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh;padding:48px 56px;line-height:1.6}
+  .nav{display:flex;justify-content:space-between;align-items:center;margin-bottom:64px}
+  .brand{display:flex;align-items:center;gap:12px;font-weight:800;font-size:22px}
+  .brand .pip{width:40px;height:40px;border-radius:14px;background:var(--sage);display:flex;align-items:center;justify-content:center;color:white;font-family:'DM Serif Display',serif;font-size:24px;line-height:1}
+  .pill{background:var(--cream);padding:8px 16px;border-radius:999px;font-size:13px;font-weight:600;color:var(--sage-deep)}
+  .hero{display:grid;grid-template-columns:1.2fr 1fr;gap:56px;align-items:center}
+  .hero h1{font-family:'DM Serif Display',serif;font-size:84px;line-height:1.05;letter-spacing:-0.02em;color:var(--ink);margin-bottom:20px}
+  .hero h1 em{color:var(--sage-deep);font-style:italic}
+  .hero h1 .heart{display:inline-block;background:var(--peach);color:white;padding:0 16px;border-radius:24px;font-style:italic;font-size:0.9em}
+  .hero p{font-size:18px;color:var(--ink-soft);max-width:480px;margin-bottom:32px}
+  .btns{display:flex;gap:14px;flex-wrap:wrap}
+  .btn{padding:16px 28px;border-radius:999px;font-weight:700;font-size:15px;border:none;cursor:pointer;transition:transform .2s}
+  .btn:hover{transform:translateY(-2px)}
+  .btn-primary{background:var(--sage);color:white;box-shadow:var(--shadow)}
+  .btn-ghost{background:transparent;border:2px solid var(--ink);color:var(--ink)}
+  .card{background:white;border-radius:var(--radius);padding:36px 32px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .blob{position:absolute;width:200px;height:200px;border-radius:50%;filter:blur(60px);opacity:.5}
+  .blob.b1{background:var(--peach);top:-60px;right:-40px}
+  .blob.b2{background:var(--sky);bottom:-80px;left:-60px}
+  .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;position:relative;z-index:1}
+  .stat{text-align:center;padding:18px 8px;border-radius:20px}
+  .stat.s1{background:var(--cream)}
+  .stat.s2{background:#FCE7E5}
+  .stat.s3{background:var(--sky)}
+  .stat strong{display:block;font-family:'DM Serif Display',serif;font-size:48px;line-height:1;color:var(--ink)}
+  .stat span{font-size:13px;font-weight:700;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em}
+  .roster{margin-top:24px;position:relative;z-index:1}
+  .row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:14px;margin-bottom:6px;background:#F9FAFB}
+  .av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--sage),var(--sky));color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
+  .row span{flex:1;font-weight:600;color:var(--ink)}
+  .tag{padding:4px 12px;border-radius:999px;font-size:11px;font-weight:700;background:#DCFCE7;color:#166534}
+  .tag.late{background:#FEF3C7;color:#92400E}
+  .tag.absent{background:#FEE2E2;color:#991B1B}
+</style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="brand"><div class="pip">P</div>PRISM-AI</div>
+    <div class="pill">Hello, sunshine ☀</div>
+  </nav>
+  <section class="hero">
+    <div>
+      <h1>Every child<br/><em>safely</em> <span class="heart">accounted for.</span></h1>
+      <p>A friendly, AI-powered attendance helper for primary schools — gentle for kids, helpful for teachers, reassuring for parents.</p>
+      <div class="btns">
+        <button class="btn btn-primary">Take a tour →</button>
+        <button class="btn btn-ghost">Watch a story</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="blob b1"></div><div class="blob b2"></div>
+      <div class="stats">
+        <div class="stat s1"><strong>10</strong><span>Present</span></div>
+        <div class="stat s2"><strong>2</strong><span>Absent</span></div>
+        <div class="stat s3"><strong>3</strong><span>Late</span></div>
+      </div>
+      <div class="roster">
+        <div class="row"><div class="av">AI</div><span>Ahmad Irfan</span><div class="tag">Present</div></div>
+        <div class="row"><div class="av">NA</div><span>Nur Aisyah</span><div class="tag">Present</div></div>
+        <div class="row"><div class="av">MD</div><span>Muhd. Danish</span><div class="tag late">Late</div></div>
+      </div>
+    </div>
+  </section>
+</body>
+</html>

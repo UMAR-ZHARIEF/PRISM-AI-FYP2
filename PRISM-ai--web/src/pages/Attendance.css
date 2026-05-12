@@ -1,0 +1,384 @@
+/* ============================================================
+   ATTENDANCE PAGE — M · Construction Paper Collage
+   ============================================================ */
+
+.attendance-page {
+  position: relative;
+  padding-bottom: 48px;
+}
+
+/* === HEADER ============================================== */
+.attendance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 36px;
+  padding-bottom: 24px;
+  border-bottom: 3px dashed var(--ink);
+}
+.attendance-header h1 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 0.95;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0;
+  border: 0;
+}
+.attendance-header-icon {
+  background: var(--green);
+  color: var(--paper-light);
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  clip-path: var(--cut-2);
+  transform: rotate(4deg);
+  box-shadow: var(--shadow-paper);
+}
+
+/* === MARKING HEADER ====================================== */
+.marking-header {
+  flex-direction: row;
+  align-items: center;
+}
+.marking-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.marking-header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+.back-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  background: var(--paper);
+  color: var(--ink);
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-3deg);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.back-link:hover {
+  transform: rotate(0deg) scale(1.08);
+  color: var(--red);
+}
+.dash-sep {
+  color: var(--ink-soft);
+  margin: 0 2px;
+}
+.marking-summary {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.btn-submit {
+  min-width: 130px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+}
+.btn-green {
+  background: var(--green);
+  color: var(--paper-light);
+}
+.btn-green:hover { filter: brightness(1.08); }
+.btn-green:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: none;
+}
+.btn-outline {
+  background: var(--paper);
+  color: var(--green);
+  border: 2px solid var(--green);
+}
+
+/* === PROGRESS BAR ======================================== */
+.marking-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.marking-progress-track {
+  flex: 1;
+  height: 10px;
+  background: var(--paper-deep);
+  clip-path: var(--cut-pill);
+  overflow: hidden;
+}
+.marking-progress-fill {
+  height: 100%;
+  transition: width 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.marking-progress-label {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 40px;
+  text-align: right;
+}
+
+/* === CLASS PICKER GRID =================================== */
+.class-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+  padding: 8px 4px;
+}
+
+.class-picker-card {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  background: var(--paper-light);
+  color: var(--ink);
+  text-decoration: none;
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  overflow: hidden;
+  transition: transform 0.3s cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+.class-picker-card:nth-child(5n+1) { transform: rotate(-1.2deg); }
+.class-picker-card:nth-child(5n+2) { transform: rotate(0.8deg); }
+.class-picker-card:nth-child(5n+3) { transform: rotate(-0.5deg); }
+.class-picker-card:nth-child(5n+4) { transform: rotate(1.5deg); }
+.class-picker-card:nth-child(5n+5) { transform: rotate(-1.8deg); }
+.class-picker-card:hover {
+  transform: translateY(-4px) rotate(-1deg);
+  z-index: 2;
+}
+
+.picker-card-accent {
+  width: 6px;
+  flex-shrink: 0;
+  background: var(--cls-color, var(--blue));
+}
+.picker-card-body {
+  flex: 1;
+  padding: 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.picker-class-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  margin: 0;
+  line-height: 1.1;
+}
+.picker-teacher {
+  font-family: var(--body);
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 0;
+}
+.picker-stats-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+.picker-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+.picker-status {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  margin-top: 4px;
+  padding: 4px 10px;
+  display: inline-block;
+  width: fit-content;
+  clip-path: var(--cut-pill);
+}
+.picker-status-pending {
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+}
+.picker-status-done {
+  background: var(--green);
+  color: var(--paper-light);
+}
+.picker-card-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  color: var(--ink-soft);
+}
+
+/* === STUDENT LIST (slips) ================================ */
+.student-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.student-slip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--paper-light);
+  padding: 18px 22px;
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  transition: transform 0.3s cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+.student-slip:nth-child(6n+1) { transform: rotate(-0.6deg); }
+.student-slip:nth-child(6n+2) { transform: rotate(0.4deg); }
+.student-slip:nth-child(6n+3) { transform: rotate(-0.3deg); }
+.student-slip:nth-child(6n+4) { transform: rotate(0.7deg); }
+.student-slip:nth-child(6n+5) { transform: rotate(-0.8deg); }
+.student-slip:nth-child(6n+6) { transform: rotate(0.5deg); }
+
+.student-slip:nth-child(7n+3) { clip-path: var(--cut-3); }
+.student-slip:nth-child(7n+5) { clip-path: var(--cut-1); }
+
+.slip-marked { border-left: 4px solid transparent; }
+.slip-present { border-left-color: var(--green); }
+.slip-absent { border-left-color: var(--red); }
+.slip-late { border-left-color: var(--yellow); }
+
+.slip-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.slip-avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.slip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.slip-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0;
+}
+.slip-meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  margin: 0;
+}
+.slip-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.slip-right {
+  flex-shrink: 0;
+}
+
+/* === TOGGLE BUTTONS ====================================== */
+.toggle-group {
+  display: flex;
+  gap: 8px;
+}
+.toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  clip-path: var(--cut-pill);
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.toggle-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toggle-present.active {
+  background: var(--green);
+  color: var(--paper-light);
+  border-color: var(--green);
+}
+.toggle-absent.active {
+  background: var(--red);
+  color: var(--paper-light);
+  border-color: var(--red);
+}
+.toggle-late.active {
+  background: var(--yellow);
+  color: var(--ink);
+  border-color: var(--yellow);
+}
+
+/* === NOT FOUND =========================================== */
+.not-found-card {
+  text-align: center;
+  padding: 48px 24px;
+}
+.not-found-message {
+  font-family: var(--body);
+  font-size: 18px;
+  color: var(--ink-soft);
+  margin-bottom: 24px;
+}
+
+/* === RESPONSIVE ========================================== */
+@media (max-width: 900px) {
+  .marking-header { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .marking-header-right { margin-left: 0; width: 100%; justify-content: space-between; }
+  .class-picker-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+}
+@media (max-width: 640px) {
+  .student-slip { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .slip-right { width: 100%; }
+  .toggle-group { width: 100%; }
+  .toggle-btn { flex: 1; justify-content: center; }
+  .toggle-btn span { display: none; }
+  .class-picker-grid { grid-template-columns: 1fr; }
+}

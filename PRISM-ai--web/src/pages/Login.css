@@ -1,0 +1,249 @@
+.login-page {
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  position: relative;
+  overflow-x: hidden;
+}
+.page-tape-tl { top: 14px; left: 14px; transform: rotate(-12deg); }
+.page-tape-tr { top: 14px; right: 14px; transform: rotate(12deg); }
+
+.login-bar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 24px 40px 14px;
+  border-bottom: 3px dashed var(--ink);
+  max-width: 1280px; margin: 0 auto;
+}
+.login-back {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--blue);
+  transform: rotate(-1deg);
+}
+.login-back:hover { color: var(--red); }
+.login-stamp {
+  font-size: 11px; letter-spacing: 0.2em;
+}
+
+.login-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 56px 40px 48px;
+  align-items: start;
+}
+
+/* ================= LEFT ASIDE ================= */
+.login-aside { padding-top: 16px; }
+.login-aside .eyebrow { font-size: 26px; margin-bottom: 16px; }
+
+.login-headline {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(56px, 7vw, 104px);
+  line-height: 0.95;
+  letter-spacing: -0.025em;
+  margin-bottom: 24px;
+}
+
+.login-deck {
+  font-family: var(--body);
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--ink);
+  max-width: 520px;
+  margin-bottom: 36px;
+}
+
+/* Active role spec card */
+.login-spec {
+  background: var(--paper-light);
+  padding: 26px 28px;
+  clip-path: var(--cut-2);
+  position: relative;
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-1deg);
+  max-width: 480px;
+}
+.login-spec h4 {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--red);
+  margin-bottom: 14px;
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.spec-row { display: flex; align-items: center; gap: 16px; }
+.spec-emoji {
+  font-size: 44px;
+  width: 64px; height: 64px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--yellow);
+  clip-path: var(--cut-2);
+  flex-shrink: 0;
+  transform: rotate(-3deg);
+}
+.spec-label {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  color: var(--ink);
+  letter-spacing: -0.015em;
+  margin-bottom: 2px;
+}
+.spec-blurb {
+  font-family: var(--body);
+  font-size: 16px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+}
+
+/* ================= RIGHT FORM ================= */
+.login-form-col { display: flex; justify-content: center; }
+.login-form {
+  width: 100%;
+  max-width: 520px;
+  background: var(--paper-light);
+  padding: 44px 42px;
+  clip-path: var(--cut-2);
+  position: relative;
+  box-shadow: var(--shadow-paper), 0 24px 48px -16px rgba(31, 26, 18, 0.18);
+}
+
+.form-label-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  display: block;
+  margin-bottom: 8px;
+}
+.login-form h2 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 56px;
+  letter-spacing: -0.025em;
+  margin-bottom: 32px;
+  line-height: 1;
+}
+
+/* role tabs as colored paper rectangles */
+.role-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 28px;
+}
+.role-tab {
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.role-tab:nth-child(1) { transform: rotate(-2deg); }
+.role-tab:nth-child(2) { transform: rotate(1deg); }
+.role-tab:nth-child(3) { transform: rotate(-1deg); }
+.role-tab .role-emoji { font-size: 28px; line-height: 1; }
+.role-tab .role-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.role-tab.active.paper-r { background: var(--red);   color: var(--paper-light); border-color: var(--ink); }
+.role-tab.active.paper-b { background: var(--blue);  color: var(--paper-light); }
+.role-tab.active.paper-g { background: var(--green); color: var(--paper-light); }
+.role-tab:hover:not(.active) { background: var(--yellow); }
+
+/* form fields */
+.login-form .form-group { margin-bottom: 20px; }
+.login-form .form-group label {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--red);
+  margin-bottom: 6px;
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.login-form .form-group input { font-size: 17px; padding: 12px 16px; }
+
+.password-input { position: relative; }
+.password-input input { padding-right: 48px; }
+.password-toggle {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  background: none; color: var(--ink-soft); padding: 8px;
+  cursor: pointer;
+}
+.password-toggle:hover { color: var(--red); }
+
+.login-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 12px 0 28px;
+}
+.checkbox-label {
+  display: inline-flex; align-items: center; gap: 10px;
+  font-family: var(--body); font-size: 16px; color: var(--ink); cursor: pointer;
+}
+.checkbox-label input { accent-color: var(--red); width: 18px; height: 18px; }
+
+.login-btn {
+  width: 100%;
+  justify-content: center;
+  padding: 18px 22px;
+  font-size: 16px;
+}
+
+/* demo credentials */
+.demo-card {
+  margin-top: 32px;
+  padding: 18px 22px;
+  background: var(--yellow);
+  clip-path: var(--cut-3);
+  transform: rotate(-1deg);
+  position: relative;
+}
+.demo-title {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--ink);
+  margin-bottom: 10px;
+  display: block;
+  transform: rotate(-1deg);
+}
+.demo-table { width: 100%; border-collapse: collapse; }
+.demo-table td {
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 2px dotted rgba(31, 26, 18, 0.25);
+  color: var(--ink);
+}
+.demo-table tr:last-child td { border-bottom: 0; }
+.demo-table .demo-role {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 16px;
+  width: 88px;
+}
+.demo-table .mono { font-size: 12px; }
+
+@media (max-width: 900px) {
+  .login-grid { grid-template-columns: 1fr; gap: 32px; padding: 32px 24px; }
+  .login-bar { padding: 18px 24px 12px; }
+}

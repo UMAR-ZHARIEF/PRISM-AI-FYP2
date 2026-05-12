@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>D · Brutalist Heritage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{--paper:#E8E5DC;--ink:#0A0A0A;--red:#D72638;--mute:#5B5B58}
+  body{font-family:'Archivo',sans-serif;background:var(--paper);color:var(--ink);min-height:100vh}
+  .top{display:flex;justify-content:space-between;align-items:stretch;border-bottom:3px solid var(--ink)}
+  .top > div{padding:18px 24px;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;border-right:3px solid var(--ink)}
+  .top > div:last-child{border-right:0}
+  .brand{font-family:'Archivo Black',sans-serif;font-size:22px;letter-spacing:-0.02em}
+  .hero{display:grid;grid-template-columns:1fr;border-bottom:3px solid var(--ink)}
+  h1{font-family:'Archivo Black',sans-serif;font-size:200px;line-height:.85;letter-spacing:-0.04em;text-transform:uppercase;padding:48px 32px 40px;color:var(--ink)}
+  h1 .red{color:var(--red);display:inline-block;background:var(--ink);color:var(--red);padding:0 12px}
+  h1 .out{-webkit-text-stroke:3px var(--ink);color:transparent}
+  .meta{display:grid;grid-template-columns:repeat(3,1fr);border-top:3px solid var(--ink)}
+  .meta > div{padding:24px 32px;border-right:3px solid var(--ink)}
+  .meta > div:last-child{border-right:0}
+  .meta strong{display:block;font-family:'Archivo Black',sans-serif;font-size:88px;line-height:.85;color:var(--ink)}
+  .meta strong .pct{color:var(--red);font-size:.5em}
+  .meta span{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--mute);display:block;margin-top:14px}
+  .deck{display:grid;grid-template-columns:280px 1fr 320px;border-bottom:3px solid var(--ink)}
+  .deck > div{padding:32px;border-right:3px solid var(--ink)}
+  .deck > div:last-child{border-right:0}
+  .num{font-family:'Archivo Black',sans-serif;font-size:140px;line-height:.85;color:var(--red)}
+  .label{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--mute);margin-top:12px}
+  .lede{font-family:'Archivo',sans-serif;font-weight:700;font-size:30px;line-height:1.2;color:var(--ink)}
+  .lede em{color:var(--red);font-style:normal;text-decoration:underline;text-decoration-thickness:4px;text-underline-offset:6px}
+  .reg{font-family:'IBM Plex Mono',monospace;font-size:13px}
+  .reg .head{display:flex;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:8px;margin-bottom:12px;font-size:10px;letter-spacing:.16em;text-transform:uppercase}
+  .reg .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed var(--ink)}
+  .reg .row:last-child{border:0}
+  .bar{display:flex;border-top:3px solid var(--ink);background:var(--ink);color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase}
+  .bar > div{padding:14px 24px;border-right:1px solid var(--paper)}
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">PRISM-AI</div>
+    <div>VOL 01 / NO 01</div>
+    <div>07 MAY 2026</div>
+    <div>KUALA LUMPUR</div>
+    <div style="margin-left:auto">— PROJECT GP47</div>
+  </header>
+  <section class="hero">
+    <h1>EVERY<br/><span class="out">CHILD</span><br/><span class="red">PRESENT.</span></h1>
+    <div class="meta">
+      <div><strong>10<span class="pct">/15</span></strong><span>Present at 07:55</span></div>
+      <div><strong>02</strong><span>Absent today</span></div>
+      <div><strong>03</strong><span>Marked late</span></div>
+    </div>
+  </section>
+  <section class="deck">
+    <div>
+      <div class="num">01.</div>
+      <div class="label">The Method</div>
+    </div>
+    <div>
+      <p class="lede">A camera. A model. <em>A register that fills itself.</em> No pen. No clipboard. No five-minute roll-call. The bell rings and the work is already done.</p>
+    </div>
+    <div class="reg">
+      <div class="head"><span>Pupil</span><span>Status</span></div>
+      <div class="row"><span>01 Ahmad Irfan</span><span>07:42 PR</span></div>
+      <div class="row"><span>02 Nur Aisyah</span><span>07:48 PR</span></div>
+      <div class="row"><span>03 Puteri Hana</span><span>07:51 PR</span></div>
+      <div class="row"><span>04 M. Danish</span><span>08:23 LT</span></div>
+      <div class="row"><span>05 Arif Z.</span><span>—— AB</span></div>
+    </div>
+  </section>
+  <footer class="bar">
+    <div>SET IN ARCHIVO BLACK</div>
+    <div>2026 © GP47 / UNIKL</div>
+    <div style="margin-left:auto">END OF PAGE 1</div>
+  </footer>
+</body>
+</html>

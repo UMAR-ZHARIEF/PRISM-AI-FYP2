@@ -1,0 +1,292 @@
+/* ============================================================
+   ATTENDANCE CALENDAR — M · Construction Paper Collage
+   Reusable month-grid calendar for per-student attendance.
+   Globals (badge, accent, mono, tape, --cut-*, --paper-*)
+   live in index.css and are used as-is.
+   ============================================================ */
+
+.att-calendar {
+  background: var(--paper-light);
+  padding: 28px 28px 22px;
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  position: relative;
+  transform: rotate(-0.3deg);
+}
+
+/* ---------- Header: nav + month title ---------- */
+.att-cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 2px dashed var(--ink);
+}
+
+.att-cal-title {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 30px;
+  color: var(--ink);
+  transform: rotate(-1deg);
+  letter-spacing: -0.01em;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.att-cal-nav {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-pill);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.att-cal-nav:hover {
+  background: var(--yellow);
+  transform: translateY(-2px) rotate(-2deg);
+}
+
+/* ---------- Legend ---------- */
+.att-cal-legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.att-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--ink-soft);
+}
+.att-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.att-dot-present { background: var(--green); }
+.att-dot-absent  { background: var(--red); }
+.att-dot-late    { background: var(--orange); }
+.att-dot-nodata  { background: var(--paper-deep); border: 1.5px solid var(--ink-faint); }
+
+/* ---------- Grid (5 columns: Mon–Fri) ---------- */
+.att-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.att-cal-dayheaders {
+  margin-bottom: 6px;
+}
+.att-cal-dayheader {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--ink-soft);
+  padding: 6px 0;
+}
+
+/* ---------- Calendar body ---------- */
+.att-cal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---------- Individual cell ---------- */
+.att-cal-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 4px 10px;
+  min-height: 52px;
+  background: var(--paper);
+  clip-path: var(--cut-2);
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  box-shadow: 0 2px 0 rgba(31, 26, 18, 0.08);
+}
+.att-cal-cell:hover {
+  transform: translateY(-2px) rotate(-1deg);
+  box-shadow: 0 4px 8px rgba(31, 26, 18, 0.14);
+  z-index: 2;
+}
+
+.att-cal-cell.cal-empty {
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+  clip-path: none;
+}
+.att-cal-cell.cal-empty:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.att-cal-day {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.att-cal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+}
+
+/* Status cell backgrounds */
+.att-cal-cell.cal-present {
+  background: rgba(79, 167, 100, 0.14);
+  border-bottom: 3px solid var(--green);
+}
+.att-cal-cell.cal-absent {
+  background: rgba(224, 74, 63, 0.12);
+  border-bottom: 3px solid var(--red);
+}
+.att-cal-cell.cal-late {
+  background: rgba(234, 133, 52, 0.12);
+  border-bottom: 3px solid var(--orange);
+}
+.att-cal-cell.cal-nodata {
+  background: var(--paper);
+  opacity: 0.7;
+}
+.att-cal-cell.cal-future {
+  background: var(--paper-deep);
+  opacity: 0.5;
+}
+.att-cal-cell.cal-future .att-cal-day {
+  color: var(--ink-faint);
+}
+
+/* Today highlight */
+.att-cal-cell.cal-today {
+  outline: 3px solid var(--blue);
+  outline-offset: -2px;
+}
+.att-cal-cell.cal-today .att-cal-day {
+  color: var(--blue);
+}
+
+/* Slight rotation variety on cells */
+.att-cal-week:nth-child(odd) .att-cal-cell:nth-child(2) { clip-path: var(--cut-3); }
+.att-cal-week:nth-child(even) .att-cal-cell:nth-child(4) { clip-path: var(--cut-1); }
+.att-cal-week:nth-child(3n) .att-cal-cell:nth-child(3) { clip-path: var(--cut-4); }
+
+/* ---------- Month stats strip ---------- */
+.att-cal-stats {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 2px dashed rgba(31, 26, 18, 0.22);
+}
+.att-cal-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--body);
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+.att-cal-stat strong {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 20px;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+/* ---------- Tooltip ---------- */
+.att-cal-tooltip {
+  background: var(--paper-light);
+  border: 2px solid var(--ink);
+  padding: 12px 16px;
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-card);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 150px;
+  pointer-events: none;
+}
+.att-tip-date {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.att-tip-badge {
+  font-size: 14px;
+  padding: 2px 10px;
+  transform: rotate(-1deg);
+  width: fit-content;
+}
+.att-tip-time {
+  font-family: var(--body);
+  font-size: 15px;
+  color: var(--ink);
+}
+.att-tip-status {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--ink-faint);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 640px) {
+  .att-calendar {
+    padding: 20px 16px 18px;
+    transform: none;
+  }
+  .att-cal-title {
+    font-size: 24px;
+  }
+  .att-cal-cell {
+    min-height: 44px;
+    padding: 6px 2px 8px;
+  }
+  .att-cal-day {
+    font-size: 13px;
+  }
+  .att-cal-dot {
+    width: 6px;
+    height: 6px;
+  }
+  .att-cal-legend {
+    gap: 10px;
+  }
+  .att-legend-item {
+    font-size: 14px;
+  }
+  .att-cal-stats {
+    gap: 14px;
+  }
+}

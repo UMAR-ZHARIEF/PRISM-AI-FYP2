@@ -1,0 +1,759 @@
+/* ============================================================
+   PARENT PORTAL — M · Construction Paper Collage
+   Primary school arts-and-crafts: cut paper, masking tape,
+   handwritten labels, slight rotations everywhere.
+   ============================================================ */
+
+.parent-portal {
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* page-corner tape strips */
+.parent-portal .page-tape-tl { top: 14px; left: 14px;  transform: rotate(-12deg); }
+.parent-portal .page-tape-tr { top: 14px; right: 14px; transform: rotate( 12deg); }
+
+/* ============================================================
+   NAV — transparent, dashed bottom border, P/A mark
+   ============================================================ */
+.pp-nav {
+  padding: 24px 0 0;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+}
+.pp-nav-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 32px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 3px dashed var(--ink);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pp-nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.pp-nav-mark {
+  width: 52px; height: 52px;
+  background: var(--green);
+  color: var(--paper-light);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  clip-path: var(--cut-2);
+  transform: rotate(-3deg);
+}
+.pp-nav-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+}
+.pp-nav-role {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-style: italic;
+  font-size: 19px;
+  color: var(--red);
+  transform: rotate(-2deg);
+  margin-left: 6px;
+}
+
+.pp-nav-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.pp-nav-childline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1;
+  text-align: right;
+}
+.pp-nav-child-label {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--ink-soft);
+  transform: rotate(-2deg);
+  margin-bottom: 2px;
+}
+.pp-nav-child-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.pp-bell {
+  position: relative;
+  width: 44px; height: 44px;
+  background: var(--yellow);
+  color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+  clip-path: var(--cut-pill);
+  transform: rotate(2deg);
+  box-shadow: var(--shadow-paper);
+  transition: transform 0.18s ease;
+}
+.pp-bell:hover { transform: rotate(-2deg) translateY(-2px); }
+.pp-bell-count {
+  position: absolute;
+  top: -6px; right: -6px;
+  min-width: 22px; height: 22px;
+  padding: 0 5px;
+  background: var(--red);
+  color: var(--paper-light);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  clip-path: var(--cut-pill);
+  transform: rotate(-6deg);
+}
+
+.pp-nav-avatar { transform: rotate(-3deg); }
+
+.pp-logout {
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--paper-light);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  transform: rotate(2deg);
+  transition: background 0.2s;
+}
+.pp-logout:hover { background: var(--red); color: var(--paper-light); }
+
+/* ============================================================
+   CONTENT WRAPPER
+   ============================================================ */
+.pp-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 32px 48px;
+}
+
+.pp-eyebrow {
+  font-size: 26px;
+  margin-bottom: 14px;
+  display: inline-block;
+}
+
+/* ============================================================
+   STATUS BANNER — coloured paper rectangle
+   ============================================================ */
+.pp-banner {
+  position: relative;
+  padding: 36px 40px;
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  margin-bottom: 36px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 32px;
+  flex-wrap: wrap;
+  transform: rotate(-0.6deg);
+}
+.pp-banner-present { background: var(--green); color: var(--paper-light); }
+.pp-banner-absent  { background: var(--red);   color: var(--paper-light); }
+.pp-banner-late    { background: var(--orange);color: var(--paper-light); }
+
+.pp-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+
+.pp-child-avatar {
+  width: 110px; height: 110px;
+  font-size: 44px;
+  letter-spacing: -0.04em;
+  border: 4px solid var(--paper-light);
+  transform: rotate(-4deg);
+  box-shadow: 0 6px 0 rgba(0,0,0,0.18);
+}
+
+.pp-banner-text { display: flex; flex-direction: column; gap: 4px; }
+.pp-banner-kicker {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: rgba(255, 245, 220, 0.92);
+  transform: rotate(-1deg);
+  display: inline-block;
+  margin-bottom: 4px;
+}
+.pp-child-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(38px, 5vw, 60px);
+  line-height: 0.95;
+  letter-spacing: -0.025em;
+  color: var(--paper-light);
+  margin: 0;
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.pp-child-meta {
+  font-family: var(--body);
+  font-size: 19px;
+  color: rgba(250, 241, 218, 0.92);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.pp-child-meta .mono { font-size: 13px; letter-spacing: 0.1em; }
+.pp-dot-sep { opacity: 0.6; }
+
+.pp-banner-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14px;
+}
+.pp-banner-badge {
+  font-size: 18px;
+  padding: 8px 20px;
+  background: var(--paper-light) !important;
+  color: var(--ink) !important;
+  transform: rotate(3deg);
+  box-shadow: var(--shadow-paper);
+}
+.pp-banner-badge::before { background: var(--ink); opacity: 0.5; }
+
+.pp-banner-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.pp-banner-time .accent {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: rgba(250, 241, 218, 0.92);
+  transform: rotate(-2deg);
+}
+.pp-banner-time-num {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 30px;
+  letter-spacing: 0.04em;
+  color: var(--paper-light);
+}
+
+/* ============================================================
+   STATS — 4-up
+   ============================================================ */
+.pp-stats {
+  margin-bottom: 36px;
+}
+.pp-stat {
+  position: relative;
+  box-shadow: var(--shadow-paper);
+  overflow: hidden;
+}
+.pp-stat-1 { transform: rotate(-1.5deg); }
+.pp-stat-2 { transform: rotate( 1deg); }
+.pp-stat-3 { transform: rotate(-1deg); }
+.pp-stat-4 { transform: rotate( 1.5deg); }
+
+.pp-stat .stat-info h3 { font-size: 70px; }
+.pp-stat .pp-pct {
+  font-size: 40px;
+  margin-left: 4px;
+  opacity: 0.85;
+}
+.pp-stat-tag {
+  position: absolute;
+  bottom: 14px; right: 18px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  opacity: 0.92;
+  transform: rotate(-3deg);
+}
+.pp-stat.s-yellow .pp-stat-tag { color: var(--ink); }
+
+/* ============================================================
+   GRID (calendar / history, notif / side col)
+   ============================================================ */
+.pp-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 32px;
+  margin-bottom: 36px;
+}
+.pp-grid:last-of-type { margin-bottom: 24px; }
+
+@media (max-width: 980px) {
+  .pp-grid { grid-template-columns: 1fr; }
+}
+
+/* card-head shared */
+.pp-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 2px dashed var(--ink);
+}
+.pp-card-kicker {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--red);
+  transform: rotate(-2deg);
+  display: inline-block;
+  align-self: flex-start;
+}
+.pp-card-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+/* ============================================================
+   CALENDAR
+   ============================================================ */
+.pp-cal-card { padding: 32px 32px 28px; }
+
+.pp-cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.pp-cal-arrow {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  clip-path: var(--cut-pill);
+  transition: background 0.2s, transform 0.2s;
+}
+.pp-cal-arrow:hover { background: var(--yellow); transform: rotate(-3deg); }
+.pp-cal-month {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 24px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.pp-cal-month .mono {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  margin-left: 6px;
+  color: var(--ink-soft);
+}
+
+.pp-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.pp-cal-head {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  text-align: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(31,26,18,0.3);
+}
+
+.pp-cal-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  background: var(--paper);
+  color: var(--ink);
+  clip-path: var(--cut-2);
+  transition: transform 0.18s ease;
+}
+.pp-cal-cell:hover { transform: translateY(-3px) rotate(-2deg); }
+
+.pp-cal-empty   { background: transparent; pointer-events: none; }
+.pp-cal-day     { background: var(--paper-deep); }
+.pp-cal-weekend { background: rgba(31, 26, 18, 0.08); color: var(--ink-faint); font-weight: 700; }
+
+.pp-cal-present { background: var(--green);  color: var(--paper-light); transform: rotate(-1deg); }
+.pp-cal-absent  { background: var(--red);    color: var(--paper-light); transform: rotate(1.5deg); }
+.pp-cal-late    { background: var(--orange); color: var(--paper-light); transform: rotate(-1.5deg); }
+
+.pp-cal-present:hover, .pp-cal-absent:hover, .pp-cal-late:hover {
+  transform: translateY(-3px) rotate(0);
+}
+
+.pp-cal-num { display: block; }
+
+.pp-cal-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 2px dashed var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  color: var(--ink-soft);
+}
+.pp-cal-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.pp-legend-chip {
+  width: 16px; height: 16px;
+  display: inline-block;
+  clip-path: var(--cut-2);
+}
+.pp-legend-green  { background: var(--green); }
+.pp-legend-red    { background: var(--red); }
+.pp-legend-orange { background: var(--orange); }
+.pp-legend-paper  { background: var(--paper-deep); border: 1px solid rgba(31,26,18,0.2); }
+
+/* ============================================================
+   ATTENDANCE HISTORY — paper-cut timeline
+   ============================================================ */
+.pp-history-card { padding: 32px 32px 24px; }
+
+.pp-history-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.pp-history-item {
+  display: grid;
+  grid-template-columns: 78px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  background: var(--paper);
+  clip-path: var(--cut-2);
+  border-left: 6px solid var(--ink);
+  transition: transform 0.18s ease;
+}
+.pp-history-item:nth-child(odd)  { transform: rotate(-0.4deg); }
+.pp-history-item:nth-child(even) { transform: rotate( 0.4deg); }
+.pp-history-item:hover { transform: translateX(3px) rotate(0); }
+
+.pp-history-present { border-left-color: var(--green); }
+.pp-history-absent  { border-left-color: var(--red); }
+.pp-history-late    { border-left-color: var(--orange); }
+
+.pp-history-date { display: flex; flex-direction: column; line-height: 1.05; }
+.pp-history-date strong {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 17px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.pp-history-date .mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+
+.pp-history-mid { display: flex; align-items: center; }
+
+.pp-history-time {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+  text-align: right;
+  white-space: nowrap;
+}
+.pp-history-empty {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink-faint);
+}
+
+/* ============================================================
+   NOTIFICATIONS — paper-cut list with coloured strip
+   ============================================================ */
+.pp-notif-card { padding: 32px 32px 28px; }
+
+.pp-notif-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.pp-notif-item {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  padding: 14px 16px 14px 14px;
+  background: var(--paper);
+  clip-path: var(--cut-2);
+  position: relative;
+}
+.pp-notif-item:nth-child(odd)  { transform: rotate(-0.5deg); }
+.pp-notif-item:nth-child(even) { transform: rotate( 0.5deg); }
+
+.pp-notif-strip {
+  width: 8px;
+  flex: 0 0 8px;
+  align-self: stretch;
+  border-radius: 0;
+  margin-right: 4px;
+}
+.pp-dot-green  { background: var(--green); }
+.pp-dot-red    { background: var(--red); }
+.pp-dot-orange { background: var(--orange); }
+.pp-dot-blue   { background: var(--blue); }
+
+.pp-notif-body { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.pp-notif-body p {
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink);
+  line-height: 1.4;
+  margin: 0;
+}
+.pp-notif-body small {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   SIDE COLUMN (contact + announcements)
+   ============================================================ */
+.pp-side-col {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* CONTACT TEACHER */
+.pp-contact-card {
+  background: var(--paper-light);
+  padding: 28px 30px;
+  transform: rotate(0.8deg);
+}
+
+.pp-teacher {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--paper);
+  clip-path: var(--cut-2);
+  margin-bottom: 18px;
+  transform: rotate(-1deg);
+}
+.pp-teacher-avatar {
+  width: 56px; height: 56px;
+  font-size: 20px;
+  transform: rotate(-4deg);
+}
+.pp-teacher-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.1;
+}
+.pp-teacher-info strong {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 19px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.pp-teacher-info small {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--red);
+  transform: rotate(-1deg);
+  display: inline-block;
+  margin-top: 2px;
+}
+.pp-teacher-email {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+  margin-top: 4px;
+}
+
+.pp-contact-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ANNOUNCEMENTS */
+.pp-announce-card {
+  background: var(--paper-light);
+  padding: 28px 30px;
+  transform: rotate(-0.8deg);
+}
+
+.pp-announce-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.pp-announce-item {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 14px;
+  padding: 14px 12px;
+  background: var(--paper);
+  clip-path: var(--cut-2);
+  align-items: start;
+}
+.pp-announce-item:nth-child(odd)  { transform: rotate(-0.5deg); }
+.pp-announce-item:nth-child(even) { transform: rotate( 0.5deg); }
+
+.pp-announce-date {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  line-height: 1.1;
+  color: var(--red);
+  background: var(--yellow);
+  padding: 6px 10px;
+  text-align: center;
+  clip-path: var(--cut-pill);
+  transform: rotate(-3deg);
+  display: inline-block;
+  align-self: start;
+}
+
+.pp-announce-body h4 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.pp-announce-body p {
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+.pp-footer {
+  max-width: 1200px;
+  margin: 32px auto 0;
+  padding: 24px 32px;
+  border-top: 3px dashed var(--ink);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pp-footer .accent {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--red);
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.pp-footer .mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+  .pp-nav-container { padding-bottom: 14px; }
+  .pp-nav-childline { display: none; }
+  .pp-nav-role { display: none; }
+
+  .pp-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 28px;
+    gap: 18px;
+  }
+  .pp-banner-right {
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .pp-child-avatar { width: 80px; height: 80px; font-size: 32px; }
+
+  .pp-history-item {
+    grid-template-columns: 64px 1fr;
+    grid-template-rows: auto auto;
+  }
+  .pp-history-time {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}
+
+@media (max-width: 480px) {
+  .pp-content { padding: 24px 16px 32px; }
+  .pp-cal-cell { font-size: 14px; }
+  .pp-banner { padding: 24px 20px; }
+  .pp-banner-right { flex-direction: column; align-items: flex-start; }
+}

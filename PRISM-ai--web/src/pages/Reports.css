@@ -1,0 +1,344 @@
+/* ============================================================
+   REPORTS — M · Construction Paper Collage
+   Cut-paper tabs, dashed rules, tape-strip charts.
+   Relies on global tokens, .word, .tape, .btn, .badge, .card,
+   .stat-card, .avatar, .search-input, table, .accent, .eyebrow.
+   ============================================================ */
+
+/* ---------- Page header ---------- */
+.reports-page { position: relative; }
+
+.reports-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+.reports-header h1 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(34px, 4vw, 52px);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin: 8px 0 0;
+}
+
+/* ---------- Stat-cards: tilt + tape glue ---------- */
+.reports-page .stat-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 22px;
+  border: 2px solid var(--ink);
+  box-shadow: var(--shadow-paper);
+  overflow: visible;
+}
+.reports-page .stat-card .icon-box {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  background: rgba(255,255,255,0.18);
+  color: var(--paper-light);
+  border: 2px dashed currentColor;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.reports-page .stat-card.s-yellow .icon-box { color: var(--ink); }
+.reports-page .stat-card .stat-info h3 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 36px;
+  line-height: 1;
+  margin: 0;
+}
+.reports-page .stat-card .stat-info p {
+  font-family: var(--accent);
+  font-size: 18px;
+  margin: 4px 0 0;
+  opacity: 0.95;
+}
+
+.reports-page .stat-card.tilt-l { transform: rotate(-1.2deg); }
+.reports-page .stat-card.tilt-r { transform: rotate(1.2deg); }
+.reports-page .stat-card.tilt-l:hover,
+.reports-page .stat-card.tilt-r:hover { transform: rotate(0) translateY(-2px); transition: transform .25s ease; }
+
+/* yellow card: ink text on yellow paper */
+.reports-page .stat-card.s-yellow {
+  background: var(--yellow);
+  color: var(--ink);
+}
+.reports-page .stat-card.s-yellow .stat-info h3,
+.reports-page .stat-card.s-yellow .stat-info p { color: var(--ink); }
+
+/* ---------- Date-range / period tabs ---------- */
+.daterange-card {
+  position: relative;
+  background: var(--paper-light);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-pill);
+  padding: 18px 24px;
+  transform: rotate(-0.4deg);
+}
+
+.date-range-tabs {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.daterange-label {
+  font-family: var(--accent);
+  font-size: 20px;
+  color: var(--red);
+  margin-right: 6px;
+  transform: rotate(-3deg);
+  display: inline-block;
+}
+
+.paper-tab {
+  font-family: var(--body);
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  padding: 8px 18px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  cursor: pointer;
+  transition: transform .2s ease, background .2s ease;
+  transform: rotate(-1deg);
+}
+.paper-tab:nth-child(odd)  { transform: rotate(1deg); }
+.paper-tab:nth-child(even) { transform: rotate(-1.5deg); }
+.paper-tab:hover { background: var(--paper-deep); }
+
+.paper-tab.is-active {
+  background: var(--blue);
+  color: var(--paper-light);
+  transform: rotate(-2deg) scale(1.04);
+  box-shadow: var(--shadow-paper);
+}
+.paper-tab.is-active:nth-child(3) { background: var(--red); }
+.paper-tab.is-active:nth-child(4) { background: var(--green); }
+
+/* ---------- Chart cards ---------- */
+.reports-page .card.chart-card {
+  position: relative;
+  background: var(--paper-light);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  padding: 26px 24px 22px;
+  overflow: visible;
+}
+.reports-page .card.chart-card.tilt-l { transform: rotate(-0.6deg); }
+.reports-page .card.chart-card.tilt-r { transform: rotate(0.6deg); }
+.reports-page .card.chart-card:hover  { transform: rotate(0); transition: transform .25s ease; }
+
+/* Chart header — Caveat eyebrow + Fraunces title + dashed rule */
+.chart-head {
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 2px dashed var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.chart-head .eyebrow {
+  font-family: var(--accent);
+  font-size: 18px;
+  color: var(--red);
+  transform: rotate(-2deg);
+  margin-bottom: 2px;
+}
+.chart-head h2 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 26px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--ink);
+}
+
+/* When chart-head is paired with .card-header (table cards), allow row layout */
+.reports-page .card-header.chart-head {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.reports-page .card-header.chart-head > div {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- Pie chart ---------- */
+.pie-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pie-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: var(--paper);
+  border: 2px dashed var(--ink);
+  border-radius: 4px;
+}
+.pie-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--body);
+  font-size: 16px;
+}
+.pie-dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ink);
+  clip-path: polygon(0 12%, 100% 0, 96% 100%, 4% 92%);
+  flex-shrink: 0;
+}
+
+/* ---------- Detailed records table card ---------- */
+.reports-page .card.table-card {
+  position: relative;
+  background: var(--paper-light);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  padding: 26px 24px 22px;
+  transform: rotate(-0.3deg);
+  overflow: visible;
+}
+
+/* Mini progress in detailed records — cut-paper, ink border */
+.report-progress {
+  width: 90px;
+  height: 10px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  clip-path: polygon(0 18%, 100% 0, 98% 90%, 2% 100%);
+  overflow: hidden;
+}
+.report-progress-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width .35s ease;
+}
+.report-rate-value {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  min-width: 38px;
+}
+
+/* ---------- "Needs Attention" + "Perfect Attendance" list cards ---------- */
+.reports-page .card.list-card {
+  position: relative;
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-3);
+  box-shadow: var(--shadow-paper);
+  padding: 24px 22px 20px;
+  overflow: visible;
+}
+
+.reports-page .card.list-attention {
+  background: #FBE4E1; /* terracotta tinted paper */
+}
+.reports-page .card.list-attention .chart-head .eyebrow { color: var(--red); }
+.reports-page .card.list-attention table tbody tr:hover { background: rgba(224, 74, 63, 0.10); }
+.reports-page .card.list-attention .badge {
+  background: var(--red);
+  color: var(--paper-light);
+  border: 2px solid var(--ink);
+}
+
+.reports-page .card.list-perfect {
+  background: #E4F0DB; /* mint tinted paper */
+}
+.reports-page .card.list-perfect .chart-head .eyebrow { color: var(--green); }
+.reports-page .card.list-perfect table tbody tr:hover { background: rgba(79, 167, 100, 0.12); }
+.reports-page .card.list-perfect .badge {
+  background: var(--green);
+  color: var(--paper-light);
+  border: 2px solid var(--ink);
+}
+
+/* ---------- Layout utilities (kept compatible with old class names) ---------- */
+.report-mb-24 { margin-bottom: 28px; }
+
+.report-flex-gap-8 { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.report-flex-gap-8-ml-auto {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.report-cell-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--body);
+  font-size: 17px;
+}
+
+.report-cell-rate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.report-date-input { max-width: 170px; }
+.report-class-select { max-width: 170px; }
+
+/* ---------- Recharts text touches scoped to this page ---------- */
+.reports-page .recharts-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  fill: var(--ink);
+}
+.reports-page .recharts-legend-item-text {
+  font-family: var(--accent) !important;
+  font-size: 18px !important;
+  color: var(--ink) !important;
+}
+.reports-page .recharts-default-tooltip {
+  background: var(--paper-light) !important;
+  border: 2px solid var(--ink) !important;
+  box-shadow: var(--shadow-paper) !important;
+  border-radius: 0 !important;
+  font-family: var(--body) !important;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 900px) {
+  .reports-header { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 768px) {
+  .date-range-tabs { flex-direction: column; align-items: stretch; }
+  .date-range-tabs .report-flex-gap-8-ml-auto { margin-left: 0; }
+  .report-flex-gap-8 { flex-wrap: wrap; }
+  .report-date-input, .report-class-select { max-width: unset; width: 100%; }
+  .reports-page table { display: block; overflow-x: auto; }
+  .reports-page .card.chart-card,
+  .reports-page .card.table-card,
+  .reports-page .card.list-card,
+  .reports-page .stat-card { transform: none; }
+}

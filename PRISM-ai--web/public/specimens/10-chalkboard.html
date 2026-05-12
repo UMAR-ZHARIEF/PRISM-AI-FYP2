@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>J · Chalkboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Architects+Daughter&family=Schoolbell&display=swap" rel="stylesheet" />
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{--board:#2D4434;--board-deep:#1F3325;--chalk:#F4EFE6;--chalk-dim:rgba(244,239,230,.55);--yellow:#F2D472;--pink:#F49AB6;--orange:#F2A14E;--wood:#7A4F2A;--wood-deep:#5C3A1B}
+  body{background:#1A130A;font-family:'Caveat',cursive;color:var(--chalk);min-height:100vh;padding:24px}
+  /* outer wood frame */
+  .frame{background:linear-gradient(180deg,var(--wood) 0,var(--wood-deep) 100%);padding:18px;box-shadow:0 30px 60px rgba(0,0,0,.5),inset 0 0 0 2px #2A1A0A;position:relative}
+  /* board */
+  .board{background:radial-gradient(ellipse at center,var(--board) 0,var(--board-deep) 100%);min-height:calc(100vh - 84px);padding:48px 60px 96px;position:relative;overflow:hidden}
+  /* chalk dust overlay */
+  .board::before{content:'';position:absolute;inset:0;background-image:radial-gradient(circle at 18% 30%,rgba(244,239,230,.04) 0,transparent 4%),radial-gradient(circle at 70% 60%,rgba(244,239,230,.05) 0,transparent 5%),radial-gradient(circle at 40% 85%,rgba(244,239,230,.03) 0,transparent 4%);pointer-events:none}
+  /* chalk tray at bottom */
+  .tray{position:absolute;left:0;right:0;bottom:0;height:32px;background:linear-gradient(180deg,var(--wood) 0,var(--wood-deep) 100%);border-top:2px solid #2A1A0A;display:flex;align-items:center;gap:12px;padding:0 32px;box-shadow:inset 0 4px 6px rgba(0,0,0,.3)}
+  .chalk-piece{width:48px;height:14px;border-radius:2px;background:var(--chalk);box-shadow:0 2px 0 rgba(0,0,0,.2)}
+  .chalk-piece.y{background:var(--yellow);width:36px}
+  .chalk-piece.p{background:var(--pink);width:28px}
+  .chalk-piece.o{background:var(--orange);width:42px}
+  .eraser{width:80px;height:24px;background:#7A1F2B;border:2px solid var(--chalk);position:relative;margin-left:auto}
+  .eraser::after{content:'';position:absolute;top:-6px;left:0;right:0;height:6px;background:#A1B086}
+  /* date */
+  .date{position:absolute;top:24px;right:48px;font-family:'Architects Daughter',cursive;font-size:18px;color:var(--chalk-dim);text-decoration:underline;transform:rotate(-1deg)}
+  /* main */
+  h1{font-family:'Caveat',cursive;font-weight:700;font-size:140px;line-height:.95;color:var(--chalk);letter-spacing:.01em;text-shadow:1px 1px 0 rgba(0,0,0,.3);transform:rotate(-1deg);margin-bottom:8px}
+  h1 .y{color:var(--yellow);font-style:italic;text-decoration:underline wavy var(--pink) 6px;text-underline-offset:8px}
+  h1 .o{color:var(--orange)}
+  .lesson{font-family:'Architects Daughter',cursive;color:var(--chalk-dim);font-size:18px;letter-spacing:.04em;margin-bottom:16px}
+  .deck{font-family:'Architects Daughter',cursive;font-size:22px;line-height:1.6;max-width:680px;color:var(--chalk);margin-bottom:32px}
+  .deck u{text-decoration:underline var(--yellow) 3px;text-underline-offset:4px}
+  /* the equation/breakdown */
+  .equation{display:flex;align-items:center;gap:20px;margin:20px 0 28px;font-family:'Caveat',cursive;font-size:54px;color:var(--chalk)}
+  .num{display:inline-flex;align-items:center;justify-content:center;width:88px;height:88px;border:3px solid var(--chalk);border-radius:50%;font-size:42px;font-weight:700;background:rgba(244,239,230,.05);position:relative;transform:rotate(-3deg)}
+  .num.late{color:var(--yellow);border-color:var(--yellow)}
+  .num.absent{color:var(--pink);border-color:var(--pink);transform:rotate(2deg)}
+  .num small{position:absolute;bottom:-22px;left:0;right:0;text-align:center;font-size:14px;font-family:'Architects Daughter',cursive;color:var(--chalk-dim);font-weight:400}
+  .plus{font-size:48px;color:var(--chalk-dim)}
+  .equals{font-size:48px}
+  /* roster as handwritten */
+  .roster{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 32px;font-family:'Architects Daughter',cursive;font-size:20px;max-width:840px;margin-top:32px}
+  .roster .row{display:flex;align-items:baseline;gap:10px;padding:6px 0;border-bottom:1px dashed var(--chalk-dim);color:var(--chalk)}
+  .roster .row .n{color:var(--yellow);width:24px}
+  .roster .row .t{margin-left:auto;font-family:'Caveat',cursive;font-size:24px}
+  .roster .row.late .t{color:var(--yellow)}
+  .roster .row.absent .t{color:var(--pink);text-decoration:line-through}
+  .arrow{position:absolute;font-family:'Caveat',cursive;color:var(--yellow);font-size:32px;font-weight:700}
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="board">
+      <span class="date">Tues · 7 May '26</span>
+      <p class="lesson">— TODAY'S LESSON —</p>
+      <h1>Every child<br/><span class="y">accounted for,</span><br/>before the <span class="o">bell.</span></h1>
+      <p class="deck">PRISM-AI is a face-recognition <u>register</u> for primary schools. The camera does the morning roll-call. The teacher does the teaching.</p>
+      <div class="equation">
+        <span class="num">10<small>present</small></span>
+        <span class="plus">+</span>
+        <span class="num late">3<small>late</small></span>
+        <span class="plus">+</span>
+        <span class="num absent">2<small>absent</small></span>
+        <span class="equals">=</span>
+        <span style="font-size:54px;color:var(--yellow);font-weight:700">15 pupils ✓</span>
+      </div>
+      <div class="roster">
+        <div class="row"><span class="n">1.</span>Ahmad Irfan<span class="t">07:42</span></div>
+        <div class="row"><span class="n">2.</span>Nur Aisyah<span class="t">07:48</span></div>
+        <div class="row"><span class="n">3.</span>Puteri Hana<span class="t">07:51</span></div>
+        <div class="row late"><span class="n">4.</span>Muhd. Danish<span class="t">08:23 L</span></div>
+        <div class="row absent"><span class="n">5.</span>Arif Zulkifli<span class="t">—</span></div>
+        <div class="row"><span class="n">6.</span>Nurul Iman<span class="t">07:55</span></div>
+      </div>
+    </div>
+    <div class="tray">
+      <div class="chalk-piece"></div>
+      <div class="chalk-piece y"></div>
+      <div class="chalk-piece p"></div>
+      <div class="chalk-piece o"></div>
+      <div class="eraser"></div>
+    </div>
+  </div>
+</body>
+</html>
