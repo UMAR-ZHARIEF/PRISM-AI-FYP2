@@ -126,12 +126,10 @@ export default function AdminPanel() {
   const validateForm = () => {
     const errors = {};
     if (!formName.trim()) errors.name = 'Name is required';
-    if (modalMode === 'add') {
-      if (!formEmail.trim()) {
-        errors.email = 'Email is required';
-      } else if (!formEmail.includes('@')) {
-        errors.email = 'Email must contain @';
-      }
+    if (!formEmail.trim()) {
+      errors.email = 'Email is required';
+    } else if (!formEmail.includes('@')) {
+      errors.email = 'Email must contain @';
     }
     return errors;
   };
@@ -231,6 +229,7 @@ export default function AdminPanel() {
       } else {
         // Edit mode — PATCH only the editable fields.
         const payload = {
+          email: formEmail.trim(),
           full_name: formName.trim(),
           role: formRole,
           phone: formPhone.trim() || null,
@@ -863,14 +862,14 @@ export default function AdminPanel() {
               {formErrors.name && <span className="field-error">{formErrors.name}</span>}
             </div>
             <div className="form-group">
-              <label>Email{modalMode === 'edit' && <span className="user-form-hint"> (cannot be changed)</span>}</label>
+              <label>Email</label>
               <input
                 type="email"
                 placeholder="Enter email"
                 className={formErrors.email ? 'input-error' : ''}
                 value={formEmail}
                 onChange={e => setFormEmail(e.target.value)}
-                disabled={modalMode === 'edit' || formSubmitting}
+                disabled={formSubmitting}
               />
               {formErrors.email && <span className="field-error">{formErrors.email}</span>}
             </div>

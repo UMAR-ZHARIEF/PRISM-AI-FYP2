@@ -417,7 +417,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 // Body may include any of: full_name, role, phone, avatar_url.
 app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const targetId = req.params.id;
-  const { full_name, role, phone, avatar_url } = req.body || {};
+  const { full_name, role, phone, avatar_url, email } = req.body || {};
 
   const updates = {};
   if (full_name !== undefined) {
@@ -445,28 +445,80 @@ app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
     updates.avatar_url = avatar_url;
   }
 
-  if (Object.keys(updates).length === 0) {
+  // Email change is handled separately — it lives on auth.users, not profiles.
+  // We use the admin API with email_confirm:true so the change takes effect
+  // immediately without making the user click a re-confirmation link.
+  let newEmail = null;
+  if (email !== undefined && email !== null && typeof email === 'string') {
+    const trimmed = email.trim();
+    if (trimmed && EMAIL_RE.test(trimmed)) {
+      newEmail = trimmed;
+    } else if (trimmed) {
+      return res.status(400).json({ error: 'email is not a valid address' });
+    }
+  }
+
+  if (Object.keys(updates).length === 0 && !newEmail) {
     return res.status(400).json({ error: 'No updatable fields provided' });
   }
 
   try {
-    const { data: updated, error: upErr } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', targetId)
-      .select()
-      .maybeSingle();
-
-    if (upErr) {
-      console.error('[admin/users PATCH] failed:', upErr);
-      return res.status(500).json({ error: upErr.message || 'Update failed' });
+    // First, update auth.users.email if the email changed.
+    if (newEmail) {
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', targetId)
+        .maybeSingle();
+      if (!existing) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      const { error: emailErr } = await supabase.auth.admin.updateUserById(
+        targetId,
+        { email: newEmail, email_confirm: true }
+      );
+      if (emailErr) {
+        const msg = (emailErr.message || '').toLowerCase();
+        if (msg.includes('already') || msg.includes('duplicate')) {
+          return res.status(409).json({ error: 'Email already in use by another account' });
+        }
+        console.error('[admin/users PATCH email] failed:', emailErr);
+        return res.status(500).json({ error: emailErr.message || 'Email update failed' });
+      }
     }
-    if (!updated) {
-      return res.status(404).json({ error: 'User not found' });
+
+    // Now patch profiles for the non-email fields.
+    let updatedProfile = null;
+    if (Object.keys(updates).length > 0) {
+      const { data: updated, error: upErr } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', targetId)
+        .select()
+        .maybeSingle();
+      if (upErr) {
+        console.error('[admin/users PATCH] failed:', upErr);
+        return res.status(500).json({ error: upErr.message || 'Update failed' });
+      }
+      if (!updated) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      updatedProfile = updated;
+    } else {
+      // Email-only change — re-read the profile for the response payload.
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', targetId)
+        .maybeSingle();
+      updatedProfile = data;
     }
 
-    res.json(updated);
-    logAudit(req.actor.id, 'user.update', targetId, { changes: updates });
+    res.json({ ...(updatedProfile || {}), email: newEmail || undefined });
+    logAudit(req.actor.id, 'user.update', targetId, {
+      changes: updates,
+      email_changed: newEmail || undefined,
+    });
   } catch (e) {
     console.error('[admin/users PATCH] unexpected error:', e);
     res.status(500).json({ error: 'Server error' });

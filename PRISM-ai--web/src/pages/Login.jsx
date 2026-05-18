@@ -116,7 +116,6 @@ export default function Login() {
                 <input type="checkbox" defaultChecked />
                 <span>Remember me</span>
               </label>
-              <Link to="/forgot-password" className="forgot-link pencil-link">Forgot password?</Link>
             </div>
 
             {errorMessage && (

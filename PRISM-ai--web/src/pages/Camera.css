@@ -1,0 +1,354 @@
+/* ============================================================
+   Live Camera Page — Construction Paper Collage
+   Mirrors Dashboard.css's "Live Camera Feed" card but expanded
+   into a full page (webcam preview + AI status + detection list).
+   ============================================================ */
+
+.live-cam-page {
+  padding: 28px 28px 64px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.live-cam-page .page-header {
+  align-items: flex-end;
+}
+.live-cam-page .page-subtitle {
+  font-family: var(--body);
+  font-size: 18px;
+  color: var(--ink-soft);
+  margin-top: 12px;
+  max-width: 60ch;
+}
+
+/* AI pill in the header */
+.live-cam-ai-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--paper-light);
+  background: var(--green);
+  clip-path: var(--cut-pill);
+  transform: rotate(-2deg);
+}
+.live-cam-ai-pill.is-off {
+  background: var(--red);
+  transform: rotate(2deg);
+}
+.live-cam-ai-dot {
+  width: 10px; height: 10px;
+  background: var(--paper-light);
+  clip-path: var(--cut-pill);
+  animation: live-cam-pulse 1.5s infinite;
+}
+@keyframes live-cam-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(1.25); }
+}
+
+/* ----------- Grid: video left, status right ----------- */
+.live-cam-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  gap: 28px;
+  margin-bottom: 28px;
+}
+@media (max-width: 960px) {
+  .live-cam-grid { grid-template-columns: 1fr; }
+}
+
+/* ----------- Video card ----------- */
+.live-cam-video-card {
+  position: relative;
+}
+.live-cam-video-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 16px;
+}
+
+.live-cam-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--red);
+  transform: rotate(-2deg);
+}
+.live-cam-rec-dot {
+  width: 10px; height: 10px;
+  background: var(--red);
+  clip-path: var(--cut-pill);
+  animation: live-cam-pulse 1.5s infinite;
+}
+
+.live-cam-video-frame {
+  position: relative;
+  background: var(--ink);
+  border: 3px solid var(--ink);
+  clip-path: var(--cut-3);
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  overflow: hidden;
+}
+.live-cam-video-frame.is-requesting,
+.live-cam-video-frame.is-denied,
+.live-cam-video-frame.is-error {
+  background: var(--paper);
+  border-style: dashed;
+}
+
+.live-cam-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Mirror the preview so it feels like a mirror, not a stranger */
+  transform: scaleX(-1);
+  background: var(--ink);
+}
+
+.live-cam-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background: var(--paper);
+  color: var(--ink);
+}
+.live-cam-overlay svg {
+  color: var(--red);
+  transform: rotate(-4deg);
+}
+.live-cam-overlay p {
+  font-family: var(--display);
+  font-weight: 900;
+  font-style: italic;
+  font-size: 26px;
+  color: var(--ink);
+  line-height: 1.1;
+}
+.live-cam-overlay small {
+  font-family: var(--body);
+  font-size: 16px;
+  color: var(--ink-soft);
+  max-width: 44ch;
+}
+.live-cam-overlay-warn { background: rgba(242, 199, 68, 0.32); }
+
+.live-cam-retry {
+  margin-top: 4px;
+}
+
+.live-cam-caption {
+  margin-top: 14px;
+  font-family: var(--accent);
+  font-size: 18px;
+  color: var(--ink-soft);
+  transform: rotate(-0.5deg);
+}
+
+/* ----------- AI status card ----------- */
+.live-cam-status .card-header { margin-bottom: 18px; }
+
+.live-cam-status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 2px dotted rgba(31, 26, 18, 0.22);
+}
+.live-cam-status-row:last-of-type { border-bottom: none; }
+
+.live-cam-status-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.live-cam-status-val {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 28px;
+  color: var(--ink);
+  line-height: 1;
+}
+.live-cam-status-val.mono {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+/* Collapsible hint */
+.live-cam-hint {
+  margin-top: 18px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border-left: 4px solid var(--yellow-deep);
+  clip-path: var(--cut-3);
+}
+.live-cam-hint summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--red);
+  transform: rotate(-1deg);
+}
+.live-cam-hint summary::-webkit-details-marker { display: none; }
+.live-cam-hint summary svg {
+  transition: transform 0.2s ease;
+}
+.live-cam-hint[open] summary svg { transform: rotate(-180deg); }
+
+.live-cam-hint ol {
+  margin-top: 12px;
+  padding-left: 22px;
+  font-family: var(--body);
+  font-size: 16px;
+  color: var(--ink);
+  line-height: 1.7;
+}
+.live-cam-hint code {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--paper-light);
+  border: 1px dashed var(--ink-faint);
+  padding: 1px 6px;
+  color: var(--ink);
+}
+
+/* ----------- Detections list card ----------- */
+.live-cam-detections .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.live-cam-detections-count {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--blue);
+  transform: rotate(-1deg);
+}
+
+.live-cam-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px 20px;
+  text-align: center;
+  border: 3px dashed var(--ink-faint);
+  clip-path: var(--cut-2);
+  background: var(--paper);
+}
+.live-cam-empty svg { color: var(--blue); transform: rotate(-4deg); }
+.live-cam-empty p {
+  font-family: var(--display);
+  font-weight: 900;
+  font-style: italic;
+  font-size: 24px;
+  color: var(--ink);
+}
+.live-cam-empty small {
+  font-family: var(--accent);
+  font-size: 18px;
+  color: var(--ink-soft);
+  max-width: 48ch;
+}
+
+.live-cam-detection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.live-cam-detection-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--paper);
+  clip-path: var(--cut-3);
+  border-left: 6px solid var(--ink);
+}
+.live-cam-detection-0 { transform: rotate(-0.6deg); border-left-color: var(--red); }
+.live-cam-detection-1 { transform: rotate(0.4deg);  border-left-color: var(--blue); }
+.live-cam-detection-2 { transform: rotate(-0.3deg); border-left-color: var(--green); }
+.live-cam-detection-3 { transform: rotate(0.5deg);  border-left-color: var(--orange); }
+.live-cam-detection-row:hover { transform: translateY(-2px) rotate(0); }
+
+.live-cam-detection-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.live-cam-detection-meta strong {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 20px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.live-cam-detection-class {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink-soft);
+}
+
+.live-cam-detection-time {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--yellow);
+  padding: 4px 10px;
+  clip-path: var(--cut-pill);
+}
+.live-cam-detection-sim {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--blue-deep);
+  background: rgba(47, 117, 201, 0.14);
+  padding: 4px 10px;
+  clip-path: var(--cut-pill);
+}
+
+@media (max-width: 720px) {
+  .live-cam-detection-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "avatar meta badge"
+      "avatar time sim";
+    row-gap: 6px;
+  }
+  .live-cam-detection-row .avatar { grid-area: avatar; }
+  .live-cam-detection-meta { grid-area: meta; }
+  .live-cam-detection-row .badge { grid-area: badge; }
+  .live-cam-detection-time { grid-area: time; justify-self: start; }
+  .live-cam-detection-sim  { grid-area: sim;  justify-self: end; }
+}

@@ -157,7 +157,7 @@
 
 .login-options {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   margin: 12px 0 28px;
 }
