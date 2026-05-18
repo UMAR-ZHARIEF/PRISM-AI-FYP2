@@ -88,15 +88,13 @@ def capture_embeddings(app, camera_index=0, num_captures=5, delay_between=1.0):
     Returns:
         numpy.ndarray: Averaged 512-d embedding, or None if failed
     """
-    cap = cv2.VideoCapture(camera_index)
-    
+    # Use DirectShow backend explicitly; let camera pick its native resolution
+    # (forcing 1280x720 breaks low-res cameras like UGREEN's default 640x480)
+    cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+
     if not cap.isOpened():
         print(f"[ERROR] Cannot open camera {camera_index}")
         return None
-    
-    # Set camera resolution
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     
     embeddings = []
     capture_count = 0
