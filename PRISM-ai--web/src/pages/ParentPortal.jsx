@@ -517,10 +517,6 @@ export default function ParentPortal() {
           </div>
         </section>
       </div>
-
-      <footer className="pp-footer">
-        <p>PRISM-AI &copy; 2026 &mdash; Final Year Project, UniKL</p>
-      </footer>
     </div>
   );
 }

@@ -204,9 +204,6 @@ export default function Landing() {
             <p>+60 12-345 6789</p>
           </div>
         </div>
-        <div className="footer-bottom">
-          <p>&copy; 2026 PRISM-AI. Final Year Project &mdash; UniKL.</p>
-        </div>
       </footer>
     </div>
   );
