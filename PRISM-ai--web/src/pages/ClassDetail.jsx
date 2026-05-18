@@ -2,8 +2,12 @@ import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Users, UserCheck, UserX, Clock, ClipboardCheck, Mail } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { students, classes, classColors, attendanceToday, classAttendance, weeklyAttendance, users, years } from '../data/mockData';
+import { classes, classColors, years } from '../data/mockData';
 import { useToast } from '../components/Toast';
+import useClassSections from '../hooks/useClassSections';
+import useStudents from '../hooks/useStudents';
+import useAttendance from '../hooks/useAttendance';
+import { SkeletonCard, SkeletonChart } from '../components/Skeleton';
 import './ClassDetail.css';
 
 const WORD_COLOR_MAP = {
@@ -24,35 +28,129 @@ export default function ClassDetail() {
   const isValidClass = classes.includes(className);
   const isValidYear = years.includes(yearNum);
 
-  const teacher = useMemo(
-    () => users.find(u => u.role === 'homeroom' && u.class === className && u.year === yearNum),
-    [className, yearNum]
-  );
+  // Last 7 days window (inclusive of today)
+  const { fromDate, toDate, todayISO, weekDays } = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      days.push(d);
+    }
+    const iso = (d) => d.toISOString().slice(0, 10);
+    return {
+      fromDate: iso(days[0]),
+      toDate: iso(days[days.length - 1]),
+      todayISO: iso(today),
+      weekDays: days,
+    };
+  }, []);
 
-  const classStudents = useMemo(
-    () => students.filter(s => s.class === className && s.year === yearNum),
-    [className, yearNum]
+  // Resolve class section from URL params
+  const { classSections, loading: sectionsLoading, error: sectionsError } =
+    useClassSections({ year: isValidYear ? yearNum : undefined });
+
+  const section = useMemo(
+    () => (classSections || []).find(cs => cs.name === className && cs.year_num === yearNum),
+    [classSections, className, yearNum]
   );
+  const classSectionId = section?.id;
+  const teacher = section?.homeroom_teacher || null;
+
+  const { students: dbStudents, loading: studentsLoading, error: studentsError } =
+    useStudents({ classSectionId });
+
+  const { records, loading: attLoading, error: attError } = useAttendance({
+    classSectionId,
+    fromDate,
+    toDate,
+  });
+
+  const classStudents = useMemo(() => (dbStudents || []).map(row => {
+    let age = null;
+    if (row.dob) {
+      const dob = new Date(row.dob);
+      const now = new Date();
+      age = now.getFullYear() - dob.getFullYear();
+      const m = now.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age -= 1;
+    }
+    const g = String(row.gender || '').toLowerCase();
+    return {
+      id: row.id,
+      name: row.full_name || '',
+      gender: g.startsWith('f') ? 'F' : 'M',
+      age,
+      parent: '',
+    };
+  }), [dbStudents]);
+
+  // Group records by student to compute per-student last-7-days attendance rate.
+  // Group records by date to build the weekly chart.
+  const { todayByStudent, ratesByStudent, weekly } = useMemo(() => {
+    const byStudent = new Map();
+    const byDate = new Map();
+    const today = new Map();
+    for (const r of records || []) {
+      const sid = r.student_id;
+      const status = String(r.status || '').toLowerCase();
+      const date = r.date;
+
+      if (!byStudent.has(sid)) byStudent.set(sid, []);
+      byStudent.get(sid).push(r);
+
+      if (!byDate.has(date)) byDate.set(date, { present: 0, absent: 0, late: 0 });
+      const bucket = byDate.get(date);
+      if (status === 'present') bucket.present += 1;
+      else if (status === 'absent') bucket.absent += 1;
+      else if (status === 'late') bucket.late += 1;
+
+      if (date === todayISO) today.set(sid, status);
+    }
+
+    const rates = new Map();
+    for (const [sid, recs] of byStudent.entries()) {
+      const counted = recs.filter(r => {
+        const s = String(r.status || '').toLowerCase();
+        return s === 'present' || s === 'absent' || s === 'late';
+      });
+      if (counted.length === 0) {
+        rates.set(sid, 0);
+        continue;
+      }
+      const presentish = counted.filter(r => {
+        const s = String(r.status || '').toLowerCase();
+        return s === 'present' || s === 'late';
+      }).length;
+      rates.set(sid, Math.round((presentish / counted.length) * 100));
+    }
+
+    const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weeklyData = weekDays.map(d => {
+      const key = d.toISOString().slice(0, 10);
+      const bucket = byDate.get(key) || { present: 0, absent: 0, late: 0 };
+      return { day: DAY_LABELS[d.getDay()], ...bucket };
+    });
+
+    return { todayByStudent: today, ratesByStudent: rates, weekly: weeklyData };
+  }, [records, todayISO, weekDays]);
 
   const todayRecords = useMemo(
-    () => attendanceToday.filter(a => a.class === className && a.year === yearNum),
-    [className, yearNum]
+    () => (records || []).filter(r => r.date === todayISO),
+    [records, todayISO]
   );
-
-  const classStats = useMemo(
-    () => classAttendance.find(c => c.class === className && c.year === yearNum),
-    [className, yearNum]
-  );
-
-  const presentCount = todayRecords.filter(a => a.status === 'present').length;
-  const absentCount  = todayRecords.filter(a => a.status === 'absent').length;
-  const lateCount    = todayRecords.filter(a => a.status === 'late').length;
+  const presentCount = todayRecords.filter(r => String(r.status).toLowerCase() === 'present').length;
+  const absentCount  = todayRecords.filter(r => String(r.status).toLowerCase() === 'absent').length;
+  const lateCount    = todayRecords.filter(r => String(r.status).toLowerCase() === 'late').length;
 
   const wordColor = WORD_COLOR_MAP[className] || 'k';
   const classColor = classColors[className] || 'var(--ink)';
 
-  // Not-found state
-  if (!isValidClass || !isValidYear) {
+  // Not-found state — only when params themselves are invalid, or after sections
+  // have loaded and no matching section exists.
+  const sectionMissing = !sectionsLoading && !sectionsError && classSections && !section;
+  if (!isValidClass || !isValidYear || sectionMissing) {
     return (
       <div className="classdetail-page">
         <div className="page-header classdetail-header">
@@ -74,6 +172,24 @@ export default function ClassDetail() {
     );
   }
 
+  // Error state — show inline if any hook failed once it stopped loading.
+  const anyError = sectionsError || studentsError || attError;
+  if (anyError && !sectionsLoading && !studentsLoading && !attLoading) {
+    return (
+      <div className="classdetail-page">
+        <Link to="/dashboard" className="pencil-link classdetail-back">
+          <ArrowLeft size={18} /> Back to Dashboard
+        </Link>
+        <div className="card classdetail-empty">
+          <span className="tape tl" />
+          <UserX size={48} />
+          <h3>Could not load class</h3>
+          <p className="accent">Something went wrong while fetching this class. Try again later.</p>
+        </div>
+      </div>
+    );
+  }
+
   const statCards = [
     { label: 'Total Students', value: classStudents.length, tone: 's-blue',   icon: <Users size={20} /> },
     { label: 'Present Today',  value: presentCount,         tone: 's-green',  icon: <UserCheck size={20} /> },
@@ -82,9 +198,12 @@ export default function ClassDetail() {
   ];
 
   const getStudentStatus = (studentId) => {
-    const record = attendanceToday.find(a => a.studentId === studentId);
-    return record ? record.status : 'absent';
+    return todayByStudent.get(studentId) || 'absent';
   };
+
+  // Initial loading skeleton — render while we resolve the section and
+  // before any students/attendance data is available.
+  const initialLoading = sectionsLoading || (!!classSectionId && (studentsLoading || attLoading) && classStudents.length === 0);
 
   return (
     <div className="classdetail-page">
@@ -97,11 +216,11 @@ export default function ClassDetail() {
       <div className="page-header classdetail-header">
         <div className="classdetail-header-left">
           <h1><span className={`word ${wordColor}`}>{className}</span></h1>
-          <p className="page-subtitle">Year {yearNum} &middot; {teacher?.name || 'No teacher assigned'}</p>
+          <p className="page-subtitle">Year {yearNum} &middot; {teacher?.full_name || 'No teacher assigned'}</p>
           {teacher && (
             <div className="classdetail-teacher-info">
               <p className="classdetail-teacher-email">
-                <Mail size={14} /> {teacher.email}
+                <Mail size={14} /> {teacher.email || ''}
               </p>
             </div>
           )}
@@ -132,7 +251,13 @@ export default function ClassDetail() {
           <h2>Students in {className}</h2>
           <span className="classdetail-count mono">{classStudents.length} students</span>
         </div>
-        {classStudents.length === 0 ? (
+        {initialLoading ? (
+          <div className="classdetail-student-grid">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        ) : classStudents.length === 0 ? (
           <div className="card classdetail-empty">
             <span className="tape tl" />
             <Users size={40} />
@@ -146,16 +271,21 @@ export default function ClassDetail() {
               const tapeSpots = ['tl', 'tr', 'br', 'bl'];
               const tapeSpot = tapeSpots[index % tapeSpots.length];
               const initials = s.name.split(' ').map(n => n[0]).join('').slice(0, 2);
+              const rate = ratesByStudent.get(s.id) ?? 0;
 
               return (
-                <div key={s.id} className="card classdetail-student-card">
+                <Link
+                  key={s.id}
+                  to={`/dashboard/students/${s.id}`}
+                  className="card classdetail-student-card"
+                >
                   <span className={`tape ${tapeSpot}`} />
                   <div className="classdetail-student-top">
                     <div className={`avatar ${avatarColor} classdetail-avatar`}>{initials}</div>
                     <div className="classdetail-student-identity">
                       <h4 className="classdetail-student-name">{s.name}</h4>
                       <p className="classdetail-student-meta mono">
-                        Age {s.age} &middot; {s.gender === 'M' ? 'Male' : 'Female'}
+                        {s.age != null ? `Age ${s.age} · ` : ''}{s.gender === 'M' ? 'Male' : 'Female'}
                       </p>
                     </div>
                     <span className={`badge badge-${status}`}>
@@ -170,17 +300,17 @@ export default function ClassDetail() {
                           <div
                             className="classdetail-rate-fill"
                             style={{
-                              width: `${s.attendanceRate}%`,
-                              background: s.attendanceRate >= 90 ? 'var(--green)' : s.attendanceRate >= 80 ? 'var(--yellow)' : 'var(--red)',
+                              width: `${rate}%`,
+                              background: rate >= 90 ? 'var(--green)' : rate >= 80 ? 'var(--yellow)' : 'var(--red)',
                             }}
                           />
                         </div>
-                        <span className="classdetail-rate-value mono">{s.attendanceRate}%</span>
+                        <span className="classdetail-rate-value mono">{rate}%</span>
                       </div>
                     </div>
                     <p className="classdetail-parent-name">Parent: {s.parent}</p>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -188,25 +318,29 @@ export default function ClassDetail() {
       </div>
 
       {/* WEEKLY ATTENDANCE CHART */}
-      <div className="card classdetail-chart-card classdetail-section">
-        <span className="tape tl" />
-        <div className="chart-head">
-          <h2>Weekly Attendance</h2>
-          <span className="classdetail-chart-subtitle accent">School-wide Weekly Trend</span>
+      {attLoading && !records?.length ? (
+        <SkeletonChart />
+      ) : (
+        <div className="card classdetail-chart-card classdetail-section">
+          <span className="tape tl" />
+          <div className="chart-head">
+            <h2>Weekly Attendance</h2>
+            <span className="classdetail-chart-subtitle accent">School-wide Weekly Trend</span>
+          </div>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={weekly}>
+              <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
+              <XAxis dataKey="day" fontSize={12} stroke="#1F1A12" />
+              <YAxis fontSize={12} stroke="#1F1A12" />
+              <Tooltip cursor={{ fill: 'rgba(31,26,18,0.06)' }} />
+              <Legend />
+              <Bar dataKey="present" fill="#4FA764" name="Present" radius={[2, 2, 0, 0]} />
+              <Bar dataKey="absent"  fill="#E04A3F" name="Absent"  radius={[2, 2, 0, 0]} />
+              <Bar dataKey="late"    fill="#EA8534" name="Late"    radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={weeklyAttendance}>
-            <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
-            <XAxis dataKey="day" fontSize={12} stroke="#1F1A12" />
-            <YAxis fontSize={12} stroke="#1F1A12" />
-            <Tooltip cursor={{ fill: 'rgba(31,26,18,0.06)' }} />
-            <Legend />
-            <Bar dataKey="present" fill="#4FA764" name="Present" radius={[2, 2, 0, 0]} />
-            <Bar dataKey="absent"  fill="#E04A3F" name="Absent"  radius={[2, 2, 0, 0]} />
-            <Bar dataKey="late"    fill="#EA8534" name="Late"    radius={[2, 2, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      )}
     </div>
   );
 }

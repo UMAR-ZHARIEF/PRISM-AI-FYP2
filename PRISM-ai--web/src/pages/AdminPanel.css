@@ -1069,3 +1069,58 @@
     justify-content: center;
   }
 }
+
+/* --- Wave 3: Supabase rewire additions --- */
+.admin-users-header-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.admin-log-target {
+  color: var(--ink-soft);
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.admin-log-metadata {
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  background: rgba(31, 26, 18, 0.05);
+  border: 1px dashed rgba(31, 26, 18, 0.18);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 80px;
+  overflow: auto;
+}
+
+.admin-loading-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+}
+
+.ai-status-unknown,
+.ai-status-inactive {
+  font-family: var(--display);
+  font-weight: 900;
+  color: var(--ink-soft);
+}
+
+.ai-status-training {
+  font-family: var(--display);
+  font-weight: 900;
+  color: var(--yellow);
+}
+
+@media (max-width: 640px) {
+  .admin-users-header-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}

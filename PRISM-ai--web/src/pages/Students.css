@@ -500,3 +500,12 @@
   .detail-stats { grid-template-columns: 1fr 1fr; }
   .detail-top { flex-direction: column; text-align: center; }
 }
+
+/* Skeleton card placeholder while Supabase data loads */
+.students-skeleton-card { min-height: 280px; display: flex; align-items: center; justify-content: center; }
+.students-skeleton-card .skeleton-card { width: 100%; }
+
+/* Inline error state */
+.students-error-state { border-left: 4px solid var(--red, #e74c3c); }
+.students-error-headline { font-family: 'Fraunces', serif; font-weight: 900; font-size: 1.25rem; margin-bottom: 0.5rem; color: var(--text); }
+.students-error-hint { font-family: 'Caveat', cursive; font-size: 1.1rem; color: var(--text-light); }

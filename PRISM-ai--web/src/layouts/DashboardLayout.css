@@ -120,6 +120,13 @@
 }
 .sidebar-footer .sidebar-link { color: var(--red); }
 .sidebar-footer .sidebar-link:hover { background: rgba(224, 74, 63, 0.14); color: var(--paper-light); }
+.sidebar-logout {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
 
 /* ============ MAIN ============ */
 .dashboard-main {
@@ -323,6 +330,13 @@
   border-bottom: 0;
   font-family: var(--body);
   font-size: 16px;
+}
+.user-panel button.dropdown-item {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
 }
 
 .text-danger { color: var(--red) !important; }

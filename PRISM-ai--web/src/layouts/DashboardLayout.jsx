@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, createContext, useContext } from 'react';
-import { Link, useLocation, Outlet } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
   Camera, UserCog, Search, ChevronDown, User, Video, ClipboardCheck, BarChart3
 } from 'lucide-react';
-import { notifications, years } from '../data/mockData';
+import { useAuth } from '../contexts/AuthContext';
+import useYears from '../hooks/useYears';
+import useNotifications from '../hooks/useNotifications';
 import './DashboardLayout.css';
 
 export const YearContext = createContext();
@@ -40,11 +42,30 @@ export default function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [role] = useState('admin');
   const [selectedYear, setSelectedYear] = useState(null);
   const location = useLocation();
+  const navigate = useNavigate();
   const notifRef = useRef(null);
   const userRef = useRef(null);
+
+  const { years, loading: yearsLoading } = useYears();
+  const { notifications, unreadCount, markAllRead } = useNotifications();
+  const { user, profile, signOut } = useAuth();
+
+  const role = profile?.role || 'admin';
+
+  const displayName = profile?.full_name || user?.email || 'Admin Hafiz';
+  const avatarInitials = useMemo(() => {
+    const source = profile?.full_name || user?.email || 'AH';
+    const parts = source.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return 'AH';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }, [profile, user]);
+  const roleLabel = useMemo(() => {
+    if (!role) return 'Administrator';
+    return role.charAt(0).toUpperCase() + role.slice(1);
+  }, [role]);
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -54,6 +75,12 @@ export default function DashboardLayout() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  const handleSignOut = async () => {
+    setUserMenuOpen(false);
+    await signOut();
+    navigate('/');
+  };
 
   const getPageTitle = () => {
     const path = location.pathname;
@@ -106,10 +133,10 @@ export default function DashboardLayout() {
         </nav>
 
         <div className="sidebar-footer">
-          <Link to="/login" className="sidebar-link">
+          <button type="button" className="sidebar-link sidebar-logout" onClick={handleSignOut}>
             <LogOut size={20} />
             {sidebarOpen && <span>Logout</span>}
-          </Link>
+          </button>
         </div>
       </aside>
 
@@ -128,10 +155,11 @@ export default function DashboardLayout() {
               className="year-dropdown"
               value={selectedYear ?? ''}
               onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+              disabled={yearsLoading && years.length === 0}
             >
-              <option value="">All Years</option>
+              <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
               {years.map(y => (
-                <option key={y} value={y}>Year {y}</option>
+                <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
               ))}
             </select>
           </div>
@@ -145,21 +173,21 @@ export default function DashboardLayout() {
             <div className="topbar-dropdown" ref={notifRef}>
               <button className="topbar-btn" onClick={() => { setNotifOpen(!notifOpen); setUserMenuOpen(false); }}>
                 <Bell size={20} />
-                <span className="notif-badge">{notifications.length}</span>
+                {unreadCount > 0 && <span className="notif-badge">{unreadCount}</span>}
               </button>
               {notifOpen && (
                 <div className="dropdown-panel notif-panel">
                   <div className="dropdown-header">
                     <h4>Notifications</h4>
-                    <button className="text-btn">Mark all read</button>
+                    <button className="text-btn" onClick={() => markAllRead()}>Mark all read</button>
                   </div>
                   <div className="dropdown-list">
                     {notifications.slice(0, 5).map(n => (
                       <div key={n.id} className={`dropdown-item notif-${n.type}`}>
                         <div className={`notif-dot dot-${n.type}`} />
                         <div>
-                          <p>{n.message}</p>
-                          <small>{n.time}</small>
+                          <p>{n.body || n.message}</p>
+                          <small>{n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : n.time}</small>
                         </div>
                       </div>
                     ))}
@@ -173,10 +201,10 @@ export default function DashboardLayout() {
 
             <div className="topbar-dropdown" ref={userRef}>
               <button className="topbar-user" onClick={() => { setUserMenuOpen(!userMenuOpen); setNotifOpen(false); }}>
-                <div className="avatar">AH</div>
+                <div className="avatar">{avatarInitials}</div>
                 <div className="user-info">
-                  <span className="user-name">Admin Hafiz</span>
-                  <small>Administrator</small>
+                  <span className="user-name">{displayName}</span>
+                  <small>{roleLabel}</small>
                 </div>
                 <ChevronDown size={14} />
               </button>
@@ -189,9 +217,9 @@ export default function DashboardLayout() {
                     <Settings size={16} /> Settings
                   </Link>
                   <div className="dropdown-divider" />
-                  <Link to="/login" className="dropdown-item text-danger" onClick={() => setUserMenuOpen(false)}>
+                  <button type="button" className="dropdown-item text-danger" onClick={handleSignOut}>
                     <LogOut size={16} /> Logout
-                  </Link>
+                  </button>
                 </div>
               )}
             </div>

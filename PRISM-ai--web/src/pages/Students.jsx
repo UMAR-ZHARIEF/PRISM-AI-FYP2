@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, FileUp, ArrowUp, ArrowDown } from 'lucide-react';
-import { students, classes, classColors, years } from '../data/mockData';
+import { classes, classColors, years } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
 import Pagination from '../components/Pagination';
+import useStudents from '../hooks/useStudents';
+import { SkeletonCard } from '../components/Skeleton';
 import './Students.css';
 
 export default function Students() {
@@ -45,6 +47,30 @@ export default function Students() {
   useEffect(() => {
     setFilterYear(selectedYear ? String(selectedYear) : 'all');
   }, [selectedYear]);
+
+  // Load students from Supabase. When filterYear === 'all', pass undefined so the hook returns all years.
+  const hookYear = filterYear === 'all' ? undefined : Number(filterYear);
+  const { students: dbStudents, loading, error } = useStudents({ year: hookYear });
+
+  // Normalize DB rows into the legacy UI shape so the rest of this page can render unchanged.
+  // attendanceRate is intentionally null until per-student attendance queries are wired up.
+  const students = useMemo(() => (dbStudents || []).map(row => ({
+    id: row.id,
+    name: row.full_name || '',
+    year: row.year_num,
+    class: row.class_section?.name || '',
+    classId: row.class_section_id,
+    classColor: row.class_section?.color || classColors[row.class_section?.name] || null,
+    gender: (row.gender || '').toUpperCase().startsWith('F') ? 'F' : 'M',
+    dob: row.dob || null,
+    age: null,
+    photoUrl: row.photo_url || null,
+    attendanceRate: null,
+    faceRegistered: false,
+    parent: '',
+    parentEmail: '',
+    parentPhone: '',
+  })), [dbStudents]);
 
   const filtered = students.filter(s => {
     const matchYear = filterYear === 'all' || s.year === Number(filterYear);
@@ -98,7 +124,8 @@ export default function Students() {
   // Stats based on year-filtered students
   const yearStudents = filterYear === 'all' ? students : students.filter(s => s.year === Number(filterYear));
   const faceRegistered = yearStudents.filter(s => s.faceRegistered).length;
-  const avgRate = yearStudents.length > 0 ? Math.round(yearStudents.reduce((sum, s) => sum + s.attendanceRate, 0) / yearStudents.length) : 0;
+  const ratedStudents = yearStudents.filter(s => typeof s.attendanceRate === 'number');
+  const avgRate = ratedStudents.length > 0 ? Math.round(ratedStudents.reduce((sum, s) => sum + s.attendanceRate, 0) / ratedStudents.length) : null;
 
   const resetForm = () => {
     setFormName('');
@@ -163,7 +190,7 @@ export default function Students() {
         </div>
         <div className="stat-card">
           <div className="icon-box" style={{ background: '#DBEAFE' }}><Eye size={22} color="var(--info)" /></div>
-          <div className="stat-info"><h3>{avgRate}%</h3><p>Avg Attendance</p></div>
+          <div className="stat-info"><h3>{avgRate == null ? '—' : `${avgRate}%`}</h3><p>Avg Attendance</p></div>
         </div>
         <div className="stat-card">
           <div className="icon-box" style={{ background: '#FEF3C7' }}><Grid3X3 size={22} color="var(--warning)" /></div>
@@ -198,8 +225,22 @@ export default function Students() {
         </div>
       </div>
 
-      {/* EMPTY STATE */}
-      {filtered.length === 0 ? (
+      {/* LOADING STATE */}
+      {loading ? (
+        <div className="students-grid">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="student-card students-skeleton-card">
+              <SkeletonCard />
+            </div>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="card students-error-state" style={{ textAlign: 'center', padding: '60px 20px' }}>
+          <p className="students-error-headline">Could not load students.</p>
+          <p className="students-error-hint">{error.message || 'Try refreshing the page.'}</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        /* EMPTY STATE */
         <div className="card" style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-light)' }}>
           <p>No students match your search or filter.</p>
         </div>
@@ -211,13 +252,18 @@ export default function Students() {
             const tapeSpots = ['tl', 'tr', 'br', 'bl'];
             const avatarColor = colors[index % colors.length];
             const tapeSpot = tapeSpots[index % tapeSpots.length];
-            const initials = s.name.split(' ').map(n => n[0]).join('').slice(0, 2);
+            const initials = (s.name || '').split(' ').map(n => n[0]).join('').slice(0, 2);
+            const hasRate = typeof s.attendanceRate === 'number';
             return (
               <div key={s.id} className="student-card">
                 <span className={`tape ${tapeSpot}`} />
-                <div className={`student-avatar-lg avatar ${avatarColor}`}>{initials}</div>
+                {s.photoUrl ? (
+                  <img src={s.photoUrl} alt={s.name} className={`student-avatar-lg avatar ${avatarColor}`} />
+                ) : (
+                  <div className={`student-avatar-lg avatar ${avatarColor}`}>{initials}</div>
+                )}
                 <h3 className="student-name"><Link to={`/dashboard/students/${s.id}`} className="pencil-link">{s.name}</Link></h3>
-                <p className="student-meta mono">Year {s.year} &middot; {s.class} &middot; Age {s.age} &middot; {s.gender === 'M' ? 'Male' : 'Female'}</p>
+                <p className="student-meta mono">Year {s.year} &middot; {s.class} &middot; Age {s.age ?? '—'} &middot; {s.gender === 'M' ? 'Male' : 'Female'}</p>
                 <div className="student-pill-row">
                   {s.faceRegistered ? (
                     <span className="badge badge-info"><CheckCircle size={12} /> Face Registered</span>
@@ -227,12 +273,12 @@ export default function Students() {
                 </div>
                 <div className="student-attendance-block">
                   <span className="accent attendance-kicker">Attendance</span>
-                  <strong className="attendance-num">{s.attendanceRate}<span className="attendance-pct">%</span></strong>
+                  <strong className="attendance-num">{hasRate ? s.attendanceRate : '—'}{hasRate && <span className="attendance-pct">%</span>}</strong>
                   <div className="attendance-track">
-                    <div className="attendance-fill" style={{ width: `${s.attendanceRate}%`, background: s.attendanceRate >= 90 ? 'var(--green)' : s.attendanceRate >= 80 ? 'var(--yellow)' : 'var(--red)' }} />
+                    <div className="attendance-fill" style={{ width: hasRate ? `${s.attendanceRate}%` : '0%', background: hasRate ? (s.attendanceRate >= 90 ? 'var(--green)' : s.attendanceRate >= 80 ? 'var(--yellow)' : 'var(--red)') : 'var(--text-light)' }} />
                   </div>
                 </div>
-                <p className="student-parent">Parent: {s.parent}</p>
+                <p className="student-parent">Parent: {s.parent || '—'}</p>
                 <div className="student-actions">
                   <button className="btn btn-outline btn-sm-grid" onClick={() => setSelectedStudent(s)}><Eye size={14} /> View</button>
                   <button className="btn btn-warm btn-sm-grid" onClick={() => toast('Edit mode opened', 'info')}><Edit3 size={14} /> Edit</button>
@@ -261,25 +307,27 @@ export default function Students() {
                 </tr>
               </thead>
               <tbody>
-                {paged.map(s => (
+                {paged.map(s => {
+                  const hasRate = typeof s.attendanceRate === 'number';
+                  return (
                   <tr key={s.id}>
                     <td>
                       <div className="table-student-name">
-                        <div className="avatar">{s.name.split(' ').map(n => n[0]).join('')}</div>
+                        <div className="avatar">{(s.name || '').split(' ').map(n => n[0]).join('')}</div>
                         <Link to={`/dashboard/students/${s.id}`} className="pencil-link">{s.name}</Link>
                       </div>
                     </td>
                     <td><span className="badge badge-info" style={{ fontSize: '0.75rem' }}>Year {s.year}</span></td>
                     <td><span className="class-badge" style={{ borderColor: classColors[s.class], color: classColors[s.class] }}>{s.class}</span></td>
-                    <td>{s.age}</td>
+                    <td>{s.age ?? '—'}</td>
                     <td>{s.gender === 'M' ? 'Male' : 'Female'}</td>
-                    <td>{s.parent}</td>
-                    <td>{s.parentPhone}</td>
+                    <td>{s.parent || '—'}</td>
+                    <td>{s.parentPhone || '—'}</td>
                     <td>{s.faceRegistered ? <CheckCircle size={16} color="var(--success)" /> : <XCircle size={16} color="var(--danger)" />}</td>
                     <td>
                       <div className="table-attendance">
-                        <div className="mini-progress"><div className="mini-fill" style={{ width: `${s.attendanceRate}%` }} /></div>
-                        <span className="table-attendance-text">{s.attendanceRate}%</span>
+                        <div className="mini-progress"><div className="mini-fill" style={{ width: hasRate ? `${s.attendanceRate}%` : '0%' }} /></div>
+                        <span className="table-attendance-text">{hasRate ? `${s.attendanceRate}%` : '—'}</span>
                       </div>
                     </td>
                     <td>
@@ -289,7 +337,8 @@ export default function Students() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -305,25 +354,29 @@ export default function Students() {
               <button className="modal-close-btn" onClick={() => setSelectedStudent(null)}><X size={20} /></button>
             </div>
             <div className="detail-top">
-              <div className="detail-avatar"><User size={40} /></div>
+              {selectedStudent.photoUrl ? (
+                <img src={selectedStudent.photoUrl} alt={selectedStudent.name} className="detail-avatar" />
+              ) : (
+                <div className="detail-avatar"><User size={40} /></div>
+              )}
               <div>
                 <h2 className="detail-name">{selectedStudent.name}</h2>
                 <p className="detail-subtitle">
-                  Year {selectedStudent.year} &bull; {selectedStudent.class} &bull; Age {selectedStudent.age} &bull; {selectedStudent.gender === 'M' ? 'Male' : 'Female'}
+                  Year {selectedStudent.year} &bull; {selectedStudent.class} &bull; Age {selectedStudent.age ?? '—'} &bull; {selectedStudent.gender === 'M' ? 'Male' : 'Female'}
                 </p>
               </div>
             </div>
             <div className="detail-stats">
               <div className="detail-stat">
-                <h4>{selectedStudent.attendanceRate}%</h4>
+                <h4>{typeof selectedStudent.attendanceRate === 'number' ? `${selectedStudent.attendanceRate}%` : '—'}</h4>
                 <p>Attendance Rate</p>
               </div>
               <div className="detail-stat">
-                <h4>{Math.round(selectedStudent.attendanceRate * 0.22)}</h4>
+                <h4>{typeof selectedStudent.attendanceRate === 'number' ? Math.round(selectedStudent.attendanceRate * 0.22) : '—'}</h4>
                 <p>Days Present</p>
               </div>
               <div className="detail-stat">
-                <h4>{22 - Math.round(selectedStudent.attendanceRate * 0.22)}</h4>
+                <h4>{typeof selectedStudent.attendanceRate === 'number' ? 22 - Math.round(selectedStudent.attendanceRate * 0.22) : '—'}</h4>
                 <p>Days Absent</p>
               </div>
               <div className="detail-stat">
@@ -334,9 +387,9 @@ export default function Students() {
             <div className="detail-section">
               <h3>Parent Information</h3>
               <div className="detail-info-grid">
-                <div><label>Parent Name</label><p>{selectedStudent.parent}</p></div>
-                <div><label>Email</label><p>{selectedStudent.parentEmail}</p></div>
-                <div><label>Phone</label><p>{selectedStudent.parentPhone}</p></div>
+                <div><label>Parent Name</label><p>{selectedStudent.parent || '—'}</p></div>
+                <div><label>Email</label><p>{selectedStudent.parentEmail || '—'}</p></div>
+                <div><label>Phone</label><p>{selectedStudent.parentPhone || '—'}</p></div>
               </div>
             </div>
           </div>

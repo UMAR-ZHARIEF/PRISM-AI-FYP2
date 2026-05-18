@@ -3,6 +3,17 @@
 # Node
 node_modules/
 npm-debug.log
+scripts/node_modules/
+
+# Local script secrets
+scripts/.env
+scripts/.env.*
+
+# Build output
+dist/
+build/
+
+# Environment
 .env
 .env.local
 

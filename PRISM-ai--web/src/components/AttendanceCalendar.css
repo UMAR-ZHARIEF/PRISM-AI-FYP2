@@ -196,6 +196,35 @@
 .att-cal-week:nth-child(even) .att-cal-cell:nth-child(4) { clip-path: var(--cut-1); }
 .att-cal-week:nth-child(3n) .att-cal-cell:nth-child(3) { clip-path: var(--cut-4); }
 
+/* ---------- Loading skeleton cells ---------- */
+.att-cal-cell.cal-loading {
+  background: var(--paper-deep);
+  cursor: progress;
+  animation: att-cal-pulse 1.4s ease-in-out infinite;
+  border-bottom: none;
+}
+.att-cal-cell.cal-loading .att-cal-day {
+  color: var(--ink-faint);
+}
+@keyframes att-cal-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.85; }
+}
+
+/* ---------- Inline error notice ---------- */
+.att-cal-error {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  background: var(--paper-deep);
+  border: 2px dashed var(--red);
+  clip-path: var(--cut-1);
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--red);
+  transform: rotate(-0.4deg);
+}
+
 /* ---------- Month stats strip ---------- */
 .att-cal-stats {
   display: flex;

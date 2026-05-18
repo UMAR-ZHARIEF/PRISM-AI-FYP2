@@ -486,6 +486,50 @@
   transform: rotate(-1deg);
 }
 
+/* ---------- Loading + error states ---------- */
+.sprofile-loading,
+.sprofile-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 24px;
+  text-align: center;
+}
+.sprofile-loading p {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--ink-soft);
+  margin: 0;
+  transform: rotate(-1deg);
+}
+.sprofile-error h3 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 26px;
+  color: var(--ink);
+  margin: 0;
+}
+.sprofile-error p {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--red);
+  margin: 0;
+  transform: rotate(-1deg);
+}
+
+.sprofile-note-error {
+  margin: 8px 0 0;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--red);
+  transform: rotate(-0.5deg);
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
   .sprofile-info-row {

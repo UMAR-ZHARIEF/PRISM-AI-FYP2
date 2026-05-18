@@ -1,8 +1,13 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { users, auditLogs, classes, classColors, aiModelHistory, students, years } from '../data/mockData';
+import { classes, classColors, aiModelHistory, years } from '../data/mockData';
+import useProfiles from '../hooks/useProfiles';
+import useAuditLogs from '../hooks/useAuditLogs';
+import useAiModels from '../hooks/useAiModels';
+import useStudents from '../hooks/useStudents';
 import { useToast } from '../components/Toast';
+import { SkeletonTable } from '../components/Skeleton';
 import Pagination from '../components/Pagination';
 import './AdminPanel.css';
 
@@ -31,20 +36,33 @@ export default function AdminPanel() {
   const [formClass, setFormClass] = useState('');
   const [formErrors, setFormErrors] = useState({});
 
+  // User Management filter
+  const [roleFilter, setRoleFilter] = useState('all');
+
   // Face Registration state
-  const [faceStatus, setFaceStatus] = useState(() => {
-    const init = {};
-    students.forEach(s => { init[s.id] = s.faceRegistered; });
-    return init;
-  });
   const [faceYearFilter, setFaceYearFilter] = useState('all');
   const [faceClassFilter, setFaceClassFilter] = useState('all');
   const [faceStatusFilter, setFaceStatusFilter] = useState('all');
-  const [capturingStudent, setCapturingStudent] = useState(null);
-  const [capturePhase, setCapturePhase] = useState(null); // 'capturing' | 'processing' | 'done'
   const [facePage, setFacePage] = useState(1);
 
-  const filteredLogs = logFilter === 'all' ? auditLogs : auditLogs.filter(l => l.type === logFilter);
+  // --- Supabase-backed data ---
+  const profilesArgs = roleFilter === 'all' ? {} : { role: roleFilter };
+  const { profiles, loading: profilesLoading, error: profilesError } = useProfiles(profilesArgs);
+  const { logs: auditLogsData, loading: logsLoading, error: logsError } = useAuditLogs({ limit: 100 });
+  const { models: aiModels, loading: modelsLoading, error: modelsError } = useAiModels();
+  const { students: studentList, loading: studentsLoading, error: studentsError } = useStudents();
+
+  // face_registered is NOT yet on the students table — default everyone to false.
+  const faceStatus = useMemo(() => {
+    const map = {};
+    studentList.forEach(s => { map[s.id] = false; });
+    return map;
+  }, [studentList]);
+
+  // --- Audit log filtering (client-side on target_type) ---
+  const filteredLogs = logFilter === 'all'
+    ? auditLogsData
+    : auditLogsData.filter(l => (l.target_type || '').toLowerCase() === logFilter);
 
   // Sort users
   const handleSort = (col) => {
@@ -57,7 +75,7 @@ export default function AdminPanel() {
     setUserPage(1);
   };
 
-  const sortedUsers = [...users].sort((a, b) => {
+  const sortedUsers = [...profiles].sort((a, b) => {
     if (!sortCol) return 0;
     const aVal = (a[sortCol] || '').toString().toLowerCase();
     const bVal = (b[sortCol] || '').toString().toLowerCase();
@@ -78,6 +96,11 @@ export default function AdminPanel() {
   const handleLogFilter = (f) => {
     setLogFilter(f);
     setLogPage(1);
+  };
+
+  const handleRoleFilter = (r) => {
+    setRoleFilter(r);
+    setUserPage(1);
   };
 
   // Sort indicator
@@ -108,7 +131,7 @@ export default function AdminPanel() {
     setFormRole('teacher');
     setFormClass('');
     setFormErrors({});
-    toast('User added successfully', 'success');
+    toast('Coming soon', 'info');
   };
 
   const handleCloseModal = () => {
@@ -121,16 +144,17 @@ export default function AdminPanel() {
   };
 
   // Face Registration helpers
-  const faceFilteredStudents = students.filter(s => {
-    if (faceYearFilter !== 'all' && s.year !== Number(faceYearFilter)) return false;
-    if (faceClassFilter !== 'all' && s.class !== faceClassFilter) return false;
+  const faceFilteredStudents = studentList.filter(s => {
+    if (faceYearFilter !== 'all' && s.year_num !== Number(faceYearFilter)) return false;
+    const className = s.class_section?.name;
+    if (faceClassFilter !== 'all' && className !== faceClassFilter) return false;
     if (faceStatusFilter === 'registered' && !faceStatus[s.id]) return false;
     if (faceStatusFilter === 'not_registered' && faceStatus[s.id]) return false;
     return true;
   });
 
-  const totalFaces = students.length;
-  const registeredFaces = students.filter(s => faceStatus[s.id]).length;
+  const totalFaces = studentList.length;
+  const registeredFaces = studentList.filter(s => faceStatus[s.id]).length;
   const notRegisteredFaces = totalFaces - registeredFaces;
   const registrationRate = totalFaces > 0 ? Math.round((registeredFaces / totalFaces) * 100) : 0;
 
@@ -145,7 +169,7 @@ export default function AdminPanel() {
     const groups = [];
     filteredYears.forEach(y => {
       filteredClasses.forEach(c => {
-        const classStudents = students.filter(s => s.year === y && s.class === c);
+        const classStudents = studentList.filter(s => s.year_num === y && s.class_section?.name === c);
         if (classStudents.length === 0) return;
         const reg = classStudents.filter(s => faceStatus[s.id]).length;
         groups.push({ year: y, class: c, registered: reg, total: classStudents.length, pct: Math.round((reg / classStudents.length) * 100) });
@@ -154,37 +178,42 @@ export default function AdminPanel() {
     return groups;
   };
 
-  const handleRegisterFace = (student) => {
-    setCapturingStudent(student);
-    setCapturePhase('capturing');
-    setTimeout(() => setCapturePhase('processing'), 2000);
-    setTimeout(() => {
-      setCapturePhase('done');
-      setFaceStatus(prev => ({ ...prev, [student.id]: true }));
-      setTimeout(() => {
-        setCapturingStudent(null);
-        setCapturePhase(null);
-        toast(`Face registered for ${student.name}`, 'success');
-      }, 800);
-    }, 3000);
+  const handleRegisterFace = () => {
+    toast('Coming soon', 'info');
   };
 
-  const handleRemoveFace = (student) => {
-    setFaceStatus(prev => ({ ...prev, [student.id]: false }));
-    toast(`Face registration removed for ${student.name}`, 'warning');
+  const handleRemoveFace = () => {
+    toast('Coming soon', 'info');
   };
 
   const classColorMap = { Bestari: 'b', Bijak: 'r', Cerdik: 'g', Cerdas: 'o', Pandai: 'y' };
 
   const overviewStats = [
-    { label: 'Total Users', value: users.length, icon: Users, variant: 's-blue', tape: 'tl' },
+    { label: 'Total Users', value: profiles.length, icon: Users, variant: 's-blue', tape: 'tl' },
     { label: 'Active Cameras', value: 2, icon: Wifi, variant: 's-green', tape: 'tr' },
     { label: 'System Uptime', value: '99.5%', icon: Server, variant: 's-yellow', tape: 'bl' },
     { label: 'AI Accuracy', value: '95.5%', icon: Cpu, variant: 's-orange', tape: 'br' },
   ];
 
-  const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', assistant: 'badge-assistant' };
+  const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', assistant: 'badge-assistant', parent: 'badge-teacher' };
   const avatarColors = ['r', 'y', 'g', 'o', 'k'];
+
+  // --- formatters ---
+  const formatTimestamp = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  };
+
+  const formatDate = (iso) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' });
+  };
+
+  const getInitials = (name) => (name || '?').split(' ').map(n => n[0]).filter(Boolean).join('').slice(0, 2).toUpperCase();
 
   return (
     <div className="admin-page">
@@ -232,47 +261,69 @@ export default function AdminPanel() {
             <div>
               <h2>Users</h2>
             </div>
-            <button className="btn btn-yellow" onClick={() => setShowModal(true)}><Plus size={16} /> Add User</button>
+            <div className="admin-users-header-controls">
+              <div className="face-filter-group">
+                <Filter size={16} />
+                <select value={roleFilter} onChange={e => handleRoleFilter(e.target.value)}>
+                  <option value="all">All Roles</option>
+                  <option value="admin">Admin</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="assistant">Assistant</option>
+                  <option value="parent">Parent</option>
+                </select>
+              </div>
+              <button className="btn btn-yellow" onClick={() => setShowModal(true)}><Plus size={16} /> Add User</button>
+            </div>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th className="sortable" onClick={() => handleSort('name')}>User <SortIcon col="name" /></th>
-                <th className="sortable" onClick={() => handleSort('email')}>Email <SortIcon col="email" /></th>
-                <th className="sortable" onClick={() => handleSort('role')}>Role <SortIcon col="role" /></th>
-                <th>Class</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paginatedUsers.length === 0 ? (
-                <tr><td colSpan={6} className="empty-state">No results found.</td></tr>
-              ) : (
-                paginatedUsers.map((u, i) => (
-                  <tr key={u.id}>
-                    <td>
-                      <div className="admin-user-cell">
-                        <div className={`avatar ${avatarColors[i % avatarColors.length]}`}>{u.name.split(' ').map(n => n[0]).join('')}</div>
-                        {u.name}
-                      </div>
-                    </td>
-                    <td className="mono admin-cell-email">{u.email}</td>
-                    <td><span className={`badge ${roleBadge[u.role] || 'badge-teacher'}`}>{u.role.charAt(0).toUpperCase() + u.role.slice(1)}</span></td>
-                    <td>{u.class || '—'}</td>
-                    <td><span className={`status-indicator ${u.status}`}><span className="status-dot" /> {u.status.charAt(0).toUpperCase() + u.status.slice(1)}</span></td>
-                    <td>
-                      <div className="admin-action-btns">
-                        <button className="btn btn-outline btn-icon" onClick={() => toast('Edit mode opened', 'info')}><Edit3 size={14} /></button>
-                        <button className="btn btn-danger btn-icon" onClick={() => toast('User deleted', 'error')}><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-          <Pagination currentPage={userPage} totalPages={totalUserPages} onPageChange={setUserPage} />
+          {profilesLoading ? (
+            <SkeletonTable rows={6} cols={5} />
+          ) : profilesError ? (
+            <div className="empty-state admin-empty">Could not load users. Please try again.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th className="sortable" onClick={() => handleSort('full_name')}>User <SortIcon col="full_name" /></th>
+                  <th className="sortable" onClick={() => handleSort('role')}>Role <SortIcon col="role" /></th>
+                  <th>Phone</th>
+                  <th>Email</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedUsers.length === 0 ? (
+                  <tr><td colSpan={5} className="empty-state">No results found.</td></tr>
+                ) : (
+                  paginatedUsers.map((u, i) => (
+                    <tr key={u.id}>
+                      <td>
+                        <div className="admin-user-cell">
+                          {u.avatar_url ? (
+                            <img src={u.avatar_url} alt={u.full_name} className={`avatar ${avatarColors[i % avatarColors.length]}`} />
+                          ) : (
+                            <div className={`avatar ${avatarColors[i % avatarColors.length]}`}>{getInitials(u.full_name)}</div>
+                          )}
+                          {u.full_name || '—'}
+                        </div>
+                      </td>
+                      <td><span className={`badge ${roleBadge[u.role] || 'badge-teacher'}`}>{(u.role || '').charAt(0).toUpperCase() + (u.role || '').slice(1)}</span></td>
+                      <td className="mono">{u.phone || '—'}</td>
+                      <td className="mono admin-cell-email">—</td>
+                      <td>
+                        <div className="admin-action-btns">
+                          <button className="btn btn-outline btn-icon" onClick={() => toast('Coming soon', 'info')}><Edit3 size={14} /></button>
+                          <button className="btn btn-danger btn-icon" onClick={() => toast('Coming soon', 'info')}><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          )}
+          {!profilesLoading && !profilesError && totalUserPages > 1 && (
+            <Pagination currentPage={userPage} totalPages={totalUserPages} onPageChange={setUserPage} />
+          )}
         </div>
       )}
 
@@ -348,84 +399,100 @@ export default function AdminPanel() {
               ))}
             </div>
           </div>
-          {paginatedLogs.length === 0 ? (
+          {logsLoading ? (
+            <div className="admin-loading-block">
+              <div className="skeleton-line w-40" />
+              <div className="skeleton-line w-60" />
+              <div className="skeleton-line w-30" />
+              <div className="skeleton-line w-60" />
+              <div className="skeleton-line w-40" />
+            </div>
+          ) : logsError ? (
+            <div className="empty-state admin-empty">Could not load audit logs. Please try again.</div>
+          ) : paginatedLogs.length === 0 ? (
             <div className="empty-state admin-empty">No results found.</div>
           ) : (
             <ul className="admin-timeline">
-              {paginatedLogs.map((log, i) => (
-                <li key={log.id} className={`admin-timeline-item type-${log.type}`}>
-                  <span className="timeline-dot" />
-                  <div className="timeline-time mono">{log.timestamp}</div>
-                  <div className="timeline-body">
-                    <div className="timeline-head">
-                      <div className="admin-user-cell">
-                        <div className={`avatar ${avatarColors[i % avatarColors.length]}`}>{log.user.split(' ').map(n => n[0]).join('')}</div>
-                        <strong>{log.user}</strong>
+              {paginatedLogs.map((log, i) => {
+                const actorName = log.actor?.full_name || 'System';
+                const targetLabel = log.target_type
+                  ? `${log.target_type}${log.target_id ? ` #${String(log.target_id).slice(0, 8)}` : ''}`
+                  : '';
+                const typeKey = (log.target_type || 'system').toLowerCase();
+                return (
+                  <li key={log.id} className={`admin-timeline-item type-${typeKey}`}>
+                    <span className="timeline-dot" />
+                    <div className="timeline-time mono">{formatTimestamp(log.created_at)}</div>
+                    <div className="timeline-body">
+                      <div className="timeline-head">
+                        <div className="admin-user-cell">
+                          <div className={`avatar ${avatarColors[i % avatarColors.length]}`}>{getInitials(actorName)}</div>
+                          <strong>{actorName}</strong>
+                        </div>
+                        {log.target_type && (
+                          <span className={`badge badge-log-${typeKey}`}>{log.target_type.charAt(0).toUpperCase() + log.target_type.slice(1)}</span>
+                        )}
                       </div>
-                      <span className={`badge badge-log-${log.type}`}>{log.type.charAt(0).toUpperCase() + log.type.slice(1)}</span>
+                      <p className="timeline-action">
+                        {log.action}{targetLabel ? <span className="mono admin-log-target"> &bull; {targetLabel}</span> : null}
+                      </p>
+                      {log.metadata && Object.keys(log.metadata).length > 0 && (
+                        <pre className="admin-log-metadata mono">{JSON.stringify(log.metadata, null, 0)}</pre>
+                      )}
                     </div>
-                    <p className="timeline-action">{log.action}</p>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
-          <Pagination currentPage={logPage} totalPages={totalLogPages} onPageChange={setLogPage} />
+          {!logsLoading && !logsError && totalLogPages > 1 && (
+            <Pagination currentPage={logPage} totalPages={totalLogPages} onPageChange={setLogPage} />
+          )}
         </div>
       )}
 
       {/* AI TAB */}
       {tab === 'ai' && (
         <div>
-          <div className="ai-status-grid">
-            <div className="card admin-card ai-card-active">
-              <span className="tape tl" />
-              <div className="ai-status-indicator" />
-              <h3>Face Recognition Model</h3>
-              <p>Status: <strong className="ai-status-active">Active</strong></p>
-              <small className="mono">PyTorch v2.1 &bull; Last updated: 2026-03-25</small>
-              <div className="ai-actions">
-                <button className="btn btn-outline" onClick={() => toast('Model restarting...', 'info')}><Power size={14} /> Restart</button>
-                <button className="btn btn-yellow" onClick={() => toast('Retraining initiated', 'info')}><RefreshCw size={14} /> Retrain</button>
-              </div>
+          {modelsLoading ? (
+            <div className="ai-status-grid">
+              <div className="card admin-card"><div className="skeleton-line w-40" /><div className="skeleton-line w-60" /><div className="skeleton-line w-30" /></div>
+              <div className="card admin-card"><div className="skeleton-line w-40" /><div className="skeleton-line w-60" /><div className="skeleton-line w-30" /></div>
+              <div className="card admin-card"><div className="skeleton-line w-40" /><div className="skeleton-line w-60" /><div className="skeleton-line w-30" /></div>
             </div>
-
-            <div className="card admin-card ai-metrics-card">
-              <span className="tape tr" />
-              <h3 className="ai-section-title">Performance Metrics</h3>
-              <div className="ai-metric">
-                <span>Accuracy</span>
-                <div className="progress-bar"><div className="progress-fill fill-green" style={{ width: '95.5%' }} /></div>
-                <strong className="mono">95.5%</strong>
-              </div>
-              <div className="ai-metric">
-                <span>Response Time</span>
-                <div className="progress-bar"><div className="progress-fill fill-blue" style={{ width: '85%' }} /></div>
-                <strong className="mono">120ms</strong>
-              </div>
-              <div className="ai-metric">
-                <span>Faces Registered</span>
-                <div className="progress-bar"><div className="progress-fill fill-yellow" style={{ width: '80%' }} /></div>
-                <strong className="mono">12/15</strong>
-              </div>
-              <div className="ai-metric">
-                <span>Daily Recognitions</span>
-                <div className="progress-bar"><div className="progress-fill fill-orange" style={{ width: '90%' }} /></div>
-                <strong className="mono">48 today</strong>
-              </div>
+          ) : modelsError ? (
+            <div className="card admin-card"><div className="empty-state admin-empty">Could not load AI models. Please try again.</div></div>
+          ) : aiModels.length === 0 ? (
+            <div className="card admin-card"><div className="empty-state admin-empty">No AI models found.</div></div>
+          ) : (
+            <div className="ai-status-grid">
+              {aiModels.map((m, i) => {
+                const tapes = ['tl', 'tr', 'br', 'bl'];
+                const accuracyPct = m.accuracy != null ? Math.round(Number(m.accuracy) * 100) / 100 : null;
+                const statusKey = (m.status || 'unknown').toLowerCase();
+                return (
+                  <div key={m.id} className="card admin-card ai-card-active">
+                    <span className={`tape ${tapes[i % tapes.length]}`} />
+                    <div className="ai-status-indicator" />
+                    <h3>{m.name || 'Untitled Model'}</h3>
+                    <p>Status: <strong className={`ai-status-${statusKey}`}>{(m.status || 'Unknown').charAt(0).toUpperCase() + (m.status || 'unknown').slice(1)}</strong></p>
+                    <small className="mono">{m.version ? `${m.version} ` : ''}&bull; Deployed: {formatDate(m.deployed_at)}</small>
+                    {accuracyPct != null && (
+                      <div className="ai-metric admin-section-gap">
+                        <span>Accuracy</span>
+                        <div className="progress-bar"><div className="progress-fill fill-green" style={{ width: `${Math.min(100, accuracyPct)}%` }} /></div>
+                        <strong className="mono">{accuracyPct}%</strong>
+                      </div>
+                    )}
+                    <div className="ai-actions">
+                      <button className="btn btn-outline" onClick={() => toast('Coming soon', 'info')}><Power size={14} /> Restart</button>
+                      <button className="btn btn-yellow" onClick={() => toast('Coming soon', 'info')}><RefreshCw size={14} /> Retrain</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-
-            <div className="card admin-card ai-actions-card">
-              <span className="tape br" />
-              <h3 className="ai-section-title">Quick Actions</h3>
-              <div className="ai-quick-actions">
-                <button className="btn btn-outline" onClick={() => toast('Model exported', 'success')}><Download size={14} /> Export Model</button>
-                <button className="btn btn-outline"><Activity size={14} /> View Logs</button>
-                <button className="btn btn-outline"><Download size={14} /> Download Report</button>
-                <button className="btn btn-danger" onClick={() => toast('Cache cleared', 'warning')}><Trash2 size={14} /> Clear Cache</button>
-              </div>
-            </div>
-          </div>
+          )}
 
           <div className="card admin-card admin-chart-card admin-section-gap">
             <span className="tape tl" />
@@ -451,160 +518,152 @@ export default function AdminPanel() {
       {/* FACE REGISTRATION TAB */}
       {tab === 'faces' && (
         <div className="face-reg-section">
-          {/* Stats */}
-          <div className="grid-4 face-stats-row">
-            <div className="stat-card s-blue reveal reveal-1">
-              <span className="tape tl" />
-              <div className="icon-box"><Users size={22} /></div>
-              <div className="stat-info"><h3>{totalFaces}</h3><p>Total Students</p></div>
+          {studentsLoading ? (
+            <div className="card admin-card">
+              <div className="skeleton-line w-40" />
+              <div className="skeleton-line w-60" />
+              <div className="skeleton-line w-30" />
+              <div className="skeleton-line w-60" />
             </div>
-            <div className="stat-card s-green reveal reveal-2">
-              <span className="tape tr" />
-              <div className="icon-box"><UserCheck size={22} /></div>
-              <div className="stat-info"><h3>{registeredFaces}</h3><p>Faces Registered</p></div>
-            </div>
-            <div className="stat-card s-red reveal reveal-3">
-              <span className="tape bl" />
-              <div className="icon-box"><UserX size={22} /></div>
-              <div className="stat-info"><h3>{notRegisteredFaces}</h3><p>Not Registered</p></div>
-            </div>
-            <div className="stat-card s-yellow reveal reveal-4">
-              <span className="tape br" />
-              <div className="icon-box"><ScanFace size={22} /></div>
-              <div className="stat-info"><h3>{registrationRate}%</h3><p>Registration Rate</p></div>
-            </div>
-          </div>
+          ) : studentsError ? (
+            <div className="card admin-card"><div className="empty-state admin-empty">Could not load students. Please try again.</div></div>
+          ) : (
+            <>
+              {/* Stats */}
+              <div className="grid-4 face-stats-row">
+                <div className="stat-card s-blue reveal reveal-1">
+                  <span className="tape tl" />
+                  <div className="icon-box"><Users size={22} /></div>
+                  <div className="stat-info"><h3>{totalFaces}</h3><p>Total Students</p></div>
+                </div>
+                <div className="stat-card s-green reveal reveal-2">
+                  <span className="tape tr" />
+                  <div className="icon-box"><UserCheck size={22} /></div>
+                  <div className="stat-info"><h3>{registeredFaces}</h3><p>Faces Registered</p></div>
+                </div>
+                <div className="stat-card s-red reveal reveal-3">
+                  <span className="tape bl" />
+                  <div className="icon-box"><UserX size={22} /></div>
+                  <div className="stat-info"><h3>{notRegisteredFaces}</h3><p>Not Registered</p></div>
+                </div>
+                <div className="stat-card s-yellow reveal reveal-4">
+                  <span className="tape br" />
+                  <div className="icon-box"><ScanFace size={22} /></div>
+                  <div className="stat-info"><h3>{registrationRate}%</h3><p>Registration Rate</p></div>
+                </div>
+              </div>
 
-          {/* Filters */}
-          <div className="card admin-card face-filters-card">
-            <span className="tape tl" />
-            <div className="face-filters">
-              <div className="face-filter-group">
-                <Filter size={16} />
-                <select value={faceYearFilter} onChange={e => { setFaceYearFilter(e.target.value); setFacePage(1); }}>
-                  <option value="all">All Years</option>
-                  {years.map(y => <option key={y} value={y}>Year {y}</option>)}
-                </select>
-              </div>
-              <div className="face-filter-group">
-                <select value={faceClassFilter} onChange={e => { setFaceClassFilter(e.target.value); setFacePage(1); }}>
-                  <option value="all">All Classes</option>
-                  {classes.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div className="face-filter-group">
-                <select value={faceStatusFilter} onChange={e => { setFaceStatusFilter(e.target.value); setFacePage(1); }}>
-                  <option value="all">All Status</option>
-                  <option value="registered">Registered</option>
-                  <option value="not_registered">Not Registered</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Progress Bars */}
-          <div className="card admin-card face-progress-card">
-            <span className="tape tr" />
-            <div className="card-header">
-              <div><h2>Registration Progress</h2></div>
-            </div>
-            <div className="face-progress-list">
-              {getProgressData().map((g, i) => (
-                <div key={`${g.year}-${g.class}`} className="face-progress-row">
-                  <div className="face-progress-label">
-                    <span className="face-progress-year mono">Y{g.year}</span>
-                    <span className="face-progress-class" style={{ color: classColors[g.class] }}>{g.class}</span>
+              {/* Filters */}
+              <div className="card admin-card face-filters-card">
+                <span className="tape tl" />
+                <div className="face-filters">
+                  <div className="face-filter-group">
+                    <Filter size={16} />
+                    <select value={faceYearFilter} onChange={e => { setFaceYearFilter(e.target.value); setFacePage(1); }}>
+                      <option value="all">All Years</option>
+                      {years.map(y => <option key={y} value={y}>Year {y}</option>)}
+                    </select>
                   </div>
-                  <div className="face-progress-bar-wrap">
-                    <div className="progress-bar face-progress-bar">
-                      <div
-                        className="progress-fill"
-                        style={{ width: `${g.pct}%`, background: classColors[g.class] }}
-                      />
-                    </div>
+                  <div className="face-filter-group">
+                    <select value={faceClassFilter} onChange={e => { setFaceClassFilter(e.target.value); setFacePage(1); }}>
+                      <option value="all">All Classes</option>
+                      {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
                   </div>
-                  <div className="face-progress-fraction mono">
-                    {g.registered}/{g.total}
-                  </div>
-                  <div className={`face-progress-pct mono ${g.pct === 100 ? 'pct-full' : ''}`}>
-                    {g.pct}%
+                  <div className="face-filter-group">
+                    <select value={faceStatusFilter} onChange={e => { setFaceStatusFilter(e.target.value); setFacePage(1); }}>
+                      <option value="all">All Status</option>
+                      <option value="registered">Registered</option>
+                      <option value="not_registered">Not Registered</option>
+                    </select>
                   </div>
                 </div>
-              ))}
-              {getProgressData().length === 0 && (
-                <div className="empty-state admin-empty">No classes match the selected filters.</div>
-              )}
-            </div>
-          </div>
+              </div>
 
-          {/* Student Cards */}
-          <div className="card admin-card face-students-card">
-            <span className="tape bl" />
-            <div className="card-header">
-              <div><h2>Students</h2></div>
-              <span className="face-count-label mono">{faceFilteredStudents.length} student{faceFilteredStudents.length !== 1 ? 's' : ''}</span>
-            </div>
-            {paginatedFaceStudents.length === 0 ? (
-              <div className="empty-state admin-empty">No students match the selected filters.</div>
-            ) : (
-              <div className="face-student-grid">
-                {paginatedFaceStudents.map(s => (
-                  <div key={s.id} className={`face-student-card ${faceStatus[s.id] ? 'registered' : 'not-registered'}`}>
-                    <div className="face-student-top">
-                      <div className={`avatar ${classColorMap[s.class] || 'k'}`}>
-                        {s.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+              {/* Progress Bars */}
+              <div className="card admin-card face-progress-card">
+                <span className="tape tr" />
+                <div className="card-header">
+                  <div><h2>Registration Progress</h2></div>
+                </div>
+                <div className="face-progress-list">
+                  {getProgressData().map((g) => (
+                    <div key={`${g.year}-${g.class}`} className="face-progress-row">
+                      <div className="face-progress-label">
+                        <span className="face-progress-year mono">Y{g.year}</span>
+                        <span className="face-progress-class" style={{ color: classColors[g.class] }}>{g.class}</span>
                       </div>
-                      <div className="face-student-info">
-                        <strong>{s.name}</strong>
-                        <span className="face-student-meta mono">Year {s.year} &bull; {s.class}</span>
+                      <div className="face-progress-bar-wrap">
+                        <div className="progress-bar face-progress-bar">
+                          <div
+                            className="progress-fill"
+                            style={{ width: `${g.pct}%`, background: classColors[g.class] }}
+                          />
+                        </div>
+                      </div>
+                      <div className="face-progress-fraction mono">
+                        {g.registered}/{g.total}
+                      </div>
+                      <div className={`face-progress-pct mono ${g.pct === 100 ? 'pct-full' : ''}`}>
+                        {g.pct}%
                       </div>
                     </div>
-                    <div className="face-student-bottom">
-                      <span className={`badge ${faceStatus[s.id] ? 'badge-face-reg' : 'badge-face-unreg'}`}>
-                        {faceStatus[s.id] ? <><Check size={12} /> Registered</> : <><X size={12} /> Not Registered</>}
-                      </span>
-                      {faceStatus[s.id] ? (
-                        <button className="btn btn-outline btn-face-remove" onClick={() => handleRemoveFace(s)}>
-                          <UserX size={14} /> Remove
-                        </button>
-                      ) : (
-                        <button className="btn btn-green btn-face-register" onClick={() => handleRegisterFace(s)} disabled={capturingStudent !== null}>
-                          <Camera size={14} /> Register Face
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                  {getProgressData().length === 0 && (
+                    <div className="empty-state admin-empty">No classes match the selected filters.</div>
+                  )}
+                </div>
               </div>
-            )}
-            <Pagination currentPage={facePage} totalPages={totalFacePages} onPageChange={setFacePage} />
-          </div>
 
-          {/* Camera Capture Modal */}
-          {capturingStudent && (
-            <div className="modal-overlay" onClick={() => {}}>
-              <div className="modal face-capture-modal" onClick={e => e.stopPropagation()}>
-                <div className="face-capture-viewport">
-                  <div className={`face-capture-frame phase-${capturePhase}`}>
-                    <Camera size={64} strokeWidth={1.5} />
-                    <div className="face-capture-scanline" />
-                  </div>
+              {/* Student Cards */}
+              <div className="card admin-card face-students-card">
+                <span className="tape bl" />
+                <div className="card-header">
+                  <div><h2>Students</h2></div>
+                  <span className="face-count-label mono">{faceFilteredStudents.length} student{faceFilteredStudents.length !== 1 ? 's' : ''}</span>
                 </div>
-                <div className="face-capture-info">
-                  <h3>{capturingStudent.name}</h3>
-                  <p className="face-capture-instruction">
-                    {capturePhase === 'capturing' && 'Align face in frame'}
-                    {capturePhase === 'processing' && 'Processing facial data...'}
-                    {capturePhase === 'done' && 'Registration complete'}
-                  </p>
-                  <div className={`face-capture-status phase-${capturePhase}`}>
-                    {capturePhase === 'capturing' && <><span className="face-capture-dot capturing" /> Capturing...</>}
-                    {capturePhase === 'processing' && <><span className="face-capture-dot processing" /> Processing...</>}
-                    {capturePhase === 'done' && <><Check size={18} /> Done</>}
+                {paginatedFaceStudents.length === 0 ? (
+                  <div className="empty-state admin-empty">No students match the selected filters.</div>
+                ) : (
+                  <div className="face-student-grid">
+                    {paginatedFaceStudents.map(s => {
+                      const className = s.class_section?.name || '—';
+                      return (
+                        <div key={s.id} className={`face-student-card ${faceStatus[s.id] ? 'registered' : 'not-registered'}`}>
+                          <div className="face-student-top">
+                            <div className={`avatar ${classColorMap[className] || 'k'}`}>
+                              {getInitials(s.full_name)}
+                            </div>
+                            <div className="face-student-info">
+                              <strong>{s.full_name}</strong>
+                              <span className="face-student-meta mono">Year {s.year_num} &bull; {className}</span>
+                            </div>
+                          </div>
+                          <div className="face-student-bottom">
+                            <span className={`badge ${faceStatus[s.id] ? 'badge-face-reg' : 'badge-face-unreg'}`}>
+                              {faceStatus[s.id] ? <><Check size={12} /> Registered</> : <><X size={12} /> Not Registered</>}
+                            </span>
+                            {faceStatus[s.id] ? (
+                              <button className="btn btn-outline btn-face-remove" onClick={() => handleRemoveFace(s)}>
+                                <UserX size={14} /> Remove
+                              </button>
+                            ) : (
+                              <button className="btn btn-green btn-face-register" onClick={() => handleRegisterFace(s)} >
+                                <Camera size={14} /> Register Face
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
+                )}
+                {totalFacePages > 1 && (
+                  <Pagination currentPage={facePage} totalPages={totalFacePages} onPageChange={setFacePage} />
+                )}
               </div>
-            </div>
+
+            </>
           )}
         </div>
       )}

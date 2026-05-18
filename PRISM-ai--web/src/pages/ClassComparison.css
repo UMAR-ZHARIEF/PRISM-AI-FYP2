@@ -484,3 +484,13 @@
   }
   .comparison-page table { display: block; overflow-x: auto; }
 }
+
+/* ---------- Pick hint (loading / empty class list) ---------- */
+.comparison-pick-hint {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--ink-soft);
+  padding: 8px 4px;
+}
+

@@ -1,0 +1,12 @@
+.protected-route-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100%;
+  background: var(--paper-cream, #FAF6EE);
+  color: var(--ink, #1F1A12);
+  font-family: 'Patrick Hand', cursive;
+  font-size: 1.5rem;
+  letter-spacing: 0.02em;
+}
