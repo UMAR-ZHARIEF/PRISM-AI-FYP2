@@ -193,6 +193,59 @@
   letter-spacing: 0.04em;
 }
 
+/* AI start/stop controls — sit just below the status rows */
+.live-cam-ai-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--ink-faint);
+}
+.live-cam-ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 138px;
+  justify-content: center;
+}
+.live-cam-ai-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+.live-cam-ai-pid {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+.live-cam-ai-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  background: rgba(216, 60, 60, 0.08);
+  border-left: 4px solid var(--red);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 14px;
+  line-height: 1.45;
+  clip-path: var(--cut-3);
+}
+.live-cam-ai-error svg {
+  flex-shrink: 0;
+  color: var(--red);
+  margin-top: 2px;
+}
+
+/* Reuse-style spinner — pairs with the lucide Loader2 icon */
+@keyframes live-cam-spin {
+  to { transform: rotate(360deg); }
+}
+.live-cam-spin {
+  animation: live-cam-spin 0.9s linear infinite;
+}
+
 /* Collapsible hint */
 .live-cam-hint {
   margin-top: 18px;

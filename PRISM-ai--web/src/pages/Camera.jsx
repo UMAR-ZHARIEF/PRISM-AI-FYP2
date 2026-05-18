@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera as CameraIcon, RefreshCw, Video, VideoOff, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Camera as CameraIcon, RefreshCw, Video, VideoOff, AlertTriangle, ChevronDown, Play, Square, Loader2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import './Camera.css';
 
 // Live Camera page — Hazwan's Express bridge (port 4000) tells us if the
@@ -21,6 +22,15 @@ export default function Camera() {
   const [ai, setAi] = useState({ status: 'offline', tracked: 0, lastUpdate: null });
   // Detected students pushed by the Python AI to /api/attendance.
   const [detections, setDetections] = useState([]);
+
+  // Process-management state for the Python child that Express supervises.
+  // `running` = Express has a live child PID; distinct from `ai.status`
+  // which only flips to 'online' once Python actually POSTs detections.
+  const [proc, setProc] = useState({ running: false, pid: null, startedAt: null });
+  const [procBusy, setProcBusy] = useState(false); // true during start/stop in-flight
+  const [procError, setProcError] = useState('');
+
+  const { session } = useAuth();
 
   // --- Webcam plumbing -----------------------------------------------------
   const stopStream = useCallback(() => {
@@ -84,13 +94,61 @@ export default function Camera() {
     }
   }, []);
 
+  // Poll the supervised child process status alongside health/detections.
+  const fetchProc = useCallback(async () => {
+    try {
+      const r = await fetch('/api/ai/process');
+      if (!r.ok) return;
+      const d = await r.json();
+      setProc({ running: !!d.running, pid: d.pid ?? null, startedAt: d.startedAt ?? null });
+    } catch {
+      // Express down — leave state as-is.
+    }
+  }, []);
+
   useEffect(() => {
     fetchAi();
     fetchDetections();
+    fetchProc();
     const a = setInterval(fetchAi, 5000);
     const b = setInterval(fetchDetections, 5000);
-    return () => { clearInterval(a); clearInterval(b); };
-  }, [fetchAi, fetchDetections]);
+    const c = setInterval(fetchProc, 5000);
+    return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
+  }, [fetchAi, fetchDetections, fetchProc]);
+
+  // --- Start / Stop AI handlers --------------------------------------------
+  const callAiAction = useCallback(async (action) => {
+    setProcError('');
+    const token = session?.access_token;
+    if (!token) {
+      setProcError('You must be signed in as an admin to control the AI service.');
+      return;
+    }
+    setProcBusy(true);
+    try {
+      const r = await fetch(`/api/ai/${action}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!r.ok) {
+        let msg = `Request failed (${r.status})`;
+        try { const body = await r.json(); msg = body?.error || msg; } catch { /* non-JSON */ }
+        setProcError(msg);
+      }
+      // Refresh both health + process state immediately — don't wait 5s.
+      await Promise.allSettled([fetchProc(), fetchAi()]);
+    } catch (e) {
+      setProcError(e?.message || `Failed to ${action} AI service.`);
+    } finally {
+      setProcBusy(false);
+    }
+  }, [session, fetchProc, fetchAi]);
+
+  const startAi = useCallback(() => callAiAction('start'), [callAiAction]);
+  const stopAi  = useCallback(() => callAiAction('stop'),  [callAiAction]);
 
   // --- Helpers -------------------------------------------------------------
   const aiOnline = ai.status === 'online';
@@ -199,9 +257,17 @@ export default function Camera() {
 
           <div className="live-cam-status-row">
             <span className="live-cam-status-key">Service</span>
-            <span className={`badge ${aiOnline ? 'badge-present' : 'badge-absent'}`}>
-              {aiOnline ? 'AI Online' : 'AI Offline'}
-            </span>
+            {(() => {
+              // Tri-state: process not running → Offline. Process running but
+              // no detections yet → Starting. Both true → Online.
+              if (aiOnline) {
+                return <span className="badge badge-present">AI Online</span>;
+              }
+              if (proc.running) {
+                return <span className="badge badge-late">Starting up…</span>;
+              }
+              return <span className="badge badge-absent">AI Offline</span>;
+            })()}
           </div>
 
           <div className="live-cam-status-row">
@@ -214,11 +280,45 @@ export default function Camera() {
             <span className="live-cam-status-val mono">{lastUpdateLabel}</span>
           </div>
 
-          {!aiOnline && (
+          <div className="live-cam-ai-controls">
+            {proc.running ? (
+              <button
+                type="button"
+                className="btn btn-danger live-cam-ai-btn"
+                onClick={stopAi}
+                disabled={procBusy}
+              >
+                {procBusy ? <Loader2 size={16} className="live-cam-spin" /> : <Square size={16} />}
+                {procBusy ? 'Stopping…' : 'Stop AI'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary live-cam-ai-btn"
+                onClick={startAi}
+                disabled={procBusy}
+              >
+                {procBusy ? <Loader2 size={16} className="live-cam-spin" /> : <Play size={16} />}
+                {procBusy ? 'Starting…' : 'Start AI'}
+              </button>
+            )}
+            {proc.pid && (
+              <span className="live-cam-ai-pid mono">PID {proc.pid}</span>
+            )}
+          </div>
+
+          {procError && (
+            <div className="live-cam-ai-error" role="alert">
+              <AlertTriangle size={16} />
+              <span>{procError}</span>
+            </div>
+          )}
+
+          {!proc.running && !aiOnline && (
             <details className="live-cam-hint">
               <summary>
                 <ChevronDown size={16} />
-                How do I start the AI?
+                Manual start (if the button doesn't work)
               </summary>
               <ol>
                 <li>Open a terminal in the project root.</li>
