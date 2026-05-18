@@ -1015,6 +1015,56 @@
   border-top: 2px dashed rgba(31, 26, 18, 0.22);
 }
 
+/* User form modal helpers — small accents on top of the global .modal styles. */
+.user-form-hint {
+  font-family: var(--body);
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-weight: normal;
+  margin-left: 4px;
+}
+
+.user-form-note {
+  font-family: var(--body);
+  font-size: 14px;
+  color: var(--ink-soft);
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  background: rgba(31, 26, 18, 0.06);
+  border-left: 3px solid var(--yellow, #f3c64a);
+  line-height: 1.4;
+}
+
+.user-form-modal input:disabled,
+.user-form-modal select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.modal-close-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Delete confirmation dialog — smaller than the form modal. */
+.user-delete-modal-card {
+  max-width: 460px;
+}
+
+.user-delete-message {
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.45;
+  margin: 4px 0 6px;
+  color: var(--ink);
+}
+
+.user-delete-message strong {
+  font-family: var(--display);
+  font-weight: 900;
+  color: var(--red, #e04a3f);
+}
+
 /* ==========================================================================
    RESPONSIVE
    ========================================================================== */

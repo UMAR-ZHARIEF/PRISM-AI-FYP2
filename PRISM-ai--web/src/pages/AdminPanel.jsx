@@ -7,6 +7,7 @@ import useAuditLogs from '../hooks/useAuditLogs';
 import useAiModels from '../hooks/useAiModels';
 import useStudents from '../hooks/useStudents';
 import { useToast } from '../components/Toast';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import { SkeletonTable } from '../components/Skeleton';
 import Pagination from '../components/Pagination';
 import './AdminPanel.css';
@@ -29,12 +30,21 @@ export default function AdminPanel() {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
 
-  // Form validation state
+  // Form state — used for both Add and Edit modal modes
+  const [modalMode, setModalMode] = useState('add'); // 'add' | 'edit'
+  const [editingUserId, setEditingUserId] = useState(null);
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formRole, setFormRole] = useState('teacher');
+  const [formPhone, setFormPhone] = useState('');
+  const [formAvatarUrl, setFormAvatarUrl] = useState('');
   const [formClass, setFormClass] = useState('');
   const [formErrors, setFormErrors] = useState({});
+  const [formSubmitting, setFormSubmitting] = useState(false);
+
+  // Delete confirmation state
+  const [userToDelete, setUserToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   // User Management filter
   const [roleFilter, setRoleFilter] = useState('all');
@@ -45,9 +55,12 @@ export default function AdminPanel() {
   const [faceStatusFilter, setFaceStatusFilter] = useState('all');
   const [facePage, setFacePage] = useState(1);
 
+  // --- Auth (admin's JWT for /api/admin/users calls) ---
+  const { session, user: authUser } = useAuth();
+
   // --- Supabase-backed data ---
   const profilesArgs = roleFilter === 'all' ? {} : { role: roleFilter };
-  const { profiles, loading: profilesLoading, error: profilesError } = useProfiles(profilesArgs);
+  const { profiles, loading: profilesLoading, error: profilesError, refresh: refreshProfiles } = useProfiles(profilesArgs);
   const { logs: auditLogsData, loading: logsLoading, error: logsError } = useAuditLogs({ limit: 100 });
   const { models: aiModels, loading: modelsLoading, error: modelsError } = useAiModels();
   const { students: studentList, loading: studentsLoading, error: studentsError } = useStudents();
@@ -109,38 +122,185 @@ export default function AdminPanel() {
     return sortDir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
-  // Form validation
+  // Form validation — required fields depend on the modal mode.
   const validateForm = () => {
     const errors = {};
     if (!formName.trim()) errors.name = 'Name is required';
-    if (!formEmail.trim()) {
-      errors.email = 'Email is required';
-    } else if (!formEmail.includes('@')) {
-      errors.email = 'Email must contain @';
+    if (modalMode === 'add') {
+      if (!formEmail.trim()) {
+        errors.email = 'Email is required';
+      } else if (!formEmail.includes('@')) {
+        errors.email = 'Email must contain @';
+      }
     }
     return errors;
   };
 
-  const handleAddUser = () => {
-    const errors = validateForm();
-    setFormErrors(errors);
-    if (Object.keys(errors).length > 0) return;
-    setShowModal(false);
+  const resetForm = () => {
+    setEditingUserId(null);
     setFormName('');
     setFormEmail('');
     setFormRole('teacher');
+    setFormPhone('');
+    setFormAvatarUrl('');
     setFormClass('');
     setFormErrors({});
-    toast('Coming soon', 'info');
+    setFormSubmitting(false);
+  };
+
+  const handleOpenAddUser = () => {
+    setModalMode('add');
+    resetForm();
+    setShowModal(true);
+  };
+
+  const handleOpenEditUser = (u) => {
+    setModalMode('edit');
+    setEditingUserId(u.id);
+    setFormName(u.full_name || '');
+    setFormEmail(u.email || '');
+    setFormRole(u.role || 'teacher');
+    setFormPhone(u.phone || '');
+    setFormAvatarUrl(u.avatar_url || '');
+    setFormClass('');
+    setFormErrors({});
+    setFormSubmitting(false);
+    setShowModal(true);
   };
 
   const handleCloseModal = () => {
+    if (formSubmitting) return;
     setShowModal(false);
-    setFormName('');
-    setFormEmail('');
-    setFormRole('teacher');
-    setFormClass('');
-    setFormErrors({});
+    resetForm();
+  };
+
+  const apiHeaders = () => {
+    const token = session?.access_token;
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  };
+
+  const parseApiError = async (res) => {
+    try {
+      const body = await res.json();
+      return body?.error || `Request failed (${res.status})`;
+    } catch {
+      return `Request failed (${res.status})`;
+    }
+  };
+
+  const handleSubmitUser = async () => {
+    const errors = validateForm();
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      return;
+    }
+
+    setFormSubmitting(true);
+    try {
+      if (modalMode === 'add') {
+        const payload = {
+          email: formEmail.trim(),
+          full_name: formName.trim(),
+          role: formRole,
+        };
+        if (formPhone.trim()) payload.phone = formPhone.trim();
+
+        const res = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: apiHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await parseApiError(res);
+          toast(msg, 'error');
+          setFormSubmitting(false);
+          return;
+        }
+
+        toast(`Invite sent to ${payload.email}. They'll set their password via the link.`, 'success');
+        setShowModal(false);
+        resetForm();
+        refreshProfiles();
+      } else {
+        // Edit mode — PATCH only the editable fields.
+        const payload = {
+          full_name: formName.trim(),
+          role: formRole,
+          phone: formPhone.trim() || null,
+          avatar_url: formAvatarUrl.trim() || null,
+        };
+
+        const res = await fetch(`/api/admin/users/${editingUserId}`, {
+          method: 'PATCH',
+          headers: apiHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const msg = await parseApiError(res);
+          toast(msg, 'error');
+          setFormSubmitting(false);
+          return;
+        }
+
+        toast('User updated', 'success');
+        setShowModal(false);
+        resetForm();
+        refreshProfiles();
+      }
+    } catch (err) {
+      console.error('admin user submit failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+      setFormSubmitting(false);
+    }
+  };
+
+  const handleOpenDeleteUser = (u) => {
+    setUserToDelete(u);
+  };
+
+  const handleCancelDelete = () => {
+    if (deleting) return;
+    setUserToDelete(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!userToDelete) return;
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      return;
+    }
+
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userToDelete.id}`, {
+        method: 'DELETE',
+        headers: apiHeaders(),
+      });
+
+      if (!res.ok) {
+        const msg = await parseApiError(res);
+        toast(msg, 'error');
+        setDeleting(false);
+        return;
+      }
+
+      toast(`Deleted ${userToDelete.full_name || 'user'}`, 'success');
+      setUserToDelete(null);
+      setDeleting(false);
+      refreshProfiles();
+    } catch (err) {
+      console.error('admin user delete failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+      setDeleting(false);
+    }
   };
 
   // Face Registration helpers
@@ -272,7 +432,7 @@ export default function AdminPanel() {
                   <option value="parent">Parent</option>
                 </select>
               </div>
-              <button className="btn btn-yellow" onClick={() => setShowModal(true)}><Plus size={16} /> Add User</button>
+              <button className="btn btn-yellow" onClick={handleOpenAddUser}><Plus size={16} /> Add User</button>
             </div>
           </div>
           {profilesLoading ? (
@@ -311,8 +471,22 @@ export default function AdminPanel() {
                       <td className="mono admin-cell-email">—</td>
                       <td>
                         <div className="admin-action-btns">
-                          <button className="btn btn-outline btn-icon" onClick={() => toast('Coming soon', 'info')}><Edit3 size={14} /></button>
-                          <button className="btn btn-danger btn-icon" onClick={() => toast('Coming soon', 'info')}><Trash2 size={14} /></button>
+                          <button
+                            className="btn btn-outline btn-icon"
+                            onClick={() => handleOpenEditUser(u)}
+                            aria-label={`Edit ${u.full_name || 'user'}`}
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          {authUser?.id !== u.id && (
+                            <button
+                              className="btn btn-danger btn-icon"
+                              onClick={() => handleOpenDeleteUser(u)}
+                              aria-label={`Delete ${u.full_name || 'user'}`}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -668,37 +842,106 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* ADD USER MODAL */}
+      {/* ADD / EDIT USER MODAL */}
       {showModal && (
-        <div className="modal-overlay" onClick={handleCloseModal}>
+        <div className="modal-overlay user-form-modal" onClick={handleCloseModal}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="admin-modal-header">
-              <h2>Add New User</h2>
-              <button className="modal-close-btn" onClick={handleCloseModal}><X size={20} /></button>
+              <h2>{modalMode === 'edit' ? 'Edit User' : 'Add New User'}</h2>
+              <button className="modal-close-btn" onClick={handleCloseModal} disabled={formSubmitting}><X size={20} /></button>
             </div>
             <div className="form-group">
               <label>Full Name</label>
-              <input type="text" placeholder="Enter full name" className={formErrors.name ? 'input-error' : ''} value={formName} onChange={e => setFormName(e.target.value)} />
+              <input
+                type="text"
+                placeholder="Enter full name"
+                className={formErrors.name ? 'input-error' : ''}
+                value={formName}
+                onChange={e => setFormName(e.target.value)}
+                disabled={formSubmitting}
+              />
               {formErrors.name && <span className="field-error">{formErrors.name}</span>}
             </div>
             <div className="form-group">
-              <label>Email</label>
-              <input type="email" placeholder="Enter email" className={formErrors.email ? 'input-error' : ''} value={formEmail} onChange={e => setFormEmail(e.target.value)} />
+              <label>Email{modalMode === 'edit' && <span className="user-form-hint"> (cannot be changed)</span>}</label>
+              <input
+                type="email"
+                placeholder="Enter email"
+                className={formErrors.email ? 'input-error' : ''}
+                value={formEmail}
+                onChange={e => setFormEmail(e.target.value)}
+                disabled={modalMode === 'edit' || formSubmitting}
+              />
               {formErrors.email && <span className="field-error">{formErrors.email}</span>}
             </div>
             <div className="admin-form-row-2">
               <div className="form-group">
                 <label>Role</label>
-                <select value={formRole} onChange={e => setFormRole(e.target.value)}><option value="teacher">Teacher</option><option value="admin">Admin</option><option value="assistant">Assistant</option></select>
+                <select value={formRole} onChange={e => setFormRole(e.target.value)} disabled={formSubmitting}>
+                  <option value="teacher">Teacher</option>
+                  <option value="admin">Admin</option>
+                  <option value="assistant">Assistant</option>
+                  <option value="parent">Parent</option>
+                </select>
               </div>
               <div className="form-group">
-                <label>Assign Class</label>
-                <select value={formClass} onChange={e => setFormClass(e.target.value)}><option value="">None</option>{classes.map(c => <option key={c}>{c}</option>)}</select>
+                <label>Phone <span className="user-form-hint">(optional)</span></label>
+                <input
+                  type="tel"
+                  placeholder="e.g. 012-3456789"
+                  value={formPhone}
+                  onChange={e => setFormPhone(e.target.value)}
+                  disabled={formSubmitting}
+                />
               </div>
             </div>
+            {modalMode === 'edit' && (
+              <div className="form-group">
+                <label>Avatar URL <span className="user-form-hint">(optional)</span></label>
+                <input
+                  type="url"
+                  placeholder="https://..."
+                  value={formAvatarUrl}
+                  onChange={e => setFormAvatarUrl(e.target.value)}
+                  disabled={formSubmitting}
+                />
+              </div>
+            )}
+            {modalMode === 'add' && (
+              <p className="user-form-note">
+                An invite email will be sent to the address above. The user sets their own
+                password via the link in the email.
+              </p>
+            )}
             <div className="admin-modal-footer">
-              <button className="btn btn-outline" onClick={handleCloseModal}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleAddUser}>Add User</button>
+              <button className="btn btn-outline" onClick={handleCloseModal} disabled={formSubmitting}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSubmitUser} disabled={formSubmitting}>
+                {formSubmitting
+                  ? (modalMode === 'edit' ? 'Saving...' : 'Adding...')
+                  : (modalMode === 'edit' ? 'Save Changes' : 'Add User')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE USER CONFIRMATION */}
+      {userToDelete && (
+        <div className="modal-overlay user-delete-modal" onClick={handleCancelDelete}>
+          <div className="modal user-delete-modal-card" onClick={e => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <h2>Delete User?</h2>
+              <button className="modal-close-btn" onClick={handleCancelDelete} disabled={deleting}><X size={20} /></button>
+            </div>
+            <p className="user-delete-message">
+              Delete <strong>{userToDelete.full_name || 'this user'}</strong>? This permanently
+              removes their account and all data.
+            </p>
+            <div className="admin-modal-footer">
+              <button className="btn btn-outline" onClick={handleCancelDelete} disabled={deleting}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleConfirmDelete} disabled={deleting}>
+                {deleting ? 'Deleting...' : 'Delete User'}
+              </button>
             </div>
           </div>
         </div>

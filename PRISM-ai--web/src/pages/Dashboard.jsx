@@ -10,6 +10,7 @@ import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skelet
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
+import { supabase } from '../lib/supabase';
 import './Dashboard.css';
 
 // ISO date helper (YYYY-MM-DD) in local time.
@@ -85,7 +86,27 @@ export default function Dashboard() {
   const hookYear = selectedYear || undefined;
   const { students: dbStudents, loading: studentsLoading } = useStudents({ year: hookYear });
   const { classSections, loading: sectionsLoading } = useClassSections({ year: hookYear });
-  const { records: weekRecords, loading: attendanceLoading } = useAttendance({ fromDate: weekAgo, toDate: today });
+  const { records: weekRecords, loading: attendanceLoading, refresh: refreshAttendance } = useAttendance({ fromDate: weekAgo, toDate: today });
+
+  // Realtime: when any attendance_records row changes (AI camera insert, manual
+  // mark, edit, delete), pull a fresh copy through the hook so the dashboard
+  // updates without waiting for a poll. This is data-layer only; the AI
+  // online/offline badge above keeps its own /api/health polling.
+  useEffect(() => {
+    const channel = supabase
+      .channel('dashboard-attendance')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'attendance_records' },
+        () => {
+          if (refreshAttendance) refreshAttendance();
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refreshAttendance]);
 
   const loading = studentsLoading || sectionsLoading || attendanceLoading;
 
