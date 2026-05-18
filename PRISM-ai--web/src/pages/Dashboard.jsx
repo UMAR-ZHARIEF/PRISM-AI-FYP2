@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { attendanceToday, notifications, recentActivity, classAttendance, dailyArrivalTimes, weeklyAttendance, classColors, classes } from '../data/mockData';
+import { attendanceToday as staticAttendance, notifications as staticNotifications, recentActivity as staticActivity, classAttendance, dailyArrivalTimes, weeklyAttendance, classColors, classes } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
 import Pagination from '../components/Pagination';
@@ -19,6 +19,12 @@ export default function Dashboard() {
   const toast = useToast();
   const PER_PAGE = 8;
 
+  // Live data from AI
+  const [liveAttendance, setLiveAttendance] = useState([]);
+  const [liveActivity, setLiveActivity] = useState([]);
+  const [liveNotifications, setLiveNotifications] = useState([]);
+  const [aiStatus, setAiStatus] = useState('offline');
+
   // Year context (safe fallback if context not yet available)
   let yearCtx;
   try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
@@ -28,6 +34,33 @@ export default function Dashboard() {
     const t = setTimeout(() => setLoading(false), 800);
     return () => clearTimeout(t);
   }, []);
+
+  // Poll API for live data every 5 seconds
+  const fetchLiveData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/attendance');
+      if (res.ok) {
+        const data = await res.json();
+        setLiveAttendance(data.attendanceToday || []);
+        setLiveActivity(data.recentActivity || []);
+        setLiveNotifications(data.notifications || []);
+        setAiStatus(data.aiStatus || 'offline');
+      }
+    } catch {
+      // API server not running, use static data only
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveData();
+    const interval = setInterval(fetchLiveData, 5000);
+    return () => clearInterval(interval);
+  }, [fetchLiveData]);
+
+  // Merge static + live data (live data takes priority)
+  const attendanceToday = [...staticAttendance, ...liveAttendance];
+  const recentActivity = [...liveActivity, ...staticActivity];
+  const notifications = [...liveNotifications, ...staticNotifications];
 
   // Filter all attendance data by selected year
   const yearAttendance = selectedYear
@@ -130,12 +163,12 @@ export default function Dashboard() {
           <span className="tape tr" />
           <div className="card-header">
             <h2>Live Camera Feed</h2>
-            <span className="live-badge"><span className="live-dot" /> Live</span>
+            <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}><span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Offline'}</span>
           </div>
           <div className="camera-feed">
             <Camera size={56} />
-            <p>Camera feed will be displayed here</p>
-            <small>AI Face Recognition Active &mdash; 95.5% Accuracy</small>
+            <p>{aiStatus === 'online' ? 'AI Face Recognition is actively detecting students' : 'Start face_recognition.py to begin detection'}</p>
+            <small>{aiStatus === 'online' ? `Sending data every 10 seconds — ${liveAttendance.length} student(s) detected` : 'Waiting for AI connection...'}</small>
           </div>
         </div>
 
