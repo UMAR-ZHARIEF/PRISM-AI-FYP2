@@ -1,23 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera as CameraIcon, RefreshCw, Video, VideoOff, AlertTriangle, ChevronDown, Play, Square, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { RefreshCw, Video, VideoOff, AlertTriangle, ChevronDown, Play, Square, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import './Camera.css';
 
-// Live Camera page — Hazwan's Express bridge (port 4000) tells us if the
-// edge face_recognition.py service is online. The webcam <video> is purely a
-// preview of what the operator sees; the actual detection happens inside the
-// Python window. Both processes can usually share the camera on Windows
-// (MediaFoundation lets multiple readers attach), but if one of them grabs
-// it exclusively the other will surface a "device in use" error — see the
-// permission-denied branch below.
+// Live Camera page — Express (port 3001) supervises the Python face-recognition
+// process. Python owns the webcam exclusively and serves an MJPEG stream on
+// port 5174; Vite proxies /stream → :5174 so the <img> below renders the
+// annotated feed straight from Python. No browser-side getUserMedia.
 export default function Camera() {
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-
-  // Camera state: idle | requesting | live | denied | error
-  const [camState, setCamState] = useState('idle');
-  const [camError, setCamError] = useState('');
-
   // AI bridge state — mirrors Dashboard.jsx's /api/health poller.
   const [ai, setAi] = useState({ status: 'offline', tracked: 0, lastUpdate: null });
   // Detected students pushed by the Python AI to /api/attendance.
@@ -30,46 +20,13 @@ export default function Camera() {
   const [procBusy, setProcBusy] = useState(false); // true during start/stop in-flight
   const [procError, setProcError] = useState('');
 
+  // MJPEG stream readiness — flipped true on the first <img onLoad>, reset
+  // to 'error' if the connection drops. Used to swap the "Connecting…" overlay
+  // for the live feed once Python actually starts pushing frames.
+  // 'idle' | 'connecting' | 'live' | 'error'
+  const [streamState, setStreamState] = useState('idle');
+
   const { session } = useAuth();
-
-  // --- Webcam plumbing -----------------------------------------------------
-  const stopStream = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) videoRef.current.srcObject = null;
-  }, []);
-
-  const startStream = useCallback(async () => {
-    setCamError('');
-    setCamState('requesting');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setCamState('live');
-    } catch (err) {
-      // NotAllowedError → user denied or browser blocked.
-      // NotFoundError   → no camera attached.
-      // NotReadableError → device in use (likely Python has exclusive grab).
-      const name = err?.name || 'Error';
-      setCamState(name === 'NotAllowedError' ? 'denied' : 'error');
-      if (name === 'NotAllowedError') setCamError('Camera permission was blocked. Allow camera access in your browser settings and try again.');
-      else if (name === 'NotFoundError') setCamError('No camera was found on this device.');
-      else if (name === 'NotReadableError') setCamError('Camera is in use by another application (perhaps face_recognition.py). Close it and retry, or rely on the AI panel below.');
-      else setCamError(err?.message || 'Could not access the camera.');
-    }
-  }, []);
-
-  // Boot the stream on mount and tear it down on unmount so the camera
-  // indicator light turns off cleanly when navigating away.
-  useEffect(() => {
-    startStream();
-    return () => stopStream();
-  }, [startStream, stopStream]);
 
   // --- AI status + detections polling --------------------------------------
   const fetchAi = useCallback(async () => {
@@ -115,6 +72,13 @@ export default function Camera() {
     const c = setInterval(fetchProc, 5000);
     return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
   }, [fetchAi, fetchDetections, fetchProc]);
+
+  // Reset the stream state every time the Python process transitions between
+  // running and stopped — this is what triggers a fresh <img> mount via the
+  // key prop below, so the browser re-opens the MJPEG connection cleanly.
+  useEffect(() => {
+    setStreamState(proc.running ? 'connecting' : 'idle');
+  }, [proc.running, proc.startedAt]);
 
   // --- Start / Stop AI handlers --------------------------------------------
   const callAiAction = useCallback(async (action) => {
@@ -171,6 +135,11 @@ export default function Camera() {
     .map(w => w[0]?.toUpperCase())
     .join('') || '?';
 
+  // Used to force-remount the <img> on each AI start/stop cycle so the MJPEG
+  // connection is freshly negotiated (otherwise a stale cached response can
+  // linger after Python restarts).
+  const streamKey = proc.startedAt || (proc.running ? 'running' : 'idle');
+
   return (
     <div className="live-cam-page">
       <div className="page-header">
@@ -179,7 +148,7 @@ export default function Camera() {
             <span className="word k">Live</span>{' '}
             <span className="word r">Camera</span>
           </h1>
-          <p className="page-subtitle">Webcam preview, AI detection status, and a live list of students spotted by the face-recognition service.</p>
+          <p className="page-subtitle">Annotated face-recognition feed from PRISM-AI, plus live detection status and the list of students spotted so far.</p>
         </div>
         <div className="page-header-actions">
           <span className={`live-cam-ai-pill ${aiOnline ? 'is-on' : 'is-off'}`}>
@@ -190,61 +159,67 @@ export default function Camera() {
       </div>
 
       <div className="live-cam-grid">
-        {/* === Video preview =============================================== */}
+        {/* === Annotated AI preview ======================================== */}
         <div className="card live-cam-video-card reveal reveal-1">
           <span className="tape tl" />
           <span className="tape tr" />
           <div className="card-header">
             <h2>Webcam Preview</h2>
-            {camState === 'live' && (
+            {proc.running && streamState === 'live' && (
               <span className="live-cam-rec">
-                <span className="live-cam-rec-dot" /> recording
+                <span className="live-cam-rec-dot" /> live AI
               </span>
             )}
           </div>
 
-          <div className={`live-cam-video-frame is-${camState}`}>
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="live-cam-video"
-            />
+          <div className={`live-cam-video-frame is-${proc.running ? streamState : 'idle'}`}>
+            {/* Only render the <img> when Python is actually running —
+                otherwise the browser shows the broken-image icon. */}
+            {proc.running && streamState !== 'error' && (
+              <img
+                key={streamKey}
+                src="/stream"
+                alt="Live PRISM-AI annotated face-recognition feed"
+                className="live-cam-video"
+                onLoad={() => setStreamState('live')}
+                onError={() => setStreamState('error')}
+              />
+            )}
 
-            {camState === 'requesting' && (
+            {!proc.running && (
               <div className="live-cam-overlay">
-                <CameraIcon size={48} />
-                <p>Asking your browser for camera permission…</p>
-              </div>
-            )}
-
-            {camState === 'denied' && (
-              <div className="live-cam-overlay live-cam-overlay-warn">
                 <VideoOff size={56} />
-                <p>Camera blocked</p>
-                <small>{camError}</small>
-                <button className="btn btn-outline live-cam-retry" onClick={startStream}>
-                  <RefreshCw size={16} /> Try again
-                </button>
+                <p>AI service is not running</p>
+                <small>Click <strong>Start AI</strong> on the right to launch the Python face-recognition service. The annotated feed will appear here once it's live.</small>
               </div>
             )}
 
-            {camState === 'error' && (
+            {proc.running && streamState === 'connecting' && (
+              <div className="live-cam-overlay">
+                <Loader2 size={48} className="live-cam-spin" />
+                <p>Starting AI camera…</p>
+                <small>Python is loading the InsightFace models — this usually takes 5–10 seconds on first start.</small>
+              </div>
+            )}
+
+            {proc.running && streamState === 'error' && (
               <div className="live-cam-overlay live-cam-overlay-warn">
                 <AlertTriangle size={56} />
-                <p>Could not start the camera</p>
-                <small>{camError}</small>
-                <button className="btn btn-outline live-cam-retry" onClick={startStream}>
-                  <RefreshCw size={16} /> Try again
+                <p>Live feed unavailable</p>
+                <small>The AI process is running but the MJPEG stream on port 5174 isn't reachable yet. It usually recovers on its own — if not, restart the AI service.</small>
+                <button
+                  className="btn btn-outline live-cam-retry"
+                  type="button"
+                  onClick={() => setStreamState('connecting')}
+                >
+                  <RefreshCw size={16} /> Retry
                 </button>
               </div>
             )}
           </div>
 
           <p className="live-cam-caption">
-            This is your browser's webcam preview. The AI runs in a separate
-            Python window — both can usually share the camera at the same time.
+            Live feed from PRISM-AI face recognition · annotated with detected students.
           </p>
         </div>
 

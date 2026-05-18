@@ -98,20 +98,21 @@
   width: 100%;
   overflow: hidden;
 }
-.live-cam-video-frame.is-requesting,
-.live-cam-video-frame.is-denied,
+.live-cam-video-frame.is-idle,
+.live-cam-video-frame.is-connecting,
 .live-cam-video-frame.is-error {
   background: var(--paper);
   border-style: dashed;
 }
 
+/* MJPEG stream from Python: width:100% + object-fit:contain keeps the
+   annotated overlay (face boxes, names, HUD) intact instead of cropping it.
+   No mirror — the labels are baked into the image and would render backwards. */
 .live-cam-video {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  /* Mirror the preview so it feels like a mirror, not a stranger */
-  transform: scaleX(-1);
+  object-fit: contain;
   background: var(--ink);
 }
 
