@@ -15,7 +15,7 @@ import os
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # Force UTF-8 on stdout/stderr so unicode characters in print() statements
@@ -68,7 +68,9 @@ class StreamHandler(BaseHTTPRequestHandler):
                     self.wfile.write(frame)
                     self.wfile.write(b'\r\n')
                 time.sleep(0.025)  # ~40 fps cap (Python loop is the real bottleneck)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            # Browser closed the connection (page navigation, reload, retry).
+            # Just exit this handler cleanly so the server can accept new connections.
             return
 
     def log_message(self, format, *args):  # noqa: A002 — match base class
@@ -76,8 +78,16 @@ class StreamHandler(BaseHTTPRequestHandler):
 
 
 def start_stream_server(port=5174):
-    """Boot the MJPEG HTTP server in a daemon thread."""
-    httpd = HTTPServer(('127.0.0.1', port), StreamHandler)
+    """Boot the MJPEG HTTP server in a daemon thread.
+
+    Uses ThreadingHTTPServer (not HTTPServer) so each browser connection
+    gets its own thread. Without this, a single hanging/aborted MJPEG
+    connection blocks the whole server and new connections fail. This is
+    important because the React auto-retry can rapidly open many
+    connections during the model-loading window.
+    """
+    httpd = ThreadingHTTPServer(('127.0.0.1', port), StreamHandler)
+    httpd.daemon_threads = True  # don't keep the process alive on shutdown
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     print(f"[STREAM] MJPEG live feed on http://127.0.0.1:{port}/stream", flush=True)
