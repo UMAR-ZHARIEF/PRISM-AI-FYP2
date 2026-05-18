@@ -1,0 +1,21 @@
+# Environments
+venv/
+env/
+.env
+
+# PyCache
+__pycache__/
+*.pyc
+
+# Model weights (only ignore YOLO base models if they are too large, but best.pt is 6MB so it can be tracked)
+# yolov8n.pt
+
+# Output/Debug images
+*.jpg
+*.jpeg
+*.png
+*.mp4
+
+# OS generated files
+.DS_Store
+Thumbs.db
