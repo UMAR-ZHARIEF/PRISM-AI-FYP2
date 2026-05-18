@@ -18,6 +18,16 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so unicode characters in print() statements
+# (arrows, em-dashes, box-drawing) don't crash the process when this script
+# is spawned by Node.js / Express on Windows (default codepage cp1252 can't
+# encode many of the characters we use for nice console output).
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass  # older Pythons or unusual stream types — best effort
+
 import requests
 
 import cv2
@@ -57,7 +67,7 @@ class StreamHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f'Content-Length: {len(frame)}\r\n\r\n'.encode())
                     self.wfile.write(frame)
                     self.wfile.write(b'\r\n')
-                time.sleep(0.05)  # ~20 fps cap — keeps CPU low
+                time.sleep(0.025)  # ~40 fps cap (Python loop is the real bottleneck)
         except (BrokenPipeError, ConnectionResetError):
             return
 
@@ -86,7 +96,10 @@ COLORS = {
 
 # ── InsightFace Setup ─────────────────────────────────────────────────────────
 
-def init_face_app(det_size=(640, 640)):
+def init_face_app(det_size=(320, 320)):
+    # NOTE: 320x320 is ~4x faster than 640x640 on CPU. SCRFD still detects
+    # faces well at this size for webcam-distance (1-3m) usage. Bumping back
+    # to 640x640 only matters for far-distance or very tilted faces.
     """Initialize InsightFace FaceAnalysis with CPU provider."""
     from insightface.app import FaceAnalysis
     
@@ -191,7 +204,7 @@ def send_to_dashboard(recognized_list):
         response = requests.post(API_URL, json=payload, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            print(f"[DASHBOARD] Sent {len(recognized_list)} student(s) → "
+            print(f"[DASHBOARD] Sent {len(recognized_list)} student(s) -> "
                   f"Total present: {data.get('totalPresent', '?')}")
         else:
             print(f"[DASHBOARD] Server error: {response.status_code}")
@@ -454,7 +467,7 @@ def main():
                         help="Cosine similarity threshold for matching (default: 0.4)")
     parser.add_argument("--debug", action="store_true",
                         help="Show debug visualization window")
-    parser.add_argument("--det-size", type=int, default=640,
+    parser.add_argument("--det-size", type=int, default=320,
                         help="Face detection input size (default: 640)")
     parser.add_argument("--stream-port", type=int, default=5174,
                         help="Port for the MJPEG live-stream HTTP server (default: 5174)")

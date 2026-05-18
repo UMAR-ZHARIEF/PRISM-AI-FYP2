@@ -619,6 +619,13 @@ app.post('/api/ai/start', requireAdmin, (req, res) => {
       cwd: aiDir,
       windowsHide: false, // let the OpenCV window be visible
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        // Force UTF-8 stdout so Python doesn't crash trying to print
+        // unicode arrows / em-dashes on Windows' default cp1252 codepage.
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1',
+      },
     });
 
     aiProcess = child;

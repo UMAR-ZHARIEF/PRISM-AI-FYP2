@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw, Video, VideoOff, AlertTriangle, ChevronDown, Play, Square, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import './Camera.css';
@@ -25,6 +25,20 @@ export default function Camera() {
   // for the live feed once Python actually starts pushing frames.
   // 'idle' | 'connecting' | 'live' | 'error'
   const [streamState, setStreamState] = useState('idle');
+
+  // Auto-retry state. The MJPEG stream can fail on the first attempt because
+  // Python takes ~10s to load InsightFace models before the HTTP server starts
+  // accepting connections. We exponentially back off + remount the <img> until
+  // either it connects or we give up.
+  const MAX_RETRIES = 15; // ~30 seconds of total reconnection window
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const retryTimerRef = useRef(null);
+  const clearRetryTimer = () => {
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  };
 
   const { session } = useAuth();
 
@@ -77,8 +91,49 @@ export default function Camera() {
   // running and stopped — this is what triggers a fresh <img> mount via the
   // key prop below, so the browser re-opens the MJPEG connection cleanly.
   useEffect(() => {
+    clearRetryTimer();
+    setRetryAttempt(0);
     setStreamState(proc.running ? 'connecting' : 'idle');
+    return clearRetryTimer; // cleanup on unmount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proc.running, proc.startedAt]);
+
+  // <img> error → schedule an auto-retry instead of giving up. Python's MJPEG
+  // server isn't reachable for the first ~10 seconds while InsightFace models
+  // load; we silently retry until it comes up or we run out of attempts.
+  const handleStreamError = useCallback(() => {
+    if (!proc.running) {
+      setStreamState('idle');
+      return;
+    }
+    setRetryAttempt((prev) => {
+      if (prev >= MAX_RETRIES) {
+        setStreamState('error');
+        return prev;
+      }
+      // Backoff: 1s, 1.5s, 2s, 2.5s, then cap at 3s
+      const delay = Math.min(1000 + prev * 500, 3000);
+      clearRetryTimer();
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        setRetryAttempt((n) => n + 1);
+        setStreamState('connecting');
+      }, delay);
+      return prev;
+    });
+  }, [proc.running]);
+
+  const handleStreamLoad = useCallback(() => {
+    clearRetryTimer();
+    setRetryAttempt(0);
+    setStreamState('live');
+  }, []);
+
+  const handleManualRetry = useCallback(() => {
+    clearRetryTimer();
+    setRetryAttempt(0);
+    setStreamState('connecting');
+  }, []);
 
   // --- Start / Stop AI handlers --------------------------------------------
   const callAiAction = useCallback(async (action) => {
@@ -137,8 +192,9 @@ export default function Camera() {
 
   // Used to force-remount the <img> on each AI start/stop cycle so the MJPEG
   // connection is freshly negotiated (otherwise a stale cached response can
-  // linger after Python restarts).
-  const streamKey = proc.startedAt || (proc.running ? 'running' : 'idle');
+  // linger after Python restarts). retryAttempt is mixed in so each retry
+  // also remounts.
+  const streamKey = `${proc.startedAt || (proc.running ? 'running' : 'idle')}-r${retryAttempt}`;
 
   return (
     <div className="live-cam-page">
@@ -181,8 +237,8 @@ export default function Camera() {
                 src="/stream"
                 alt="Live PRISM-AI annotated face-recognition feed"
                 className="live-cam-video"
-                onLoad={() => setStreamState('live')}
-                onError={() => setStreamState('error')}
+                onLoad={handleStreamLoad}
+                onError={handleStreamError}
               />
             )}
 
@@ -210,7 +266,7 @@ export default function Camera() {
                 <button
                   className="btn btn-outline live-cam-retry"
                   type="button"
-                  onClick={() => setStreamState('connecting')}
+                  onClick={handleManualRetry}
                 >
                   <RefreshCw size={16} /> Retry
                 </button>
