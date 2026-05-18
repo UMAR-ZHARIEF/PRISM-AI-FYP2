@@ -58,6 +58,58 @@ let liveData = {
 // Track which students have been marked present today (prevent duplicates)
 const presentToday = new Set();
 
+// ── Auth helpers ─────────────────────────────────────────────────────────────
+// Verifies the caller's JWT (from `Authorization: Bearer <token>`), looks up
+// their profile via the service-role client, and only continues if role==='admin'.
+// Attaches { id, role } as req.actor for downstream handlers.
+async function requireAdmin(req, res, next) {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'Missing token' });
+    if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+    const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !userData?.user) return res.status(401).json({ error: 'Invalid token' });
+
+    const { data: profile, error: pErr } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    if (pErr || !profile) return res.status(403).json({ error: 'No profile' });
+    if (profile.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+
+    req.actor = { id: profile.id, role: profile.role };
+    next();
+  } catch (e) {
+    console.error('requireAdmin failed:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// Fire-and-forget audit log writer. Never throws; logs failures only.
+function logAudit(actorId, action, targetId, metadata) {
+  if (!supabase) return;
+  supabase
+    .from('audit_logs')
+    .insert({
+      actor_id: actorId,
+      action,
+      target_type: 'user',
+      target_id: targetId,
+      metadata: metadata || {},
+    })
+    .then(({ error }) => {
+      if (error) console.error(`[audit] insert "${action}" failed:`, error.message);
+    }, (err) => {
+      console.error(`[audit] insert "${action}" rejected:`, err);
+    });
+}
+
+const VALID_ROLES = ['admin', 'teacher', 'parent', 'assistant'];
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 // ── API ROUTES ───────────────────────────────────────────────────────────────
 
 // Health check
@@ -279,6 +331,175 @@ app.post('/api/attendance/reset', (req, res) => {
   res.json({ success: true, message: 'Attendance reset for new day' });
 });
 
+// ── Admin: User Management ───────────────────────────────────────────────────
+// Backs the Admin Panel's Add / Edit / Delete user controls. All three require
+// the caller to be authenticated AND hold role==='admin'. Every successful
+// mutation appends an entry to audit_logs (fire-and-forget).
+
+// POST /api/admin/users — invite a new user by email.
+// Body: { email, full_name, role, phone? }
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
+  const { email, full_name, role, phone } = req.body || {};
+
+  if (!email || typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
+    return res.status(400).json({ error: 'Valid email is required' });
+  }
+  if (!full_name || typeof full_name !== 'string' || !full_name.trim()) {
+    return res.status(400).json({ error: 'full_name is required' });
+  }
+  if (!role || !VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: `role must be one of ${VALID_ROLES.join(', ')}` });
+  }
+  if (phone != null && typeof phone !== 'string') {
+    return res.status(400).json({ error: 'phone must be a string' });
+  }
+
+  const cleanEmail = email.trim();
+  const cleanName = full_name.trim();
+
+  try {
+    const { data: invited, error: inviteErr } =
+      await supabase.auth.admin.inviteUserByEmail(cleanEmail, {
+        data: { full_name: cleanName, role },
+      });
+
+    if (inviteErr) {
+      const msg = (inviteErr.message || '').toLowerCase();
+      // Supabase surfaces duplicate-email cases via several phrasings — match liberally.
+      if (
+        msg.includes('already') ||
+        msg.includes('registered') ||
+        msg.includes('exists') ||
+        inviteErr.status === 422
+      ) {
+        return res.status(409).json({ error: 'Email already in use' });
+      }
+      console.error('[admin/users] invite failed:', inviteErr);
+      return res.status(500).json({ error: inviteErr.message || 'Invite failed' });
+    }
+
+    const invitedUser = invited?.user;
+    if (!invitedUser?.id) {
+      return res.status(500).json({ error: 'Invite returned no user' });
+    }
+
+    // The handle_new_user trigger has already inserted a profile row. If a phone
+    // was supplied, patch it in. Non-fatal if this fails — the user still exists.
+    if (phone && phone.trim()) {
+      const { error: phoneErr } = await supabase
+        .from('profiles')
+        .update({ phone: phone.trim() })
+        .eq('id', invitedUser.id);
+      if (phoneErr) {
+        console.warn('[admin/users] phone update failed:', phoneErr.message);
+      }
+    }
+
+    res.status(201).json({
+      id: invitedUser.id,
+      email: invitedUser.email || cleanEmail,
+      full_name: cleanName,
+      role,
+    });
+
+    logAudit(req.actor.id, 'user.invite', invitedUser.id, {
+      email: cleanEmail,
+      full_name: cleanName,
+      role,
+    });
+  } catch (e) {
+    console.error('[admin/users] unexpected error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PATCH /api/admin/users/:id — update profile fields.
+// Body may include any of: full_name, role, phone, avatar_url.
+app.patch('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const targetId = req.params.id;
+  const { full_name, role, phone, avatar_url } = req.body || {};
+
+  const updates = {};
+  if (full_name !== undefined) {
+    if (typeof full_name !== 'string' || !full_name.trim()) {
+      return res.status(400).json({ error: 'full_name must be a non-empty string' });
+    }
+    updates.full_name = full_name.trim();
+  }
+  if (role !== undefined) {
+    if (!VALID_ROLES.includes(role)) {
+      return res.status(400).json({ error: `role must be one of ${VALID_ROLES.join(', ')}` });
+    }
+    updates.role = role;
+  }
+  if (phone !== undefined) {
+    if (phone !== null && typeof phone !== 'string') {
+      return res.status(400).json({ error: 'phone must be a string or null' });
+    }
+    updates.phone = phone === null ? null : phone.trim();
+  }
+  if (avatar_url !== undefined) {
+    if (avatar_url !== null && typeof avatar_url !== 'string') {
+      return res.status(400).json({ error: 'avatar_url must be a string or null' });
+    }
+    updates.avatar_url = avatar_url;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: 'No updatable fields provided' });
+  }
+
+  try {
+    const { data: updated, error: upErr } = await supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', targetId)
+      .select()
+      .maybeSingle();
+
+    if (upErr) {
+      console.error('[admin/users PATCH] failed:', upErr);
+      return res.status(500).json({ error: upErr.message || 'Update failed' });
+    }
+    if (!updated) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(updated);
+    logAudit(req.actor.id, 'user.update', targetId, { changes: updates });
+  } catch (e) {
+    console.error('[admin/users PATCH] unexpected error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// DELETE /api/admin/users/:id — remove an auth user (profile cascades).
+app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
+  const targetId = req.params.id;
+
+  if (targetId === req.actor.id) {
+    return res.status(400).json({ error: "Can't delete your own account" });
+  }
+
+  try {
+    const { error: delErr } = await supabase.auth.admin.deleteUser(targetId);
+    if (delErr) {
+      const msg = (delErr.message || '').toLowerCase();
+      if (msg.includes('not found') || delErr.status === 404) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      console.error('[admin/users DELETE] failed:', delErr);
+      return res.status(500).json({ error: delErr.message || 'Delete failed' });
+    }
+
+    res.json({ success: true });
+    logAudit(req.actor.id, 'user.delete', targetId, {});
+  } catch (e) {
+    console.error('[admin/users DELETE] unexpected error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('');
@@ -292,6 +513,9 @@ app.listen(PORT, () => {
   console.log('    GET  /api/attendance/summary → Counts only');
   console.log('    POST /api/attendance         → AI sends data');
   console.log('    POST /api/attendance/reset   → Clear for new day');
+  console.log('    POST   /api/admin/users      → Invite user  (admin)');
+  console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
+  console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Waiting for AI face recognition data...');

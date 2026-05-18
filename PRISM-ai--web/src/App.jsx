@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ToastProvider } from './components/Toast';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Students from './pages/Students';
@@ -21,6 +23,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/parent" element={<ProtectedRoute requireRole="parent"><ParentPortal /></ProtectedRoute>} />
         <Route path="/dashboard" element={<ProtectedRoute requireRole={['admin', 'teacher', 'assistant']}><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />

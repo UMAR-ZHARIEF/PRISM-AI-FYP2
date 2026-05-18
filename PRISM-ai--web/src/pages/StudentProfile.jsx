@@ -41,12 +41,24 @@ export default function StudentProfile() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
 
-  // Today's date string used to find today's attendance record.
-  // The calendar uses 2026-05-11 as the app's "today" — match that for consistency.
-  const todayStr = '2026-05-11';
+  // Today's date string (local time, not UTC) used to find today's attendance record.
+  // If multiple rows exist for today (e.g. an old seeded morning row plus a fresh
+  // AI-detection row), pick the one with the latest marked_at / created_at so the
+  // panel reflects the freshest arrival_time written to the DB.
   const todayRecord = useMemo(() => {
     if (!attendanceRecords || attendanceRecords.length === 0) return null;
-    return attendanceRecords.find(r => r.date === todayStr) || null;
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const today = `${y}-${m}-${day}`;
+    const todays = attendanceRecords.filter(r => r.date === today);
+    if (todays.length === 0) return null;
+    return todays.slice().sort((a, b) => {
+      const aTime = a.marked_at || a.created_at || '';
+      const bTime = b.marked_at || b.created_at || '';
+      return bTime.localeCompare(aTime); // DESC — latest first
+    })[0];
   }, [attendanceRecords]);
 
   // Compute attendance rate from records: present / total
