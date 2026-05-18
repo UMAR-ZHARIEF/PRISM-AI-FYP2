@@ -231,10 +231,6 @@ export default function DashboardLayout() {
             <Outlet />
           </YearContext.Provider>
         </main>
-
-        <footer className="dashboard-footer">
-          <p>PRISM-AI &copy; 2026 &mdash; Final Year Project, UniKL</p>
-        </footer>
       </div>
     </div>
   );
