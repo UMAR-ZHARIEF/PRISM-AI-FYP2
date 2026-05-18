@@ -13,13 +13,64 @@ import datetime
 import json
 import os
 import sys
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import requests
 
 import cv2
 import numpy as np
+
+# ── MJPEG live-stream state ───────────────────────────────────────────────────
+# The main loop encodes its annotated display frame into a JPEG and stores the
+# bytes here; the StreamHandler reads them whenever a browser polls /stream.
+# A lock keeps writer/reader race-free even at 30+ fps.
+_latest_jpeg = None  # bytes — most recently encoded annotated frame
+_latest_lock = threading.Lock()
+
+
+class StreamHandler(BaseHTTPRequestHandler):
+    """Serves multipart/x-mixed-replace MJPEG at /stream.
+
+    Browsers render this natively in an <img src="/stream"> tag, no JS needed.
+    """
+
+    def do_GET(self):
+        if self.path != '/stream':
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Cache-Control', 'no-cache, no-store, private, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=FRAME')
+        self.end_headers()
+        try:
+            while True:
+                with _latest_lock:
+                    frame = _latest_jpeg
+                if frame is not None:
+                    self.wfile.write(b'--FRAME\r\n')
+                    self.wfile.write(b'Content-Type: image/jpeg\r\n')
+                    self.wfile.write(f'Content-Length: {len(frame)}\r\n\r\n'.encode())
+                    self.wfile.write(frame)
+                    self.wfile.write(b'\r\n')
+                time.sleep(0.05)  # ~20 fps cap — keeps CPU low
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def log_message(self, format, *args):  # noqa: A002 — match base class
+        return  # silence access logs
+
+
+def start_stream_server(port=5174):
+    """Boot the MJPEG HTTP server in a daemon thread."""
+    httpd = HTTPServer(('127.0.0.1', port), StreamHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    print(f"[STREAM] MJPEG live feed on http://127.0.0.1:{port}/stream", flush=True)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -238,7 +289,12 @@ def run_recognition(args):
     print(f"  Enrolled students: {len(enrolled_names)}")
     print(f"  Press 'q' to quit | 'd' to toggle debug view")
     print(f"{'='*60}\n")
-    
+
+    # Boot the MJPEG stream server so the React dashboard can render frames in
+    # a <img src="/stream"> tag. The server reads _latest_jpeg, which the main
+    # loop refreshes after annotating each frame.
+    start_stream_server(port=args.stream_port)
+
     try:
         while True:
             ret, frame = cap.read()
@@ -284,16 +340,32 @@ def run_recognition(args):
                 })
             
             # ── Visualization ──
+            # Build the annotated `display` frame on every iteration so the
+            # MJPEG stream always has fresh content, regardless of whether the
+            # desktop debug window is currently shown.
+            display = frame.copy()
+
+            for r in results:
+                draw_face_result(display, r["bbox"], r["name"],
+                                 r["similarity"], r["det_score"])
+
+            draw_hud(display, fps, len(results), recognized_count)
+
             if show_debug:
-                display = frame.copy()
-                
-                for r in results:
-                    draw_face_result(display, r["bbox"], r["name"], 
-                                     r["similarity"], r["det_score"])
-                
-                draw_hud(display, fps, len(results), recognized_count)
-                
                 cv2.imshow("PRISM-AI Face Recognition", display)
+
+            # Push the annotated frame to the MJPEG stream. JPEG quality 80
+            # keeps the wire size sane (~30-60 KB/frame at 640x480). Any
+            # encoder error is swallowed — we never let streaming crash the
+            # recognition loop.
+            try:
+                _, jpeg_buf = cv2.imencode(
+                    '.jpg', display, [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+                )
+                with _latest_lock:
+                    globals()['_latest_jpeg'] = jpeg_buf.tobytes()
+            except Exception:
+                pass
             
             # ── Send to Dashboard (every SEND_INTERVAL seconds) ──
             if time.time() - last_send_time >= SEND_INTERVAL:
@@ -384,7 +456,9 @@ def main():
                         help="Show debug visualization window")
     parser.add_argument("--det-size", type=int, default=640,
                         help="Face detection input size (default: 640)")
-    
+    parser.add_argument("--stream-port", type=int, default=5174,
+                        help="Port for the MJPEG live-stream HTTP server (default: 5174)")
+
     args = parser.parse_args()
     run_recognition(args)
 
