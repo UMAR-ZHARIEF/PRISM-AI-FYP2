@@ -18,6 +18,10 @@ try { require('dotenv').config(); } catch (_) { /* dotenv not installed — igno
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const { spawn } = require('child_process');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 const app = express();
 const PORT = 3001;
@@ -57,6 +61,24 @@ let liveData = {
 
 // Track which students have been marked present today (prevent duplicates)
 const presentToday = new Set();
+
+// ── AI Child Process State ───────────────────────────────────────────────────
+// Tracks the Python face_recognition.py subprocess that admins can spawn /
+// kill via /api/ai/start and /api/ai/stop. Separate from `aiStatus` in
+// liveData (which only reflects whether Python has POSTed recently).
+let aiProcess = null;
+let aiStartedAt = null;
+let aiLastExitCode = null;
+let aiLastExitAt = null;
+
+function aiPaths() {
+  const aiDir = path.join(__dirname, '..', 'ai-service', 'edge');
+  const pythonExe = os.platform() === 'win32'
+    ? path.join(aiDir, 'venv', 'Scripts', 'python.exe')
+    : path.join(aiDir, 'venv', 'bin', 'python');
+  const script = path.join(aiDir, 'face_recognition.py');
+  return { aiDir, pythonExe, script };
+}
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
 // Verifies the caller's JWT (from `Authorization: Bearer <token>`), looks up
@@ -552,6 +574,103 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// ── AI Process Management ────────────────────────────────────────────────────
+// Lets the Live Camera page start/stop the Python face-recognition service
+// without dropping to a terminal. The state reported here is "is THIS Express
+// process supervising a Python child?" — distinct from /api/health which only
+// reports whether Python has POSTed detections recently.
+
+// GET /api/ai/process — current process supervision state. Public so the
+// page can render Start/Stop button state without an admin login round-trip;
+// the mutating endpoints below are gated.
+app.get('/api/ai/process', (req, res) => {
+  const running = !!(aiProcess && aiProcess.exitCode === null);
+  res.json({
+    running,
+    pid: running ? aiProcess.pid : null,
+    startedAt: aiStartedAt,
+    lastExitCode: aiLastExitCode,
+    lastExitAt: aiLastExitAt,
+  });
+});
+
+// POST /api/ai/start — spawn the Python face-recognition service.
+app.post('/api/ai/start', requireAdmin, (req, res) => {
+  if (aiProcess && aiProcess.exitCode === null) {
+    return res.status(409).json({
+      error: 'AI service already running',
+      pid: aiProcess.pid,
+    });
+  }
+  try {
+    const { aiDir, pythonExe, script } = aiPaths();
+    if (!fs.existsSync(pythonExe)) {
+      return res.status(500).json({
+        error: `Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`,
+      });
+    }
+    if (!fs.existsSync(script)) {
+      return res.status(500).json({
+        error: `Script not found at ${script}`,
+      });
+    }
+
+    const child = spawn(pythonExe, ['-u', script, '--camera', '0'], {
+      cwd: aiDir,
+      windowsHide: false, // let the OpenCV window be visible
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    aiProcess = child;
+    aiStartedAt = new Date().toISOString();
+    aiLastExitCode = null;
+    aiLastExitAt = null;
+
+    child.stdout.on('data', (chunk) => {
+      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+      lines.forEach((l) => console.log(`[AI:stdout] ${l}`));
+    });
+    child.stderr.on('data', (chunk) => {
+      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+      lines.forEach((l) => console.warn(`[AI:stderr] ${l}`));
+    });
+    child.on('exit', (code, signal) => {
+      console.log(`[AI] Python child exited code=${code} signal=${signal}`);
+      aiLastExitCode = code;
+      aiLastExitAt = new Date().toISOString();
+      if (aiProcess === child) aiProcess = null;
+    });
+    child.on('error', (err) => {
+      console.error('[AI] Spawn error:', err);
+      if (aiProcess === child) aiProcess = null;
+    });
+
+    logAudit(req.actor.id, 'ai.start', null, { pid: child.pid });
+    return res.json({ success: true, pid: child.pid, startedAt: aiStartedAt });
+  } catch (e) {
+    console.error('[AI start] failed:', e);
+    return res.status(500).json({ error: e.message || 'Failed to start AI service' });
+  }
+});
+
+// POST /api/ai/stop — terminate the running Python child.
+app.post('/api/ai/stop', requireAdmin, (req, res) => {
+  if (!aiProcess || aiProcess.exitCode !== null) {
+    return res.status(404).json({ error: 'AI service is not running' });
+  }
+  const pid = aiProcess.pid;
+  try {
+    // On Windows, SIGTERM is mapped to a terminate; this typically works.
+    // For really stuck cases the admin can fall back to killing manually.
+    aiProcess.kill();
+    logAudit(req.actor.id, 'ai.stop', null, { pid });
+    return res.json({ success: true, pid });
+  } catch (e) {
+    console.error('[AI stop] failed:', e);
+    return res.status(500).json({ error: e.message || 'Failed to stop AI service' });
+  }
+});
+
 // ── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('');
@@ -568,6 +687,9 @@ app.listen(PORT, () => {
   console.log('    POST   /api/admin/users      → Invite user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
+  console.log('    GET    /api/ai/process       → AI child process state');
+  console.log('    POST   /api/ai/start         → Start Python AI (admin)');
+  console.log('    POST   /api/ai/stop          → Stop Python AI  (admin)');
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Waiting for AI face recognition data...');
