@@ -12,6 +12,7 @@ import ClassDetail from './pages/ClassDetail';
 import Attendance from './pages/Attendance';
 import StudentProfile from './pages/StudentProfile';
 import ClassComparison from './pages/ClassComparison';
+import ProtectedRoute from './components/ProtectedRoute.jsx';
 
 export default function App() {
   return (
@@ -20,8 +21,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/parent" element={<ParentPortal />} />
-        <Route path="/dashboard" element={<DashboardLayout />}>
+        <Route path="/parent" element={<ProtectedRoute requireRole="parent"><ParentPortal /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute requireRole={['admin', 'teacher', 'assistant']}><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="students" element={<Students />} />
           <Route path="students/:studentId" element={<StudentProfile />} />

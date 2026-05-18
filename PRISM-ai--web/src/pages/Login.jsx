@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Camera, Eye, EyeOff, CheckCircle, Shield, Zap, ArrowLeft } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import './Login.css';
 
 const highlights = [
@@ -9,20 +10,39 @@ const highlights = [
   { icon: Zap, text: 'Instant parent notifications' },
 ];
 
-const roleColor = { teacher: 'r', admin: 'b', parent: 'g' };
-
 export default function Login() {
-  const [role, setRole] = useState('teacher');
   const [showPassword, setShowPassword] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
+  const { session, profile, signIn } = useAuth();
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (role === 'parent') {
-      navigate('/parent');
+  useEffect(() => {
+    if (!session || !profile) return;
+    const r = profile.role;
+    if (r === 'parent') {
+      navigate('/parent', { replace: true });
+    } else if (r === 'admin' || r === 'teacher' || r === 'assistant') {
+      navigate('/dashboard', { replace: true });
     } else {
-      navigate('/dashboard');
+      setErrorMessage('Your account is not assigned a role. Contact the school administrator.');
     }
+  }, [session, profile, navigate]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setErrorMessage('');
+    setSubmitting(true);
+    const { error } = await signIn(email, password);
+    if (error) {
+      const friendly = /invalid login credentials/i.test(error.message)
+        ? 'Invalid email or password'
+        : error.message;
+      setErrorMessage(friendly);
+    }
+    setSubmitting(false);
   };
 
   return (
@@ -62,28 +82,29 @@ export default function Login() {
             </h2>
             <p className="login-subtitle">Sign in to your account to continue</p>
 
-            <div className="role-tabs">
-              {['teacher', 'admin', 'parent'].map(r => (
-                <button
-                  key={r}
-                  type="button"
-                  className={`role-tab paper-${roleColor[r]} ${role === r ? 'active' : ''}`}
-                  onClick={() => setRole(r)}
-                >
-                  {r.charAt(0).toUpperCase() + r.slice(1)}
-                </button>
-              ))}
-            </div>
-
             <div className="form-group">
               <label>Email</label>
-              <input type="email" placeholder="Enter your email" autoComplete="username" />
+              <input
+                type="email"
+                placeholder="Enter your email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
             </div>
 
             <div className="form-group">
               <label>Password</label>
               <div className="password-input">
-                <input type={showPassword ? 'text' : 'password'} placeholder="Enter your password" autoComplete="current-password" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Enter your password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
                 <button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} aria-label="Toggle password visibility">
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -98,20 +119,17 @@ export default function Login() {
               <a href="#" className="forgot-link pencil-link">Forgot password?</a>
             </div>
 
-            <button type="submit" className="btn btn-primary login-btn">Sign In</button>
+            {errorMessage && (
+              <p className="login-error" role="alert">{errorMessage}</p>
+            )}
 
-            <div className="demo-credentials">
-              <h4>Demo Credentials</h4>
-              <div className="demo-row">
-                <span>Teacher:</span> <code>teacher@prismai.edu / password123</code>
-              </div>
-              <div className="demo-row">
-                <span>Admin:</span> <code>admin@prismai.edu / password123</code>
-              </div>
-              <div className="demo-row">
-                <span>Parent:</span> <code>razak@email.com / password123</code>
-              </div>
-            </div>
+            <button
+              type="submit"
+              className="btn btn-primary login-btn"
+              disabled={submitting}
+            >
+              {submitting ? 'Signing in…' : 'Sign In'}
+            </button>
 
             <p className="login-footer-text">
               <Link to="/" className="pencil-link"><ArrowLeft size={14} style={{ verticalAlign: 'middle' }} /> Back to Home</Link>

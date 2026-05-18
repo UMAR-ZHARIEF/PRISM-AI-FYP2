@@ -1,7 +1,10 @@
 import { useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Mail, Phone, UserCheck, UserX, Clock, BookOpen } from 'lucide-react';
-import { students, users, attendanceToday, classColors } from '../data/mockData';
+import { ArrowLeft, Mail, Phone, UserCheck, UserX, Clock } from 'lucide-react';
+import { classColors } from '../data/mockData';
+import useStudent from '../hooks/useStudent';
+import useAttendance from '../hooks/useAttendance';
+import useTeacherNotes from '../hooks/useTeacherNotes';
 import AttendanceCalendar from '../components/AttendanceCalendar';
 import './StudentProfile.css';
 
@@ -28,30 +31,54 @@ function timeAgo(timestamp) {
 
 export default function StudentProfile() {
   const { studentId } = useParams();
-  const id = Number(studentId);
 
-  const student = useMemo(() => students.find(s => s.id === id), [id]);
+  const { student, loading: studentLoading, error: studentError } = useStudent(studentId);
+  const { records: attendanceRecords, loading: attendanceLoading } = useAttendance({ studentId });
+  const { notes, addNote, loading: notesLoading } = useTeacherNotes(studentId);
 
-  const homeroomTeacher = useMemo(() => {
-    if (!student) return null;
-    return users.find(
-      u => u.role === 'homeroom' && u.year === student.year && u.class === student.class
-    ) || null;
-  }, [student]);
-
-  const todayRecord = useMemo(() => {
-    if (!student) return null;
-    return attendanceToday.find(a => a.studentId === student.id) || null;
-  }, [student]);
-
-  // Teacher notes — session state
-  const [notes, setNotes] = useState([]);
+  // Note composer state
   const [noteText, setNoteText] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
-  const handleAddNote = () => {
+  // Today's date string used to find today's attendance record.
+  // The calendar uses 2026-05-11 as the app's "today" — match that for consistency.
+  const todayStr = '2026-05-11';
+  const todayRecord = useMemo(() => {
+    if (!attendanceRecords || attendanceRecords.length === 0) return null;
+    return attendanceRecords.find(r => r.date === todayStr) || null;
+  }, [attendanceRecords]);
+
+  // Compute attendance rate from records: present / total
+  const attendanceRate = useMemo(() => {
+    if (!attendanceRecords || attendanceRecords.length === 0) return null;
+    const present = attendanceRecords.filter(r => r.status === 'present').length;
+    return Math.round((present / attendanceRecords.length) * 100);
+  }, [attendanceRecords]);
+
+  // Derive age from dob if available
+  const age = useMemo(() => {
+    if (!student || !student.dob) return null;
+    const dob = new Date(student.dob);
+    if (Number.isNaN(dob.getTime())) return null;
+    const ref = new Date(2026, 4, 11); // app "today"
+    let years = ref.getFullYear() - dob.getFullYear();
+    const m = ref.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && ref.getDate() < dob.getDate())) years--;
+    return years;
+  }, [student]);
+
+  const handleAddNote = async () => {
     const trimmed = noteText.trim();
-    if (!trimmed) return;
-    setNotes(prev => [{ text: trimmed, timestamp: Date.now() }, ...prev]);
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    const { error: addErr } = await addNote(trimmed);
+    setSubmitting(false);
+    if (addErr) {
+      setSubmitError(addErr.message || 'Failed to save note. Please try again.');
+      return;
+    }
     setNoteText('');
   };
 
@@ -60,6 +87,37 @@ export default function StudentProfile() {
       handleAddNote();
     }
   };
+
+  // Loading skeleton — show before student is known
+  if (studentLoading) {
+    return (
+      <div className="sprofile-page">
+        <Link to="/dashboard/students" className="pencil-link sprofile-back">
+          <ArrowLeft size={18} /> Back to Students
+        </Link>
+        <div className="card sprofile-loading">
+          <span className="tape tl" />
+          <p>Loading student profile…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (studentError) {
+    return (
+      <div className="sprofile-page">
+        <Link to="/dashboard/students" className="pencil-link sprofile-back">
+          <ArrowLeft size={18} /> Back to Students
+        </Link>
+        <div className="card sprofile-error">
+          <span className="tape tl" />
+          <h3>Couldn't load student</h3>
+          <p>{studentError.message || 'Something went wrong while loading this profile.'}</p>
+        </div>
+      </div>
+    );
+  }
 
   // Not found
   if (!student) {
@@ -81,18 +139,33 @@ export default function StudentProfile() {
     );
   }
 
-  const wordColor = WORD_COLOR_MAP[student.class] || 'k';
-  const classColor = classColors[student.class] || 'var(--ink)';
-  const initials = student.name.split(' ').map(n => n[0]).join('').slice(0, 2);
+  // Derived display fields from the DB row
+  const fullName = student.full_name || '';
+  const yearNum = student.year_num;
+  const className = (student.class_section && student.class_section.name) || '';
 
-  const rateColor = student.attendanceRate >= 90
-    ? 'var(--green)'
-    : student.attendanceRate >= 80
-      ? 'var(--yellow)'
-      : 'var(--red)';
+  const wordColor = WORD_COLOR_MAP[className] || 'k';
+  const classColor = classColors[className] || 'var(--ink)';
+  const initials = fullName
+    .split(' ')
+    .filter(Boolean)
+    .map(n => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  const rateColor = attendanceRate == null
+    ? 'var(--ink)'
+    : attendanceRate >= 90
+      ? 'var(--green)'
+      : attendanceRate >= 80
+        ? 'var(--yellow)'
+        : 'var(--red)';
 
   const todayStatus = todayRecord ? todayRecord.status : null;
-  const todayTimeIn = todayRecord ? todayRecord.timeIn : null;
+  const todayTimeIn = todayRecord ? todayRecord.arrival_time : null;
+
+  const faceRegistered = false; // not stored in DB yet — default to false per Wave 3 brief
 
   return (
     <div className="sprofile-page">
@@ -107,12 +180,12 @@ export default function StudentProfile() {
           <div className={`sprofile-avatar avatar ${wordColor}`}>{initials}</div>
           <div className="sprofile-header-text">
             <h1>
-              <span className={`word ${wordColor}`}>{student.name}</span>
+              <span className={`word ${wordColor}`}>{fullName}</span>
             </h1>
             <p className="sprofile-subtitle">
-              Year {student.year} —{' '}
+              Year {yearNum} —{' '}
               <span className="sprofile-class-accent" style={{ color: classColor }}>
-                {student.class}
+                {className}
               </span>
             </p>
           </div>
@@ -128,23 +201,29 @@ export default function StudentProfile() {
           <div className="sprofile-info-grid">
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Age</span>
-              <span className="sprofile-info-value">{student.age}</span>
+              <span className="sprofile-info-value">{age != null ? age : '—'}</span>
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Gender</span>
-              <span className="sprofile-info-value">{student.gender === 'M' ? 'Male' : 'Female'}</span>
+              <span className="sprofile-info-value">
+                {student.gender === 'm' || student.gender === 'M'
+                  ? 'Male'
+                  : student.gender === 'f' || student.gender === 'F'
+                    ? 'Female'
+                    : '—'}
+              </span>
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Year</span>
-              <span className="sprofile-info-value">{student.year}</span>
+              <span className="sprofile-info-value">{yearNum != null ? yearNum : '—'}</span>
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Class</span>
-              <span className="sprofile-info-value" style={{ color: classColor }}>{student.class}</span>
+              <span className="sprofile-info-value" style={{ color: classColor }}>{className || '—'}</span>
             </div>
           </div>
           <div className="sprofile-face-status">
-            {student.faceRegistered ? (
+            {faceRegistered ? (
               <span className="badge badge-present sprofile-face-badge">
                 <UserCheck size={13} /> Registered
               </span>
@@ -160,14 +239,14 @@ export default function StudentProfile() {
         <div className="card sprofile-info-card reveal reveal-2">
           <span className="tape tr" />
           <h4 className="sprofile-card-title">Parent Contact</h4>
-          <p className="sprofile-parent-name">{student.parent}</p>
+          <p className="sprofile-parent-name">—</p>
           <div className="sprofile-contact-row">
             <Mail size={15} className="sprofile-contact-icon" />
-            <span className="sprofile-contact-text">{student.parentEmail}</span>
+            <span className="sprofile-contact-text">—</span>
           </div>
           <div className="sprofile-contact-row">
             <Phone size={15} className="sprofile-contact-icon" />
-            <span className="sprofile-contact-text">{student.parentPhone}</span>
+            <span className="sprofile-contact-text">—</span>
           </div>
         </div>
 
@@ -175,34 +254,23 @@ export default function StudentProfile() {
         <div className="card sprofile-info-card reveal reveal-3">
           <span className="tape tl" />
           <h4 className="sprofile-card-title">Homeroom Teacher</h4>
-          {homeroomTeacher ? (
-            <>
-              <p className="sprofile-teacher-name">
-                <BookOpen size={15} className="sprofile-contact-icon" />
-                {homeroomTeacher.name}
-              </p>
-              <div className="sprofile-contact-row">
-                <Mail size={15} className="sprofile-contact-icon" />
-                <span className="sprofile-contact-text">{homeroomTeacher.email}</span>
-              </div>
-            </>
-          ) : (
-            <p className="sprofile-teacher-none">No homeroom teacher assigned</p>
-          )}
+          <p className="sprofile-teacher-none">No homeroom teacher assigned</p>
         </div>
       </div>
 
       {/* ATTENDANCE STATS ROW */}
       <div className="sprofile-att-row reveal reveal-4">
         <div className="sprofile-att-rate" style={{ color: rateColor }}>
-          <span className="sprofile-att-number">{student.attendanceRate}</span>
+          <span className="sprofile-att-number">{attendanceRate != null ? attendanceRate : '—'}</span>
           <span className="sprofile-att-pct">%</span>
           <span className="sprofile-att-label">attendance</span>
         </div>
 
         <div className="sprofile-att-today">
           <span className="sprofile-att-today-label">Today</span>
-          {todayStatus ? (
+          {attendanceLoading ? (
+            <span className="sprofile-no-record">Loading…</span>
+          ) : todayStatus ? (
             <span className={`badge badge-${todayStatus} sprofile-today-badge`}>
               {todayStatus.charAt(0).toUpperCase() + todayStatus.slice(1)}
             </span>
@@ -246,28 +314,41 @@ export default function StudentProfile() {
               onChange={e => setNoteText(e.target.value)}
               onKeyDown={handleNoteKeyDown}
               rows={3}
+              disabled={submitting}
             />
             <div className="sprofile-note-form-footer">
               <span className="sprofile-note-hint">Ctrl+Enter to save</span>
               <button
                 className="btn btn-green sprofile-note-btn"
                 onClick={handleAddNote}
-                disabled={!noteText.trim()}
+                disabled={!noteText.trim() || submitting}
               >
-                Save Note
+                {submitting ? 'Saving…' : 'Save Note'}
               </button>
             </div>
+            {submitError && (
+              <p className="sprofile-note-error">{submitError}</p>
+            )}
           </div>
 
           {/* Notes list */}
-          {notes.length > 0 ? (
+          {notesLoading ? (
+            <div className="sprofile-notes-empty">
+              <p>Loading notes…</p>
+            </div>
+          ) : notes.length > 0 ? (
             <div className="sprofile-notes-list">
-              {notes.map((note, i) => (
-                <div key={i} className="sprofile-note-item">
-                  <p className="sprofile-note-text">{note.text}</p>
-                  <span className="sprofile-note-time">{timeAgo(note.timestamp)}</span>
-                </div>
-              ))}
+              {notes.map((note) => {
+                const ts = note.created_at ? Date.parse(note.created_at) : null;
+                return (
+                  <div key={note.id} className="sprofile-note-item">
+                    <p className="sprofile-note-text">{note.body}</p>
+                    <span className="sprofile-note-time">
+                      {ts ? timeAgo(ts) : ''}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="sprofile-notes-empty">

@@ -298,6 +298,19 @@
   transform: rotate(-1deg);
 }
 
+.dashboard-empty-today {
+  text-align: center;
+  padding: 22px 18px;
+}
+.dashboard-empty-today p {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 22px;
+  color: var(--ink-soft);
+  margin: 0;
+  transform: rotate(-0.6deg);
+}
+
 .table-footer {
   padding: 14px 4px 8px;
   font-size: 11px;

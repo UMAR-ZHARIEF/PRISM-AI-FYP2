@@ -4,124 +4,166 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import {
-  students, classes, classColors, classAttendance,
-  attendanceToday, weeklyAttendance, years
-} from '../data/mockData';
+import { classColors, years } from '../data/mockData';
+import { useYear } from '../layouts/DashboardLayout';
+import useClassSections from '../hooks/useClassSections';
+import useStudents from '../hooks/useStudents';
+import useAttendance from '../hooks/useAttendance';
+import { SkeletonChart, SkeletonTable } from '../components/Skeleton';
 import './ClassComparison.css';
 
 const PIE_COLORS_GENDER = ['#2F75C9', '#F49AB6'];
 
 export default function ClassComparison() {
-  const [selectedYear, setSelectedYear] = useState('all');
-  const [selectedClasses, setSelectedClasses] = useState(() => new Set(classes));
+  /* ── Global year context (safe fallback) ── */
+  let yearCtx;
+  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
+  const ctxYear = yearCtx.selectedYear;
+
+  /* ── Local filter state ── */
+  const [selectedYear, setSelectedYear] = useState(ctxYear ? String(ctxYear) : 'all');
+  const [selectedClassIds, setSelectedClassIds] = useState(() => new Set());
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
 
+  const yearNum = selectedYear === 'all' ? undefined : Number(selectedYear);
+
+  /* ── Load class sections (drives the picker) ── */
+  const { classSections, loading: sectionsLoading } = useClassSections({ year: yearNum });
+
+  /* ── Load students in scope (one call; group client-side) ── */
+  const { students: dbStudents, loading: studentsLoading } = useStudents({ year: yearNum });
+
+  /* ── Today's date (YYYY-MM-DD) for "today" counts ── */
+  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+
+  /* ── Last 30 days window for attendance rate ── */
+  const { fromIso, toIso } = useMemo(() => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - 29);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    return { fromIso: fmt(from), toIso: fmt(to) };
+  }, []);
+
+  const { records: attendanceRecords, loading: attendanceLoading } =
+    useAttendance({ fromDate: fromIso, toDate: toIso });
+
   /* ── Class toggle helpers ── */
-  const toggleClass = (cls) => {
-    setSelectedClasses(prev => {
+  const toggleClass = (id) => {
+    setSelectedClassIds(prev => {
       const next = new Set(prev);
-      if (next.has(cls)) next.delete(cls);
-      else next.add(cls);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
 
-  const selectAll = () => setSelectedClasses(new Set(classes));
-  const clearAll = () => setSelectedClasses(new Set());
+  const selectAll = () => setSelectedClassIds(new Set(classSections.map(c => c.id)));
+  const clearAll = () => setSelectedClassIds(new Set());
 
-  const activeClasses = classes.filter(c => selectedClasses.has(c));
+  /* ── Active sections (only those the user toggled on, in display order) ── */
+  const activeClasses = useMemo(
+    () => classSections.filter(c => selectedClassIds.has(c.id)),
+    [classSections, selectedClassIds]
+  );
   const needsMore = activeClasses.length < 2;
 
-  /* ── Year filter helper ── */
-  const yearNum = selectedYear === 'all' ? null : Number(selectedYear);
-
-  /* ── Filtered student pool ── */
-  const filteredStudents = useMemo(() => {
-    return students.filter(s => {
-      if (yearNum && s.year !== yearNum) return false;
-      return selectedClasses.has(s.class);
+  /* ── Group students by class_section_id ── */
+  const studentsBySection = useMemo(() => {
+    const map = new Map();
+    (dbStudents || []).forEach(s => {
+      const key = s.class_section_id;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(s);
     });
-  }, [yearNum, selectedClasses]);
+    return map;
+  }, [dbStudents]);
 
-  /* ── Filtered today records ── */
-  const filteredToday = useMemo(() => {
-    return attendanceToday.filter(a => {
-      if (yearNum && a.year !== yearNum) return false;
-      return selectedClasses.has(a.class);
+  /* ── Group attendance records by student.class_section_id ── */
+  const recordsBySection = useMemo(() => {
+    const map = new Map();
+    (attendanceRecords || []).forEach(r => {
+      const sectionId = r.student?.class_section_id;
+      if (!sectionId) return;
+      if (!map.has(sectionId)) map.set(sectionId, []);
+      map.get(sectionId).push(r);
     });
-  }, [yearNum, selectedClasses]);
+    return map;
+  }, [attendanceRecords]);
 
-  /* ── Attendance rate bar data ── */
+  /* ── Age helper (year diff from dob) ── */
+  const ageFromDob = (dob) => {
+    if (!dob) return null;
+    const d = new Date(dob);
+    if (isNaN(d.getTime())) return null;
+    const now = new Date();
+    let age = now.getFullYear() - d.getFullYear();
+    const m = now.getMonth() - d.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age -= 1;
+    return age;
+  };
+
+  /* ── Attendance rate bar data (last 30 days) ── */
   const attendanceRateData = useMemo(() => {
     return activeClasses.map(cls => {
-      const classStudents = students.filter(s =>
-        s.class === cls && (!yearNum || s.year === yearNum)
-      );
-      const avg = classStudents.length > 0
-        ? Math.round(classStudents.reduce((sum, s) => sum + s.attendanceRate, 0) / classStudents.length * 10) / 10
+      const recs = recordsBySection.get(cls.id) || [];
+      const rate = recs.length > 0
+        ? Math.round((recs.filter(r => r.status === 'present').length / recs.length) * 1000) / 10
         : 0;
-      return { name: cls, rate: avg };
+      return { name: cls.name, rate };
     });
-  }, [activeClasses, yearNum]);
+  }, [activeClasses, recordsBySection]);
 
   /* ── Today's attendance counts per class ── */
   const todayData = useMemo(() => {
     return activeClasses.map(cls => {
-      const records = attendanceToday.filter(a =>
-        a.class === cls && (!yearNum || a.year === yearNum)
-      );
+      const recs = (recordsBySection.get(cls.id) || []).filter(r => r.date === todayIso);
       return {
-        name: cls,
-        Present: records.filter(a => a.status === 'present').length,
-        Absent: records.filter(a => a.status === 'absent').length,
-        Late: records.filter(a => a.status === 'late').length,
+        name: cls.name,
+        Present: recs.filter(r => r.status === 'present').length,
+        Absent: recs.filter(r => r.status === 'absent').length,
+        Late: recs.filter(r => r.status === 'late').length,
       };
     });
-  }, [activeClasses, yearNum]);
+  }, [activeClasses, recordsBySection, todayIso]);
 
   /* ── Demographics per class ── */
   const demographics = useMemo(() => {
     return activeClasses.map(cls => {
-      const classStudents = students.filter(s =>
-        s.class === cls && (!yearNum || s.year === yearNum)
-      );
-      const ages = classStudents.map(s => s.age);
+      const classStudents = studentsBySection.get(cls.id) || [];
+      const ages = classStudents.map(s => ageFromDob(s.dob)).filter(a => a != null);
       const avgAge = ages.length > 0
         ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length * 10) / 10
         : 0;
       const minAge = ages.length > 0 ? Math.min(...ages) : 0;
       const maxAge = ages.length > 0 ? Math.max(...ages) : 0;
-      const male = classStudents.filter(s => s.gender === 'M').length;
-      const female = classStudents.filter(s => s.gender === 'F').length;
-      return { name: cls, avgAge, minAge, maxAge, male, female, total: classStudents.length };
+      const male = classStudents.filter(s => (s.gender || '').toLowerCase().startsWith('m')).length;
+      const female = classStudents.filter(s => (s.gender || '').toLowerCase().startsWith('f')).length;
+      return { name: cls.name, avgAge, minAge, maxAge, male, female, total: classStudents.length };
     });
-  }, [activeClasses, yearNum]);
+  }, [activeClasses, studentsBySection]);
 
   /* ── Summary table data ── */
   const summaryData = useMemo(() => {
     return activeClasses.map(cls => {
-      const classStudents = students.filter(s =>
-        s.class === cls && (!yearNum || s.year === yearNum)
-      );
-      const todayRecords = attendanceToday.filter(a =>
-        a.class === cls && (!yearNum || a.year === yearNum)
-      );
-      const present = todayRecords.filter(a => a.status === 'present').length;
-      const absent = todayRecords.filter(a => a.status === 'absent').length;
-      const late = todayRecords.filter(a => a.status === 'late').length;
-      const avgRate = classStudents.length > 0
-        ? Math.round(classStudents.reduce((sum, s) => sum + s.attendanceRate, 0) / classStudents.length * 10) / 10
+      const classStudents = studentsBySection.get(cls.id) || [];
+      const allRecs = recordsBySection.get(cls.id) || [];
+      const todayRecs = allRecs.filter(r => r.date === todayIso);
+      const present = todayRecs.filter(r => r.status === 'present').length;
+      const absent = todayRecs.filter(r => r.status === 'absent').length;
+      const late = todayRecs.filter(r => r.status === 'late').length;
+      const avgRate = allRecs.length > 0
+        ? Math.round((allRecs.filter(r => r.status === 'present').length / allRecs.length) * 1000) / 10
         : 0;
-      const ages = classStudents.map(s => s.age);
+      const ages = classStudents.map(s => ageFromDob(s.dob)).filter(a => a != null);
       const avgAge = ages.length > 0
         ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length * 10) / 10
         : 0;
-      const male = classStudents.filter(s => s.gender === 'M').length;
-      const female = classStudents.filter(s => s.gender === 'F').length;
+      const male = classStudents.filter(s => (s.gender || '').toLowerCase().startsWith('m')).length;
+      const female = classStudents.filter(s => (s.gender || '').toLowerCase().startsWith('f')).length;
       return {
-        class: cls,
+        class: cls.name,
         total: classStudents.length,
         present,
         absent,
@@ -133,7 +175,7 @@ export default function ClassComparison() {
         female,
       };
     });
-  }, [activeClasses, yearNum]);
+  }, [activeClasses, studentsBySection, recordsBySection, todayIso]);
 
   /* ── Sort logic for summary table ── */
   const sortedSummary = useMemo(() => {
@@ -179,6 +221,13 @@ export default function ClassComparison() {
     );
   };
 
+  /* ── Loading + empty checks ── */
+  const isLoading = sectionsLoading || studentsLoading || attendanceLoading;
+  const noPick = selectedClassIds.size === 0;
+
+  /* ── Section color helper (DB color first, then static fallback) ── */
+  const colorFor = (sectionName) => classColors[sectionName] || '#1F1A12';
+
   return (
     <div className="comparison-page">
       {/* ── HEADER ── */}
@@ -206,7 +255,10 @@ export default function ClassComparison() {
             <select
               className="search-input comparison-year-select"
               value={selectedYear}
-              onChange={e => setSelectedYear(e.target.value)}
+              onChange={e => {
+                setSelectedYear(e.target.value);
+                setSelectedClassIds(new Set());
+              }}
             >
               <option value="all">All Years</option>
               {years.map(y => (
@@ -221,21 +273,31 @@ export default function ClassComparison() {
               <Users size={16} /> Classes
             </label>
             <div className="comparison-class-toggles">
-              {classes.map(cls => (
-                <button
-                  key={cls}
-                  className={`comparison-class-tag ${selectedClasses.has(cls) ? 'is-checked' : ''}`}
-                  style={{
-                    '--tag-color': classColors[cls],
-                    '--tag-bg': selectedClasses.has(cls) ? classColors[cls] : 'var(--paper-light)',
-                    '--tag-text': selectedClasses.has(cls) ? '#FAF1DA' : classColors[cls],
-                  }}
-                  onClick={() => toggleClass(cls)}
-                >
-                  {selectedClasses.has(cls) && <Check size={14} />}
-                  {cls}
-                </button>
-              ))}
+              {sectionsLoading && classSections.length === 0 ? (
+                <span className="comparison-pick-hint">Loading classes...</span>
+              ) : classSections.length === 0 ? (
+                <span className="comparison-pick-hint">No classes available</span>
+              ) : (
+                classSections.map(cls => {
+                  const checked = selectedClassIds.has(cls.id);
+                  const cc = colorFor(cls.name);
+                  return (
+                    <button
+                      key={cls.id}
+                      className={`comparison-class-tag ${checked ? 'is-checked' : ''}`}
+                      style={{
+                        '--tag-color': cc,
+                        '--tag-bg': checked ? cc : 'var(--paper-light)',
+                        '--tag-text': checked ? '#FAF1DA' : cc,
+                      }}
+                      onClick={() => toggleClass(cls.id)}
+                    >
+                      {checked && <Check size={14} />}
+                      {cls.name}{yearNum == null ? ` · Y${cls.year_num}` : ''}
+                    </button>
+                  );
+                })
+              )}
             </div>
             <div className="comparison-quick-btns">
               <button className="btn btn-outline btn-sm" onClick={selectAll}>Select All</button>
@@ -245,8 +307,29 @@ export default function ClassComparison() {
         </div>
       </div>
 
-      {/* ── MINIMUM SELECTION WARNING ── */}
-      {needsMore && (
+      {/* ── NOT YET PICKED ── */}
+      {noPick && (
+        <div className="comparison-warning card">
+          <span className="tape tr" />
+          <BarChart3 size={32} />
+          <div>
+            <h3>Pick classes to compare</h3>
+            <p>Choose two or more classes from the controls above to see the comparison charts and table.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── LOADING ── */}
+      {!noPick && isLoading && (
+        <>
+          <SkeletonChart />
+          <SkeletonChart />
+          <SkeletonTable rows={Math.max(activeClasses.length, 2)} cols={8} />
+        </>
+      )}
+
+      {/* ── MINIMUM SELECTION WARNING (after data loaded, only 1 picked) ── */}
+      {!noPick && !isLoading && needsMore && (
         <div className="comparison-warning card">
           <span className="tape tr" />
           <BarChart3 size={32} />
@@ -257,7 +340,7 @@ export default function ClassComparison() {
         </div>
       )}
 
-      {!needsMore && (
+      {!noPick && !isLoading && !needsMore && (
         <>
           {/* ── ATTENDANCE RATE BAR CHART ── */}
           <div className="card chart-card comparison-chart-card tilt-l">
@@ -273,7 +356,7 @@ export default function ClassComparison() {
                 <Tooltip content={<ClassTooltip />} />
                 <Bar dataKey="rate" name="Attendance Rate" radius={[3, 3, 0, 0]}>
                   {attendanceRateData.map((entry) => (
-                    <Cell key={entry.name} fill={classColors[entry.name]} />
+                    <Cell key={entry.name} fill={colorFor(entry.name)} />
                   ))}
                 </Bar>
               </BarChart>
@@ -313,14 +396,14 @@ export default function ClassComparison() {
                 <h2>Age Distribution</h2>
               </div>
               <div className="comparison-age-grid">
-                {demographics.map((d, i) => (
+                {demographics.map((d) => (
                   <div
                     key={d.name}
                     className="comparison-age-card"
-                    style={{ '--cc': classColors[d.name] }}
+                    style={{ '--cc': colorFor(d.name) }}
                   >
                     <div className="comparison-age-header">
-                      <span className="comparison-age-class" style={{ color: classColors[d.name] }}>
+                      <span className="comparison-age-class" style={{ color: colorFor(d.name) }}>
                         {d.name}
                       </span>
                       <span className="comparison-age-count mono">{d.total} students</span>
@@ -337,7 +420,7 @@ export default function ClassComparison() {
                             style={{
                               left: `${((d.minAge - 6) / 7) * 100}%`,
                               width: `${((d.maxAge - d.minAge + 1) / 7) * 100}%`,
-                              background: classColors[d.name],
+                              background: colorFor(d.name),
                             }}
                           />
                         </div>
@@ -365,7 +448,7 @@ export default function ClassComparison() {
                   ];
                   return (
                     <div key={d.name} className="comparison-gender-card">
-                      <h4 style={{ color: classColors[d.name] }}>{d.name}</h4>
+                      <h4 style={{ color: colorFor(d.name) }}>{d.name}</h4>
                       <div className="comparison-gender-chart-wrap">
                         <ResponsiveContainer width="100%" height={120}>
                           <PieChart>
@@ -436,7 +519,7 @@ export default function ClassComparison() {
                     return (
                       <tr key={row.class}>
                         <td>
-                          <span className="comparison-table-class" style={{ borderColor: classColors[row.class], color: classColors[row.class] }}>
+                          <span className="comparison-table-class" style={{ borderColor: colorFor(row.class), color: colorFor(row.class) }}>
                             {row.class}
                           </span>
                         </td>

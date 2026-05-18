@@ -138,6 +138,9 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
 }
 .classdetail-student-card:nth-child(5n+1) { transform: rotate(-0.8deg); }
 .classdetail-student-card:nth-child(5n+2) { transform: rotate(0.6deg); }

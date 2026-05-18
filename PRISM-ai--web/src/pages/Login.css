@@ -133,41 +133,6 @@
   line-height: 1;
 }
 
-/* role tabs as colored paper rectangles */
-.role-tabs {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 28px;
-}
-.role-tab {
-  padding: 16px 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  background: var(--paper);
-  color: var(--ink);
-  border: 2px solid var(--ink);
-  clip-path: var(--cut-2);
-  transition: all 0.2s;
-  cursor: pointer;
-}
-.role-tab:nth-child(1) { transform: rotate(-2deg); }
-.role-tab:nth-child(2) { transform: rotate(1deg); }
-.role-tab:nth-child(3) { transform: rotate(-1deg); }
-.role-tab .role-emoji { font-size: 28px; line-height: 1; }
-.role-tab .role-name {
-  font-family: var(--display);
-  font-weight: 900;
-  font-size: 16px;
-  letter-spacing: -0.01em;
-}
-.role-tab.active.paper-r { background: var(--red);   color: var(--paper-light); border-color: var(--ink); }
-.role-tab.active.paper-b { background: var(--blue);  color: var(--paper-light); }
-.role-tab.active.paper-g { background: var(--green); color: var(--paper-light); }
-.role-tab:hover:not(.active) { background: var(--yellow); }
-
 /* form fields */
 .login-form .form-group { margin-bottom: 20px; }
 .login-form .form-group label {
@@ -208,40 +173,22 @@
   padding: 18px 22px;
   font-size: 16px;
 }
+.login-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
-/* demo credentials */
-.demo-card {
-  margin-top: 32px;
-  padding: 18px 22px;
-  background: var(--yellow);
-  clip-path: var(--cut-3);
-  transform: rotate(-1deg);
-  position: relative;
+.login-error {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  font-family: var(--body);
+  font-size: 14px;
+  color: var(--red);
+  background: rgba(196, 30, 58, 0.08);
+  border: 2px dashed var(--red);
+  border-radius: 6px;
+  transform: rotate(-0.4deg);
 }
-.demo-title {
-  font-family: var(--accent);
-  font-weight: 700;
-  font-size: 22px;
-  color: var(--ink);
-  margin-bottom: 10px;
-  display: block;
-  transform: rotate(-1deg);
-}
-.demo-table { width: 100%; border-collapse: collapse; }
-.demo-table td {
-  padding: 6px 0;
-  font-size: 13px;
-  border-bottom: 2px dotted rgba(31, 26, 18, 0.25);
-  color: var(--ink);
-}
-.demo-table tr:last-child td { border-bottom: 0; }
-.demo-table .demo-role {
-  font-family: var(--display);
-  font-weight: 900;
-  font-size: 16px;
-  width: 88px;
-}
-.demo-table .mono { font-size: 12px; }
 
 @media (max-width: 900px) {
   .login-grid { grid-template-columns: 1fr; gap: 32px; padding: 32px 24px; }

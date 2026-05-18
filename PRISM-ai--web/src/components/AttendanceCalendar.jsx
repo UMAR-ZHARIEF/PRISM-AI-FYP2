@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { attendanceHistory } from '../data/mockData';
+import useAttendance from '../hooks/useAttendance';
 import './AttendanceCalendar.css';
 
 const MONTH_NAMES = [
@@ -15,14 +15,23 @@ export default function AttendanceCalendar({ studentId }) {
   const [viewMonth, setViewMonth] = useState(today.getMonth()); // 0-indexed
   const [tooltip, setTooltip] = useState(null); // { date, status, timeIn, cellEl }
 
-  const history = attendanceHistory[studentId] || [];
+  const { records, loading, error } = useAttendance({ studentId });
 
-  // Index history by date string for fast lookup
+  // Index DB records by date string for fast lookup.
+  // Normalize snake_case (arrival_time) -> camelCase (timeIn) so the
+  // existing render logic stays untouched. Status is already lowercase.
   const historyMap = useMemo(() => {
     const map = {};
-    history.forEach(r => { map[r.date] = r; });
+    (records || []).forEach(r => {
+      if (!r || !r.date) return;
+      map[r.date] = {
+        date: r.date,
+        status: r.status,
+        timeIn: r.arrival_time || '-',
+      };
+    });
     return map;
-  }, [history]);
+  }, [records]);
 
   // Build the weekday grid for the viewed month
   const weeks = useMemo(() => {
@@ -167,6 +176,13 @@ export default function AttendanceCalendar({ studentId }) {
         <span className="att-legend-item"><span className="att-legend-dot att-dot-nodata" /> No Data</span>
       </div>
 
+      {/* Inline error notice (rendered above the grid; legend + nav remain functional) */}
+      {error && (
+        <div className="att-cal-error" role="alert">
+          Couldn't load attendance right now.
+        </div>
+      )}
+
       {/* Day-of-week headers */}
       <div className="att-cal-grid att-cal-dayheaders">
         {DAY_HEADERS.map(d => (
@@ -181,7 +197,7 @@ export default function AttendanceCalendar({ studentId }) {
             {week.map((cell, ci) => (
               <div
                 key={ci}
-                className={`att-cal-cell ${cell ? statusClass(cell) : 'cal-empty'} ${cell && cell.isToday ? 'cal-today' : ''}`}
+                className={`att-cal-cell ${cell ? statusClass(cell) : 'cal-empty'} ${cell && cell.isToday ? 'cal-today' : ''} ${loading && cell ? 'cal-loading' : ''}`}
                 onClick={(e) => handleCellClick(cell, e)}
                 onMouseEnter={(e) => handleCellHover(cell, e)}
                 onMouseLeave={handleCellLeave}
@@ -189,7 +205,7 @@ export default function AttendanceCalendar({ studentId }) {
                 {cell && (
                   <>
                     <span className="att-cal-day">{cell.day}</span>
-                    {!cell.isFuture && cell.record && (
+                    {!loading && !cell.isFuture && cell.record && (
                       <span className={`att-cal-dot att-dot-${cell.record.status}`} />
                     )}
                   </>

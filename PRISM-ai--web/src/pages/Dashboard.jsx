@@ -1,13 +1,35 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { attendanceToday as staticAttendance, notifications as staticNotifications, recentActivity as staticActivity, classAttendance, dailyArrivalTimes, weeklyAttendance, classColors, classes } from '../data/mockData';
+import { notifications, recentActivity, classColors, classes } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
 import Pagination from '../components/Pagination';
 import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skeleton';
+import useStudents from '../hooks/useStudents';
+import useClassSections from '../hooks/useClassSections';
+import useAttendance from '../hooks/useAttendance';
 import './Dashboard.css';
+
+// ISO date helper (YYYY-MM-DD) in local time.
+function isoDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Bucket an arrival time string (HH:MM[:SS]) into a coarse half-hour label.
+function bucketArrival(t) {
+  if (!t || typeof t !== 'string') return null;
+  const parts = t.split(':');
+  const h = Number(parts[0]);
+  const m = Number(parts[1] || 0);
+  if (Number.isNaN(h)) return null;
+  const half = m >= 30 ? 30 : 0;
+  return `${String(h).padStart(2, '0')}:${String(half).padStart(2, '0')}`;
+}
 
 export default function Dashboard() {
   const [search, setSearch] = useState('');
@@ -15,69 +37,160 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
-  const [loading, setLoading] = useState(true);
   const toast = useToast();
   const PER_PAGE = 8;
-
-  // Live data from AI
-  const [liveAttendance, setLiveAttendance] = useState([]);
-  const [liveActivity, setLiveActivity] = useState([]);
-  const [liveNotifications, setLiveNotifications] = useState([]);
-  const [aiStatus, setAiStatus] = useState('offline');
 
   // Year context (safe fallback if context not yet available)
   let yearCtx;
   try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
   const { selectedYear } = yearCtx;
 
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 800);
-    return () => clearTimeout(t);
+  // Today and the 7-day window ending today (anchored to local-time date math).
+  const today = useMemo(() => isoDate(new Date()), []);
+  const weekAgo = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 6); // 7-day window inclusive of today
+    return isoDate(d);
   }, []);
 
-  // Poll API for live data every 5 seconds
-  const fetchLiveData = useCallback(async () => {
+  // AI status polling — Hazwan's Express bridge tells us if the
+  // face_recognition.py edge service is online and pushing detections.
+  // This is independent of the Supabase data layer below; it only powers
+  // the "AI Online / AI Offline" badge on the Live Camera Feed card.
+  const [aiStatus, setAiStatus] = useState('offline');
+  const [liveAiCount, setLiveAiCount] = useState(0);
+  const fetchAiStatus = useCallback(async () => {
     try {
-      const res = await fetch('/api/attendance');
+      const res = await fetch('/api/health');
       if (res.ok) {
         const data = await res.json();
-        setLiveAttendance(data.attendanceToday || []);
-        setLiveActivity(data.recentActivity || []);
-        setLiveNotifications(data.notifications || []);
         setAiStatus(data.aiStatus || 'offline');
+        setLiveAiCount(data.studentsTracked || 0);
+      } else {
+        setAiStatus('offline');
       }
     } catch {
-      // API server not running, use static data only
+      // Express bridge not running — AI is offline as far as the UI is concerned.
+      setAiStatus('offline');
     }
   }, []);
-
   useEffect(() => {
-    fetchLiveData();
-    const interval = setInterval(fetchLiveData, 5000);
+    fetchAiStatus();
+    const interval = setInterval(fetchAiStatus, 5000);
     return () => clearInterval(interval);
-  }, [fetchLiveData]);
+  }, [fetchAiStatus]);
 
-  // Merge static + live data (live data takes priority)
-  const attendanceToday = [...staticAttendance, ...liveAttendance];
-  const recentActivity = [...liveActivity, ...staticActivity];
-  const notifications = [...liveNotifications, ...staticNotifications];
+  // Data hooks. Year filter only matters for student/section enumeration;
+  // attendance is filtered to year client-side via student.year_num.
+  const hookYear = selectedYear || undefined;
+  const { students: dbStudents, loading: studentsLoading } = useStudents({ year: hookYear });
+  const { classSections, loading: sectionsLoading } = useClassSections({ year: hookYear });
+  const { records: weekRecords, loading: attendanceLoading } = useAttendance({ fromDate: weekAgo, toDate: today });
 
-  // Filter all attendance data by selected year
-  const yearAttendance = selectedYear
-    ? attendanceToday.filter(a => a.year === selectedYear)
-    : attendanceToday;
+  const loading = studentsLoading || sectionsLoading || attendanceLoading;
 
-  const present = yearAttendance.filter(a => a.status === 'present').length;
-  const absent = yearAttendance.filter(a => a.status === 'absent').length;
-  const late = yearAttendance.filter(a => a.status === 'late').length;
-  const total = yearAttendance.length;
+  // Year-scoped attendance: when a year is selected, drop records whose
+  // joined student is in a different year.
+  const yearRecords = useMemo(() => {
+    if (!selectedYear) return weekRecords;
+    return weekRecords.filter(r => r.student?.year_num === selectedYear);
+  }, [weekRecords, selectedYear]);
 
-  // Filter classAttendance by selected year
-  const filteredClassAttendance = selectedYear
-    ? classAttendance.filter(c => c.year === selectedYear)
-    : classAttendance;
+  // Today's records only.
+  const todayRecords = useMemo(
+    () => yearRecords.filter(r => r.date === today),
+    [yearRecords, today]
+  );
 
-  const filtered = yearAttendance.filter(a => {
+  // Today's counts straight off the records.
+  const present = useMemo(() => todayRecords.filter(r => r.status === 'present').length, [todayRecords]);
+  const absent = useMemo(() => todayRecords.filter(r => r.status === 'absent').length, [todayRecords]);
+  const late = useMemo(() => todayRecords.filter(r => r.status === 'late').length, [todayRecords]);
+
+  // Total students for the selected year (or all years).
+  const totalStudents = dbStudents.length;
+  const attendanceRate = totalStudents > 0 ? Math.round((present / totalStudents) * 100) : 0;
+
+  // Class-by-class stats — single attendance pass, grouped client-side by class_section_id.
+  const filteredClassAttendance = useMemo(() => {
+    const byClass = new Map();
+    for (const r of todayRecords) {
+      const id = r.student?.class_section_id;
+      if (!id) continue;
+      if (!byClass.has(id)) byClass.set(id, { present: 0, absent: 0, late: 0 });
+      const bucket = byClass.get(id);
+      if (r.status === 'present') bucket.present += 1;
+      else if (r.status === 'absent') bucket.absent += 1;
+      else if (r.status === 'late') bucket.late += 1;
+    }
+    // Total students per section, scoped to current year filter.
+    const totalsBySection = new Map();
+    for (const s of dbStudents) {
+      const id = s.class_section_id;
+      if (!id) continue;
+      totalsBySection.set(id, (totalsBySection.get(id) || 0) + 1);
+    }
+    return classSections.map(section => {
+      const counts = byClass.get(section.id) || { present: 0, absent: 0, late: 0 };
+      const totalForSection = totalsBySection.get(section.id) || (counts.present + counts.absent + counts.late);
+      return {
+        id: section.id,
+        class: section.name,
+        year: section.year_num,
+        present: counts.present,
+        absent: counts.absent,
+        late: counts.late,
+        total: totalForSection,
+      };
+    });
+  }, [todayRecords, dbStudents, classSections]);
+
+  // Weekly chart data: last 7 days, present/absent/late counts per day.
+  const weeklyAttendance = useMemo(() => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const iso = isoDate(d);
+      const label = d.toLocaleDateString('en-GB', { weekday: 'short' });
+      days.push({ iso, day: label, present: 0, absent: 0, late: 0 });
+    }
+    const byIso = new Map(days.map(d => [d.iso, d]));
+    for (const r of yearRecords) {
+      const bucket = byIso.get(r.date);
+      if (!bucket) continue;
+      if (r.status === 'present') bucket.present += 1;
+      else if (r.status === 'absent') bucket.absent += 1;
+      else if (r.status === 'late') bucket.late += 1;
+    }
+    return days;
+  }, [yearRecords]);
+
+  // Arrival time distribution for today (half-hour buckets, sorted by time).
+  const dailyArrivalTimes = useMemo(() => {
+    const buckets = new Map();
+    for (const r of todayRecords) {
+      const key = bucketArrival(r.arrival_time);
+      if (!key) continue;
+      buckets.set(key, (buckets.get(key) || 0) + 1);
+    }
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([time, count]) => ({ time, count }));
+  }, [todayRecords]);
+
+  // Flatten today's records into the legacy row shape so the table renders unchanged.
+  const todayRows = useMemo(() => todayRecords.map(r => ({
+    studentId: r.student_id,
+    name: r.student?.full_name || '',
+    class: r.student?.class_section?.name || '',
+    year: r.student?.year_num,
+    status: r.status,
+    timeIn: r.arrival_time || '',
+    timeOut: r.departure_time || '',
+  })), [todayRecords]);
+
+  const filtered = todayRows.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase());
     const matchClass = filterClass === 'all' || a.class === filterClass;
     return matchSearch && matchClass;
@@ -91,6 +204,11 @@ export default function Dashboard() {
 
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
   const paged = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+  // Reset to page 1 when filters change.
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterClass]);
 
   const handleSort = (col) => {
     if (sortCol === col) {
@@ -108,10 +226,10 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    { label: 'Total Students', value: total,   tone: 's-blue',   change: '+2 from yesterday' },
-    { label: 'Present',        value: present, tone: 's-green',  change: `${Math.round(present/total*100)}% attendance` },
-    { label: 'Absent',         value: absent,  tone: 's-red',    change: `${absent} students away` },
-    { label: 'Late',           value: late,    tone: 's-orange', change: `${late} arrived late` },
+    { label: 'Total Students', value: totalStudents, tone: 's-blue',   change: `${totalStudents} enrolled` },
+    { label: 'Present',        value: present,       tone: 's-green',  change: `${attendanceRate}% attendance` },
+    { label: 'Absent',         value: absent,        tone: 's-red',    change: `${absent} students away` },
+    { label: 'Late',           value: late,          tone: 's-orange', change: `${late} arrived late` },
   ];
 
   if (loading) {
@@ -129,6 +247,8 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const noAttendanceToday = todayRecords.length === 0;
 
   return (
     <div className="dashboard-page">
@@ -157,6 +277,13 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {noAttendanceToday && (
+        <div className="card section-gap dashboard-empty-today">
+          <span className="tape tl" />
+          <p>No attendance recorded yet today</p>
+        </div>
+      )}
+
       {/* CAMERA + CLASS BREAKDOWN */}
       <div className="dashboard-grid section-gap">
         <div className="card tilt-l">
@@ -168,7 +295,7 @@ export default function Dashboard() {
           <div className="camera-feed">
             <Camera size={56} />
             <p>{aiStatus === 'online' ? 'AI Face Recognition is actively detecting students' : 'Start face_recognition.py to begin detection'}</p>
-            <small>{aiStatus === 'online' ? `Sending data every 10 seconds — ${liveAttendance.length} student(s) detected` : 'Waiting for AI connection...'}</small>
+            <small>{aiStatus === 'online' ? `Sending data every 10 seconds — ${liveAiCount} student(s) detected` : 'Waiting for AI connection...'}</small>
           </div>
         </div>
 
@@ -178,11 +305,13 @@ export default function Dashboard() {
             <h2>Attendance by Class</h2>
           </div>
           <div className="class-breakdown">
-            {filteredClassAttendance.map((c, i) => {
+            {filteredClassAttendance.length === 0 ? (
+              <div className="empty-state">No classes to display.</div>
+            ) : filteredClassAttendance.map((c, i) => {
               const rate = c.total > 0 ? Math.round((c.present / c.total) * 100) : 0;
               const linkYear = selectedYear || c.year || 1;
               return (
-                <div key={i} className={`class-card class-card-${i % 4}`} style={{ '--cc': classColors[c.class] }}>
+                <div key={c.id || i} className={`class-card class-card-${i % 4}`} style={{ '--cc': classColors[c.class] }}>
                   <div className="class-card-header">
                     <Link to={`/dashboard/class/${linkYear}/${c.class}`} className="class-link" style={{ color: classColors[c.class] }}>
                       <strong>{!selectedYear && c.year ? `Y${c.year} ` : ''}{c.class}</strong>
@@ -209,15 +338,19 @@ export default function Dashboard() {
         <div className="card tilt-r">
           <span className="tape bl" />
           <div className="card-header"><h2>Arrival Time Distribution</h2></div>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={dailyArrivalTimes}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1F1A12" strokeOpacity={0.18} />
-              <XAxis dataKey="time" fontSize={11} stroke="#1F1A12" />
-              <YAxis fontSize={11} stroke="#1F1A12" />
-              <Tooltip />
-              <Bar dataKey="count" fill="#EA8534" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          {dailyArrivalTimes.length === 0 ? (
+            <div className="empty-state">No arrival data yet.</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={dailyArrivalTimes}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1F1A12" strokeOpacity={0.18} />
+                <XAxis dataKey="time" fontSize={11} stroke="#1F1A12" />
+                <YAxis fontSize={11} stroke="#1F1A12" />
+                <Tooltip />
+                <Bar dataKey="count" fill="#EA8534" radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         <div className="card tilt-l">
@@ -300,7 +433,7 @@ export default function Dashboard() {
           </tbody>
         </table>
         <div className="table-footer mono">
-          <span>Showing {(page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} students</span>
+          <span>Showing {filtered.length === 0 ? 0 : (page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} students</span>
         </div>
         <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
       </div>
