@@ -17,10 +17,18 @@ build/
 .env
 .env.local
 
+# Express bridge server secrets (keep .env.example checked in)
+server/.env
+server/.env.*
+!server/.env.example
+
 # Python Edge AI Service
 ai-service/**/venv/
 ai-service/**/__pycache__/
 ai-service/**/*.pyc
+
+# Face embeddings (biometric data — never commit)
+ai-service/edge/enrolled_students.json
 
 # Mac/Windows OS files
 .DS_Store

@@ -1,9 +1,10 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "PRISM-AI Express bridge between the Python edge AI face-recognition service and the React dashboard, with optional Supabase persistence.",
+  "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -11,7 +12,9 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@supabase/supabase-js": "^2.105.4",
     "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1"
   }
 }

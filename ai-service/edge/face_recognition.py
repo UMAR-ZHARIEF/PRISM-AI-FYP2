@@ -212,14 +212,15 @@ def run_recognition(args):
     if camera_source.isdigit():
         camera_source = int(camera_source)
     
-    cap = cv2.VideoCapture(camera_source)
+    # Use DirectShow backend explicitly; let camera pick its native resolution
+    # (forcing 1280x720 breaks low-res cameras like UGREEN's default 640x480)
+    if isinstance(camera_source, int):
+        cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():
         print(f"[ERROR] Cannot open camera: {args.camera}")
         sys.exit(1)
-    
-    # Set resolution
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
     
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
