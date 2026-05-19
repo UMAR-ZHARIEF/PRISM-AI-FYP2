@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, Calendar, Clock, CheckCircle, XCircle, AlertCircle, LogOut, Mail, ChevronLeft, ChevronRight, Megaphone } from 'lucide-react';
+import { Bell, Calendar, Clock, CheckCircle, XCircle, AlertCircle, LogOut, Mail, ChevronLeft, ChevronRight, Megaphone, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useStudent from '../hooks/useStudent';
 import useAttendance from '../hooks/useAttendance';
@@ -66,10 +66,12 @@ export default function ParentPortal() {
   const { user, profile } = useAuth();
   const parentId = user ? user.id : null;
 
-  // ── Resolve the child from parent_students (inline — only used here) ──
-  // For families with multiple linked students, we take the primary
-  // (is_primary=true) link first; otherwise we fall back to the first row.
-  const [childId, setChildId] = useState(null);
+  // ── Resolve the children linked to this parent ──
+  // The full list of linked children (sorted by is_primary desc) drives the
+  // sibling switcher. `selectedChildId` defaults to the primary child but the
+  // parent can toggle to a sibling at any time.
+  const [children, setChildren] = useState([]);
+  const [selectedChildId, setSelectedChildId] = useState(null);
   const [linkLoading, setLinkLoading] = useState(true);
   const [linkError, setLinkError] = useState(null);
   const [hasNoChildren, setHasNoChildren] = useState(false);
@@ -86,7 +88,7 @@ export default function ParentPortal() {
 
     supabase
       .from('parent_students')
-      .select('student_id, is_primary')
+      .select('student_id, is_primary, student:students(id, full_name, year_num, class_section:class_sections(name))')
       .eq('parent_id', parentId)
       .order('is_primary', { ascending: false })
       .then(({ data, error }) => {
@@ -94,12 +96,18 @@ export default function ParentPortal() {
         if (error) {
           console.error('ParentPortal: failed to load parent_students link', error);
           setLinkError(error);
-          setChildId(null);
+          setChildren([]);
+          setSelectedChildId(null);
         } else if (!data || data.length === 0) {
           setHasNoChildren(true);
-          setChildId(null);
+          setChildren([]);
+          setSelectedChildId(null);
         } else {
-          setChildId(data[0].student_id);
+          // Keep only rows whose nested student fetch succeeded.
+          const enriched = data.filter((row) => row.student);
+          setChildren(enriched);
+          // Default to the first row (primary child, since we ordered by is_primary desc).
+          setSelectedChildId(enriched.length > 0 ? enriched[0].student_id : data[0].student_id);
         }
         setLinkLoading(false);
       });
@@ -107,10 +115,34 @@ export default function ParentPortal() {
     return () => { cancelled = true; };
   }, [parentId]);
 
+  // The variable the rest of the page reads — switching children swaps this id
+  // and every downstream hook re-fetches.
+  const childId = selectedChildId;
+
   // ── Hooks fed by the resolved child ──
   const { student, loading: studentLoading, error: studentError } = useStudent(childId);
   const { records: attendanceRecords, loading: attendanceLoading } = useAttendance({ studentId: childId });
   const { notifications, loading: notifLoading } = useNotifications();
+
+  // ── Biometric consent state for the resolved child ──
+  // null = unknown / not loaded, undefined = no decision recorded yet
+  const [biometricConsent, setBiometricConsent] = useState(null);
+  useEffect(() => {
+    if (!childId) return undefined;
+    let cancelled = false;
+    supabase
+      .from('biometric_consents')
+      .select('granted, revoked_at, created_at')
+      .eq('student_id', childId)
+      .is('revoked_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setBiometricConsent(data ?? undefined);
+      });
+    return () => { cancelled = true; };
+  }, [childId]);
 
   // Upcoming school events: next 30 days from "today"
   const eventFromDate = useMemo(() => toISODate(APP_TODAY), []);
@@ -287,6 +319,76 @@ export default function ParentPortal() {
       </nav>
 
       <div className="pp-content">
+        {/* === SIBLING SWITCHER (only when 2+ linked children) === */}
+        {children.length > 1 && (
+          <section className="pp-sibling-switcher reveal reveal-1" aria-label="Switch child">
+            <span className="pp-sibling-label">Viewing</span>
+            <div className="pp-sibling-pills" role="tablist">
+              {children.map((row) => {
+                const s = row.student || {};
+                const isActive = row.student_id === selectedChildId;
+                const name = s.full_name || 'Unnamed child';
+                const firstName = name.split(' ')[0];
+                const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2) || '??';
+                const classLabel = (s.class_section && s.class_section.name) || (s.year_num != null ? `Year ${s.year_num}` : '');
+                return (
+                  <button
+                    key={row.student_id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`pp-sibling-pill ${isActive ? 'is-active' : ''}`}
+                    onClick={() => setSelectedChildId(row.student_id)}
+                  >
+                    <span className="pp-sibling-avatar">{initials}</span>
+                    <span className="pp-sibling-meta">
+                      <span className="pp-sibling-name">{firstName}</span>
+                      {classLabel && <span className="pp-sibling-class">{classLabel}</span>}
+                    </span>
+                    {row.is_primary && <span className="pp-sibling-tag">primary</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* === BIOMETRIC CONSENT NOTICE === */}
+        {childId && biometricConsent === undefined && (
+          <section className="pp-consent-banner pp-consent-banner-needed reveal reveal-1">
+            <span className="tape tl" />
+            <div className="pp-consent-icon"><ShieldAlert size={22} /></div>
+            <div className="pp-consent-text">
+              <strong>Action needed: biometric consent for {childName}</strong>
+              <p>We need your decision before we can use face recognition for attendance. Either choice is fine — your child can still attend either way.</p>
+            </div>
+            <Link to={`/parent/consent/${childId}`} className="btn btn-primary">
+              Review now
+            </Link>
+          </section>
+        )}
+        {childId && biometricConsent && (
+          <section className={`pp-consent-banner ${biometricConsent.granted ? 'pp-consent-banner-yes' : 'pp-consent-banner-no'} reveal reveal-1`}>
+            <span className="tape tr" />
+            <div className="pp-consent-icon">
+              {biometricConsent.granted ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
+            </div>
+            <div className="pp-consent-text">
+              <strong>
+                Biometric consent: {biometricConsent.granted ? 'Granted' : 'Manual attendance only'}
+              </strong>
+              <p>
+                {biometricConsent.granted
+                  ? `${childName}'s face data is being used for attendance. You can withdraw consent any time.`
+                  : `${childName} is being marked present manually. You can change this any time.`}
+              </p>
+            </div>
+            <Link to={`/parent/consent/${childId}`} className="btn btn-outline">
+              {biometricConsent.granted ? 'Withdraw' : 'Change'}
+            </Link>
+          </section>
+        )}
+
         {/* === STATUS BANNER (cut paper, green if present, red if absent, orange if late) === */}
         <section className={`pp-banner ${isPresent ? 'pp-banner-present' : isAbsent ? 'pp-banner-absent' : 'pp-banner-late'} reveal reveal-2`}>
           <span className="tape tl" />

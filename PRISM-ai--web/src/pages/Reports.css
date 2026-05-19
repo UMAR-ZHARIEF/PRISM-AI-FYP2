@@ -25,6 +25,63 @@
   margin: 8px 0 0;
 }
 
+/* ---------- Subtitle + scope toggle (teachers) ---------- */
+.reports-subtitle {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--ink-soft);
+  margin: 4px 0 0;
+  transform: rotate(-1deg);
+  display: inline-block;
+}
+.reports-page .scope-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 12px;
+  padding: 5px;
+  background: var(--paper-light);
+  clip-path: var(--cut-pill);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-0.8deg);
+}
+.reports-page .scope-toggle .tape {
+  top: -10px;
+  left: 14px;
+}
+.reports-page .scope-toggle .scope-pill {
+  border: 0;
+  background: transparent;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink-soft);
+  padding: 6px 18px;
+  cursor: pointer;
+  clip-path: var(--cut-pill);
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+  letter-spacing: 0.01em;
+}
+.reports-page .scope-toggle .scope-pill:hover {
+  color: var(--ink);
+}
+.reports-page .scope-toggle .scope-pill.is-active {
+  background: var(--ink);
+  color: var(--paper-light);
+  transform: rotate(0.6deg);
+}
+.reports-page .scope-note {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 10px 0 0;
+  transform: rotate(-0.6deg);
+  display: inline-block;
+}
+
 /* ---------- Stat-cards: tilt + tape glue ---------- */
 .reports-page .stat-card {
   position: relative;
@@ -373,4 +430,57 @@
   .reports-page .card.table-card,
   .reports-page .card.list-card,
   .reports-page .stat-card { transform: none; }
+}
+
+/* ---------- Print stylesheet ----------
+   Hide app chrome (sidebar, topbar, action buttons, pagination) and let the
+   report content fill the page. Untransform tilted cards so they print flat.
+*/
+@media print {
+  /* Hide everything outside the report content */
+  .sidebar,
+  .sidebar-overlay,
+  .dashboard-topbar,
+  .reports-page .no-print,
+  .reports-page .pagination,
+  /* Recharts legends/tooltips that don't translate well to print */
+  .reports-page .recharts-tooltip-wrapper {
+    display: none !important;
+  }
+
+  /* Expand the main content to full width */
+  .dashboard-main,
+  .dashboard-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Flatten tilted paper cards for clean print */
+  .reports-page .card,
+  .reports-page .stat-card,
+  .reports-page .card.chart-card,
+  .reports-page .card.table-card,
+  .reports-page .card.list-card,
+  .reports-page .paper-tab {
+    transform: none !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+
+  /* Tape strips are decorative — drop them */
+  .reports-page .tape { display: none !important; }
+
+  /* Tighter page margins and ink-friendly defaults */
+  body { background: #fff !important; }
+  .reports-page {
+    background: #fff !important;
+    color: #000 !important;
+    padding: 0 !important;
+  }
+
+  /* Make sure long tables paginate sensibly */
+  .reports-page table { page-break-inside: auto; }
+  .reports-page table tr { page-break-inside: avoid; page-break-after: auto; }
 }

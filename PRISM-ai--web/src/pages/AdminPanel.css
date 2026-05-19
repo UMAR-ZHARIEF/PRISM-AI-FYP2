@@ -816,6 +816,44 @@
   gap: 4px;
 }
 
+/* Consent badges (PDPA s.40) */
+.face-consent-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: 6px 0 10px;
+}
+.badge-consent-yes {
+  background: rgba(79, 167, 100, 0.18);
+  color: var(--green);
+  border: 1.5px solid var(--green);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-consent-no {
+  background: rgba(224, 74, 63, 0.14);
+  color: var(--red);
+  border: 1.5px solid var(--red);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-consent-pending {
+  background: rgba(234, 133, 52, 0.18);
+  color: var(--orange);
+  border: 1.5px solid var(--orange);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.face-student-card.consent-pending .btn-face-register,
+.face-student-card.consent-refused .btn-face-register {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: saturate(0.4);
+}
+
 /* Face action buttons */
 .btn-face-remove {
   border-color: var(--red);
@@ -1173,4 +1211,98 @@
     width: 100%;
     justify-content: flex-start;
   }
+}
+
+/* --- Admin-only access notice (Audit Logs, AI Models for non-admins) --- */
+.admin-locked-card {
+  transform: rotate(-0.3deg);
+  text-align: center;
+  padding: 48px 32px;
+}
+.admin-locked-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+.admin-locked-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-pill);
+  color: var(--red);
+}
+.admin-locked-body h2 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 26px;
+  margin: 4px 0 2px;
+  color: var(--ink);
+}
+.admin-locked-body p {
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+/* --- Face enrollment panel (top of Face Registration tab, admin-only) --- */
+.face-enroll-card {
+  transform: rotate(-0.5deg);
+  margin-bottom: 24px;
+}
+.face-enroll-blurb {
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 0 0 16px;
+}
+.face-enroll-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.face-enroll-select {
+  flex: 1 1 320px;
+  min-width: 240px;
+  font-family: var(--body);
+  font-size: 15px;
+  padding: 10px 14px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+.face-enroll-select:focus {
+  background: var(--yellow);
+  outline: none;
+}
+.face-enroll-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.face-enroll-status {
+  margin-top: 14px;
+  padding: 10px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(244, 199, 78, 0.22);
+  border-left: 4px solid var(--yellow);
+  font-family: var(--body);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
 }

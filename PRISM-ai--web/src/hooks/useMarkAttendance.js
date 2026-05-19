@@ -39,6 +39,43 @@ function useMarkAttendance() {
     if (upsertError) {
       console.error('useMarkAttendance: failed to upsert attendance', upsertError);
       setError(upsertError);
+    } else {
+      // Fire-and-forget notification fanout to homeroom teacher + linked
+      // parents. Wrapped in its own try/catch so any failure here is logged
+      // but never blocks the caller or surfaces as an attendance error.
+      (async () => {
+        try {
+          const { data: ctx } = await supabase
+            .from('students')
+            .select('full_name, class_section:class_sections(homeroom_teacher_id), parent_links:parent_students(parent_id)')
+            .eq('id', studentId)
+            .maybeSingle();
+          if (!ctx) return;
+
+          const recipients = new Set();
+          if (ctx.class_section?.homeroom_teacher_id) {
+            recipients.add(ctx.class_section.homeroom_teacher_id);
+          }
+          (ctx.parent_links || []).forEach((l) => {
+            if (l.parent_id) recipients.add(l.parent_id);
+          });
+          if (recipients.size === 0) return;
+
+          const rows = Array.from(recipients).map((rid) => ({
+            recipient_id: rid,
+            scope: 'user',
+            type: 'attendance',
+            title: `${ctx.full_name} marked ${status}`,
+            body: `Manually marked ${status} on ${date}${arrivalTime ? ` at ${arrivalTime}` : ''}.`,
+          }));
+          const { error: nErr } = await supabase.from('notifications').insert(rows);
+          if (nErr) {
+            console.warn('[markAttendance notification fanout] insert failed:', nErr.message);
+          }
+        } catch (e) {
+          console.warn('[markAttendance notification fanout] failed:', e);
+        }
+      })();
     }
 
     setLoading(false);

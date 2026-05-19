@@ -344,8 +344,51 @@ app.post('/api/attendance', (req, res) => {
 
         if (upsertErr) {
           console.error(`[Supabase] Upsert failed for ${bareName}:`, upsertErr.message);
-        } else {
-          console.log(`[Supabase] ✓ ${bareName} marked ${status} at ${arrivalTime}`);
+          continue; // skip fanout if the underlying record didn't land
+        }
+        console.log(`[Supabase] ✓ ${bareName} marked ${status} at ${arrivalTime}`);
+
+        // ── Notification fanout ──────────────────────────────────────────
+        // Insert one notification row per recipient (homeroom teacher +
+        // each linked parent). Fully isolated in its own try/catch so a
+        // fanout failure never affects the attendance write or the loop.
+        try {
+          const { data: ctx, error: ctxErr } = await supabase
+            .from('students')
+            .select('full_name, class_section:class_sections(homeroom_teacher_id), parent_links:parent_students(parent_id)')
+            .eq('id', student.id)
+            .maybeSingle();
+
+          if (ctxErr) {
+            console.warn('[notification fanout] context lookup failed:', ctxErr.message);
+          } else if (ctx) {
+            const recipients = new Set();
+            if (ctx.class_section?.homeroom_teacher_id) {
+              recipients.add(ctx.class_section.homeroom_teacher_id);
+            }
+            (ctx.parent_links || []).forEach((link) => {
+              if (link.parent_id) recipients.add(link.parent_id);
+            });
+
+            if (recipients.size > 0) {
+              const title = `${ctx.full_name} marked ${status}`;
+              const body = `AI face recognition detected ${ctx.full_name} at ${arrivalTime} on ${isoDate}.`;
+              const rows = Array.from(recipients).map((rid) => ({
+                recipient_id: rid,
+                scope: 'user',
+                type: 'attendance',
+                title,
+                body,
+              }));
+
+              const { error: nErr } = await supabase.from('notifications').insert(rows);
+              if (nErr) {
+                console.warn('[notification fanout] insert failed:', nErr.message);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[notification fanout] threw:', e);
         }
       } catch (e) {
         console.error('[Supabase] Unexpected error while persisting detection:', e);
@@ -606,6 +649,41 @@ app.delete('/api/admin/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// GET /api/admin/users/list — returns profiles joined with auth emails.
+// Admin only. Used by the Admin Panel's User Management table.
+app.get('/api/admin/users/list', requireAdmin, async (req, res) => {
+  try {
+    // 1. Fetch all profiles
+    const { data: profiles, error: pErr } = await supabase
+      .from('profiles')
+      .select('id, role, full_name, phone, avatar_url, created_at, updated_at');
+    if (pErr) return res.status(500).json({ error: pErr.message });
+
+    // 2. Page through auth.users via admin API to build an id→email map
+    const emailById = new Map();
+    let page = 1;
+    const perPage = 1000;
+    while (true) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+      if (error) return res.status(500).json({ error: error.message });
+      for (const u of data.users) emailById.set(u.id, u.email);
+      if (data.users.length < perPage) break;
+      page += 1;
+      if (page > 50) break; // safety: 50,000 users max
+    }
+
+    // 3. Merge
+    const merged = (profiles || []).map(p => ({
+      ...p,
+      email: emailById.get(p.id) || null,
+    }));
+    res.json(merged);
+  } catch (e) {
+    console.error('[admin/users/list] failed:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ── AI Process Management ────────────────────────────────────────────────────
 // Lets the Live Camera page start/stop the Python face-recognition service
 // without dropping to a terminal. The state reported here is "is THIS Express
@@ -624,6 +702,30 @@ app.get('/api/ai/process', (req, res) => {
     lastExitCode: aiLastExitCode,
     lastExitAt: aiLastExitAt,
   });
+});
+
+// GET /api/ai/enrolled — list face-enrollment status (read from enrolled_students.json)
+// Returns: { enrolled: [{ name, class, enrolled_at }, ...] }
+// No auth required — the names are already visible elsewhere in the app.
+app.get('/api/ai/enrolled', (req, res) => {
+  try {
+    const { aiDir } = aiPaths();
+    const dbPath = path.join(aiDir, 'enrolled_students.json');
+    if (!fs.existsSync(dbPath)) {
+      return res.json({ enrolled: [] });
+    }
+    const raw = fs.readFileSync(dbPath, 'utf-8');
+    const json = JSON.parse(raw);
+    const enrolled = (json.students || []).map(s => ({
+      name: s.name,
+      class: s.class,
+      enrolled_at: s.enrolled_at,
+    }));
+    res.json({ enrolled });
+  } catch (e) {
+    console.error('[ai/enrolled] failed:', e);
+    res.status(500).json({ error: 'Failed to read enrolled_students.json' });
+  }
 });
 
 // POST /api/ai/start — spawn the Python face-recognition service.
@@ -710,6 +812,69 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
   }
 });
 
+// POST /api/ai/enroll — spawn the Python enrollment script for a specific student.
+// Blocks for ~5–10s until the Python child exits; the response carries the result.
+// Admin-only — we do NOT allow teachers here because enrollment writes face
+// embeddings to enrolled_students.json, which is a sensitive operation.
+app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
+  const { student_id } = req.body || {};
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  // Look up the student's name + class section name from Supabase
+  const { data: student, error } = await supabase
+    .from('students')
+    .select('full_name, class_section:class_sections(name)')
+    .eq('id', student_id)
+    .maybeSingle();
+  if (error || !student) return res.status(404).json({ error: 'Student not found' });
+
+  // Don't allow concurrent enrollments alongside the recognition script.
+  // Both grab the same webcam (/dev/video0) and would deadlock.
+  if (aiProcess && aiProcess.exitCode === null) {
+    return res.status(409).json({ error: 'Stop the AI service first before enrolling' });
+  }
+
+  const { aiDir, pythonExe } = aiPaths();
+  const script = path.join(aiDir, 'enroll_student.py');
+  if (!fs.existsSync(script)) return res.status(500).json({ error: 'Enrollment script missing' });
+
+  const child = spawn(pythonExe, [
+    '-u', script,
+    '--name', student.full_name,
+    '--class', student.class_section?.name || 'Unknown',
+    '--camera', '0',
+  ], {
+    cwd: aiDir,
+    windowsHide: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+  });
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (d) => {
+    const s = d.toString();
+    stdout += s;
+    s.split(/\r?\n/).filter(Boolean).forEach(l => console.log(`[AI:enroll:stdout] ${l}`));
+  });
+  child.stderr.on('data', (d) => {
+    const s = d.toString();
+    stderr += s;
+    s.split(/\r?\n/).filter(Boolean).forEach(l => console.warn(`[AI:enroll:stderr] ${l}`));
+  });
+
+  child.on('exit', (code) => {
+    if (code === 0) {
+      logAudit(req.actor.id, 'face.enroll', student_id, { name: student.full_name });
+      res.json({ success: true, message: `Enrolled ${student.full_name}` });
+    } else {
+      res.status(500).json({ error: 'Enrollment failed', code, stderr: stderr.slice(-500) });
+    }
+  });
+  child.on('error', (e) => res.status(500).json({ error: e.message }));
+});
+
 // ── Start Server ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log('');
@@ -726,9 +891,12 @@ app.listen(PORT, () => {
   console.log('    POST   /api/admin/users      → Invite user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
+  console.log('    GET    /api/admin/users/list → List users + emails (admin)');
   console.log('    GET    /api/ai/process       → AI child process state');
+  console.log('    GET    /api/ai/enrolled      → Face-enrollment list (public)');
   console.log('    POST   /api/ai/start         → Start Python AI (admin)');
   console.log('    POST   /api/ai/stop          → Stop Python AI  (admin)');
+  console.log('    POST   /api/ai/enroll        → Enroll a face   (admin)');
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Waiting for AI face recognition data...');

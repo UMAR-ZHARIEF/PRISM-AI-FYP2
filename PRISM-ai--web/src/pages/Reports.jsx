@@ -1,12 +1,16 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Download, Calendar, TrendingUp, Users, UserX, Printer, ArrowUp, ArrowDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend, PieChart, Pie, Cell } from 'recharts';
+import Papa from 'papaparse';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { classes } from '../data/mockData';
 import useAttendance from '../hooks/useAttendance';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
+import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 import './Reports.css';
 
@@ -80,10 +84,53 @@ export default function Reports() {
     });
   }, [records, selectedYear]);
 
+  // ---------- View scope (My Classes vs All School) -----------------------
+  // Admins always see all-school data; teachers default to their homeroom(s)
+  // and can opt in to all-school via a toggle. Mirrors Dashboard.jsx.
+  const { profile } = useAuth();
+  const role = profile?.role;
+  const isTeacher = role === 'teacher';
+
+  // null == "no client-side filter" (admin / non-teacher).
+  // [] (empty array) == teacher with no homeroom assignment.
+  const myClassSectionIds = useMemo(() => {
+    if (!isTeacher || !profile?.id) return null;
+    return (classSections || [])
+      .filter(s => s.homeroom_teacher_id === profile.id)
+      .map(s => s.id);
+  }, [classSections, isTeacher, profile?.id]);
+
+  const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
+
+  const [viewScope, setViewScope] = useState(() => (isTeacher ? 'mine' : 'all'));
+
+  // If the teacher loads in before classSections resolve, snap to "all" once
+  // we discover they have no homeroom (and keep them there).
+  useEffect(() => {
+    if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
+      setViewScope('all');
+    }
+  }, [isTeacher, myClassSectionIds]);
+
+  const scopeToMine = viewScope === 'mine' && hasHomeroom;
+
+  // Scoped: teacher's homerooms only when scopeToMine; otherwise pass-through.
+  const scopedRecords = useMemo(() => {
+    if (!scopeToMine) return yearRecords;
+    const allow = new Set(myClassSectionIds);
+    return yearRecords.filter(r => allow.has(r.student?.class_section_id));
+  }, [yearRecords, myClassSectionIds, scopeToMine]);
+
+  const scopedStudents = useMemo(() => {
+    if (!scopeToMine) return yearStudents || [];
+    const allow = new Set(myClassSectionIds);
+    return (yearStudents || []).filter(s => allow.has(s.class_section_id));
+  }, [yearStudents, myClassSectionIds, scopeToMine]);
+
   // Per-student attendance rate over the loaded range.
   const ratesByStudent = useMemo(() => {
     const tally = {};
-    yearRecords.forEach(r => {
+    scopedRecords.forEach(r => {
       const sid = r.student_id;
       if (!sid) return;
       if (!tally[sid]) tally[sid] = { present: 0, total: 0 };
@@ -96,12 +143,12 @@ export default function Reports() {
       out[sid] = t.total > 0 ? Math.round((t.present / t.total) * 100) : 0;
     });
     return out;
-  }, [yearRecords]);
+  }, [scopedRecords]);
 
   // Today's records: drives the stat cards + pie chart.
   const todayRecords = useMemo(() => {
-    return yearRecords.filter(r => r.date === todayStr);
-  }, [yearRecords, todayStr]);
+    return scopedRecords.filter(r => r.date === todayStr);
+  }, [scopedRecords, todayStr]);
 
   const present = todayRecords.filter(r => r.status === 'present').length;
   const absent = todayRecords.filter(r => r.status === 'absent').length;
@@ -128,7 +175,7 @@ export default function Reports() {
     }
     const byIso = {};
     bucket.forEach(b => { byIso[b.iso] = b; });
-    yearRecords.forEach(r => {
+    scopedRecords.forEach(r => {
       const b = byIso[r.date];
       if (!b) return;
       if (r.status === 'present') b.present += 1;
@@ -136,12 +183,12 @@ export default function Reports() {
       else if (r.status === 'absent') b.absent += 1;
     });
     return bucket;
-  }, [yearRecords]);
+  }, [scopedRecords]);
 
   // Monthly trend: weekly buckets across the loaded range, showing rate %.
   const monthlyData = useMemo(() => {
     const groups = {};
-    yearRecords.forEach(r => {
+    scopedRecords.forEach(r => {
       if (!r.date) return;
       const d = new Date(r.date + 'T00:00:00');
       // Week-of-month key (YYYY-MM-W).
@@ -157,7 +204,7 @@ export default function Reports() {
         rate: g.total > 0 ? Math.round((g.present / g.total) * 100) : 0,
       };
     });
-  }, [yearRecords]);
+  }, [scopedRecords]);
 
   // Class comparison: rate per class section for today's records.
   const classCompareData = useMemo(() => {
@@ -180,13 +227,13 @@ export default function Reports() {
 
   // "Needs Attention" + "Perfect Attendance" — driven by per-student rates in range.
   const studentRows = useMemo(() => {
-    return (yearStudents || []).map(s => ({
+    return scopedStudents.map(s => ({
       id: s.id,
       name: s.full_name,
       class: s.class_section?.name || classNameById[s.class_section_id] || '',
       attendanceRate: ratesByStudent[s.id] != null ? ratesByStudent[s.id] : 0,
     }));
-  }, [yearStudents, classNameById, ratesByStudent]);
+  }, [scopedStudents, classNameById, ratesByStudent]);
 
   const mostAbsent = useMemo(
     () => studentRows.filter(s => s.attendanceRate > 0 && s.attendanceRate < 85).sort((a, b) => a.attendanceRate - b.attendanceRate).slice(0, 5),
@@ -231,15 +278,25 @@ export default function Reports() {
   // School days in the loaded range: count of distinct dates present in records.
   const schoolDays = useMemo(() => {
     const set = new Set();
-    yearRecords.forEach(r => { if (r.date) set.add(r.date); });
+    scopedRecords.forEach(r => { if (r.date) set.add(r.date); });
     return set.size;
-  }, [yearRecords]);
+  }, [scopedRecords]);
 
   // Class list for the filter dropdown — prefer hook-loaded sections; fall back to static.
+  // When the teacher is scoped to their homerooms, only list those.
   const classList = useMemo(() => {
-    const fromHook = (classSections || []).map(cs => cs.name).filter(Boolean);
-    return fromHook.length > 0 ? Array.from(new Set(fromHook)) : classes;
-  }, [classSections]);
+    const sectionsForList = scopeToMine
+      ? (classSections || []).filter(cs => myClassSectionIds.includes(cs.id))
+      : (classSections || []);
+    const fromHook = sectionsForList.map(cs => cs.name).filter(Boolean);
+    return fromHook.length > 0 ? Array.from(new Set(fromHook)) : (scopeToMine ? [] : classes);
+  }, [classSections, scopeToMine, myClassSectionIds]);
+
+  // Reset class filter if the previously chosen class falls outside scope.
+  useEffect(() => {
+    if (filterClass === 'all') return;
+    if (!classList.includes(filterClass)) setFilterClass('all');
+  }, [classList, filterClass]);
 
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -255,6 +312,142 @@ export default function Reports() {
   // Mini progress bar fill colour by rate band
   const rateColor = (r) => r >= 95 ? 'var(--green)' : r >= 85 ? 'var(--blue)' : r >= 75 ? 'var(--yellow)' : 'var(--red)';
 
+  // ---------- Export helpers ----------
+  // Flatten the in-scope records (whole date range) into the shape the
+  // export buttons want. Keep this separate from `detailedRows` because that
+  // memo is "today only" for the on-screen table.
+  // When the teacher is scoped to their homerooms, exports only carry those rows.
+  const exportRows = useMemo(() => {
+    return scopedRecords.map(r => {
+      const stu = studentsById[r.student_id] || r.student || {};
+      const cname = stu.class_section?.name || classNameById[stu.class_section_id] || '';
+      const yearNum = stu.year_num != null ? stu.year_num : '';
+      return {
+        date: r.date || '',
+        name: stu.full_name || '',
+        year: yearNum === '' ? '' : `Year ${yearNum}`,
+        class: cname,
+        status: r.status ? r.status.charAt(0).toUpperCase() + r.status.slice(1) : '',
+        arrival: r.arrival_time || '',
+        notes: r.notes || '',
+      };
+    }).sort((a, b) => {
+      // Most recent first; secondary by name for stable ordering on same date.
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [scopedRecords, studentsById, classNameById]);
+
+  const exportFilenameBase = `prism-ai-attendance-${fromDate}-to-${toDate}`;
+
+  const handlePrint = () => {
+    if (loading) {
+      toast('Still loading — try again in a moment.', 'info');
+      return;
+    }
+    if (exportRows.length === 0) {
+      toast('No records in the selected range', 'info');
+      return;
+    }
+    // Native print — Reports.css adds a @media print block that hides nav/sidebar.
+    window.print();
+  };
+
+  const handleExportCsv = () => {
+    if (loading) {
+      toast('Still loading — try again in a moment.', 'info');
+      return;
+    }
+    if (exportRows.length === 0) {
+      toast('No records in the selected range', 'info');
+      return;
+    }
+    const csvData = exportRows.map(r => ({
+      'Date': r.date,
+      'Student Name': r.name,
+      'Year': r.year,
+      'Class': r.class,
+      'Status': r.status,
+      'Arrival Time': r.arrival,
+      'Notes': r.notes,
+    }));
+    const csv = Papa.unparse(csvData);
+    // Prepend a UTF-8 BOM so Excel opens it with the right encoding.
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${exportFilenameBase}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('CSV exported successfully', 'success');
+  };
+
+  const handleExportPdf = () => {
+    if (loading) {
+      toast('Still loading — try again in a moment.', 'info');
+      return;
+    }
+    if (exportRows.length === 0) {
+      toast('No records in the selected range', 'info');
+      return;
+    }
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginX = 40;
+
+    // Header
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('PRISM-AI Attendance Report', marginX, 48);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.text(`Date Range: ${fromDate}  to  ${toDate}`, marginX, 68);
+    const yearLabel = selectedYear ? `Year ${selectedYear}` : 'All Years';
+    const scopeLabel = scopeToMine ? ' / My Homeroom' : '';
+    doc.text(`Filter: ${yearLabel}${scopeLabel}`, marginX, 84);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - marginX, 84, { align: 'right' });
+
+    // Summary stats subheader
+    const totalStudents = scopedStudents.length;
+    const presentCount = exportRows.filter(r => r.status === 'Present' || r.status === 'Late').length;
+    const overallRate = exportRows.length > 0
+      ? Math.round((presentCount / exportRows.length) * 100)
+      : 0;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text('Summary', marginX, 112);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Total Students: ${totalStudents}`, marginX, 130);
+    doc.text(`Attendance Rate: ${overallRate}%`, marginX + 180, 130);
+    doc.text(`School Days in Range: ${schoolDays}`, marginX + 360, 130);
+
+    // Table
+    autoTable(doc, {
+      startY: 148,
+      margin: { left: marginX, right: marginX },
+      head: [['Date', 'Student Name', 'Year', 'Class', 'Status', 'Arrival', 'Notes']],
+      body: exportRows.map(r => [r.date, r.name, r.year, r.class, r.status, r.arrival, r.notes]),
+      styles: { fontSize: 9, cellPadding: 4 },
+      headStyles: { fillColor: [47, 117, 201], textColor: 255 },
+      alternateRowStyles: { fillColor: [248, 246, 240] },
+      columnStyles: {
+        0: { cellWidth: 60 },  // Date
+        2: { cellWidth: 45 },  // Year
+        4: { cellWidth: 50 },  // Status
+        5: { cellWidth: 50 },  // Arrival
+      },
+    });
+
+    doc.save(`${exportFilenameBase}.pdf`);
+    toast('PDF exported successfully', 'success');
+  };
+
   return (
     <div className="reports-page">
       <div className="page-header reports-header">
@@ -264,11 +457,42 @@ export default function Reports() {
             <span className="word b">Reports</span>
             {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
           </h1>
+          <p className="reports-subtitle">
+            {scopeToMine
+              ? 'Showing your homeroom classes'
+              : (isTeacher ? 'Showing all classes' : 'Showing all classes')}
+          </p>
+          {isTeacher && hasHomeroom && (
+            <div className="scope-toggle no-print" role="tablist" aria-label="View scope">
+              <span className="tape tl" />
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewScope === 'mine'}
+                className={`scope-pill ${viewScope === 'mine' ? 'is-active' : ''}`}
+                onClick={() => setViewScope('mine')}
+              >
+                My Classes
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewScope === 'all'}
+                className={`scope-pill ${viewScope === 'all' ? 'is-active' : ''}`}
+                onClick={() => setViewScope('all')}
+              >
+                All School
+              </button>
+            </div>
+          )}
+          {isTeacher && !hasHomeroom && (
+            <p className="scope-note">You are not assigned a homeroom — showing all-school data</p>
+          )}
         </div>
-        <div className="report-flex-gap-8">
-          <button className="btn btn-yellow" onClick={() => toast('Printing report...', 'info')}><Printer size={16} /> Print</button>
-          <button className="btn btn-outline" onClick={() => toast('CSV exported successfully', 'success')}><Download size={16} /> CSV</button>
-          <button className="btn btn-primary" onClick={() => toast('PDF exported successfully', 'success')}><Download size={16} /> PDF</button>
+        <div className="report-flex-gap-8 reports-actions no-print">
+          <button className="btn btn-yellow" onClick={handlePrint}><Printer size={16} /> Print</button>
+          <button className="btn btn-outline" onClick={handleExportCsv}><Download size={16} /> CSV</button>
+          <button className="btn btn-primary" onClick={handleExportPdf}><Download size={16} /> PDF</button>
         </div>
       </div>
 
@@ -288,7 +512,7 @@ export default function Reports() {
         </div>
         <div className="stat-card s-blue tilt-r">
           <div className="icon-box"><Users size={22} /></div>
-          <div className="stat-info"><h3>{loading ? '—' : (yearStudents || []).length}</h3><p>Total Students</p></div>
+          <div className="stat-info"><h3>{loading ? '—' : scopedStudents.length}</h3><p>Total Students</p></div>
         </div>
         <div className="stat-card s-red tilt-l">
           <div className="icon-box"><UserX size={22} /></div>

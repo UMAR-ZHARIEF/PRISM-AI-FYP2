@@ -50,6 +50,66 @@
   transform: rotate(-0.3deg);
   overflow: visible;
 }
+
+/* ---------- Teacher scope row (checkbox + note) ---------- */
+.comparison-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 2px dashed var(--ink);
+}
+.comparison-scope-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink);
+  user-select: none;
+  transform: rotate(-0.4deg);
+}
+.comparison-scope-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--ink);
+  background: var(--paper-light);
+  cursor: pointer;
+  position: relative;
+  clip-path: polygon(8% 0, 96% 4%, 100% 92%, 4% 100%);
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.comparison-scope-check input[type="checkbox"]:checked {
+  background: var(--ink);
+}
+.comparison-scope-check input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 7px;
+  height: 12px;
+  border: solid var(--paper-light);
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
+}
+.comparison-scope-note {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 2px dashed var(--ink);
+  transform: rotate(-0.4deg);
+  display: block;
+}
 .comparison-controls {
   display: flex;
   gap: 32px;

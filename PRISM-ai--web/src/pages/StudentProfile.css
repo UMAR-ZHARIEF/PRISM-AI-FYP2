@@ -530,6 +530,170 @@
   transform: rotate(-0.5deg);
 }
 
+/* ============================================================
+   ADMIN-ONLY: Edit attendance affordance + modal
+   ============================================================ */
+
+/* "Edit today's record" pill button sits at the right end of the
+   attendance stats strip. Admin-only — non-admins don't render it. */
+.sprofile-att-edit-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  clip-path: var(--cut-pill);
+  transform: rotate(-1.5deg);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.sprofile-att-edit-btn:hover {
+  background: var(--yellow);
+  transform: rotate(-1.5deg) translateY(-2px);
+}
+.sprofile-att-edit-btn:focus-visible {
+  outline: 3px dashed var(--ink);
+  outline-offset: 3px;
+}
+
+/* Edit-attendance modal — sits on top of the global .modal-overlay/.modal
+   styles (paper background, tape strip, cut-2 clip-path). */
+.sprofile-edit-modal {
+  max-width: 480px;
+  padding: 32px 30px 26px;
+}
+
+.sprofile-edit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.sprofile-edit-header h2 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0;
+}
+
+.sprofile-edit-sub {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--ink-soft);
+  margin: 0 0 18px;
+  transform: rotate(-0.5deg);
+}
+.sprofile-edit-date {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  clip-path: var(--cut-pill);
+}
+
+.sprofile-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.sprofile-edit-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.sprofile-edit-optional {
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.sprofile-edit-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  font-family: var(--body);
+  font-size: 17px;
+  color: var(--ink);
+  clip-path: var(--cut-2);
+}
+.sprofile-edit-input:focus {
+  background: var(--yellow);
+  outline: none;
+}
+.sprofile-edit-textarea {
+  resize: vertical;
+  min-height: 70px;
+  line-height: 1.45;
+}
+
+.sprofile-edit-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 12px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--red);
+  transform: rotate(-0.4deg);
+}
+
+.sprofile-edit-confirm {
+  margin: -4px 0 14px;
+  padding: 10px 14px;
+  background: rgba(231, 159, 51, 0.18);
+  border-left: 4px solid var(--orange);
+  font-family: var(--body);
+  font-size: 15px;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.sprofile-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 2px dashed rgba(31, 26, 18, 0.22);
+  flex-wrap: wrap;
+}
+.sprofile-edit-actions-right {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+.sprofile-edit-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 9px 16px;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
   .sprofile-info-row {
@@ -602,5 +766,19 @@
   }
   .sprofile-note-hint {
     text-align: center;
+  }
+  .sprofile-att-edit-btn {
+    margin-left: 0;
+  }
+  .sprofile-edit-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sprofile-edit-actions-right {
+    margin-left: 0;
+    justify-content: stretch;
+  }
+  .sprofile-edit-actions-right .btn {
+    flex: 1;
   }
 }

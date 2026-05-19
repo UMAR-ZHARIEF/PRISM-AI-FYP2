@@ -11,6 +11,7 @@ import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import './Dashboard.css';
 
 // ISO date helper (YYYY-MM-DD) in local time.
@@ -117,10 +118,56 @@ export default function Dashboard() {
     return weekRecords.filter(r => r.student?.year_num === selectedYear);
   }, [weekRecords, selectedYear]);
 
+  // ---------- View scope (My Classes vs All School) -----------------------
+  // Admins always see all-school data; teachers default to their homeroom(s)
+  // and can opt in to all-school via a toggle. Other roles (parent etc.)
+  // also fall back to all-school — they don't see this page in practice.
+  const { profile } = useAuth();
+  const role = profile?.role;
+  const isTeacher = role === 'teacher';
+
+  // null == "no client-side filter" (admin / non-teacher).
+  // [] (empty array) == teacher with no homeroom assignment.
+  const myClassSectionIds = useMemo(() => {
+    if (!isTeacher || !profile?.id) return null;
+    return classSections
+      .filter(s => s.homeroom_teacher_id === profile.id)
+      .map(s => s.id);
+  }, [classSections, isTeacher, profile?.id]);
+
+  const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
+
+  // Default scope: teachers with a homeroom see "mine"; everyone else gets "all".
+  const [viewScope, setViewScope] = useState(() => (isTeacher ? 'mine' : 'all'));
+
+  // If the teacher loads in before classSections resolve, snap to "all" once
+  // we discover they have no homeroom (and keep them there).
+  useEffect(() => {
+    if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
+      setViewScope('all');
+    }
+  }, [isTeacher, myClassSectionIds]);
+
+  // Whether we should actually narrow the client-side data right now.
+  const scopeToMine = viewScope === 'mine' && hasHomeroom;
+
+  // Scoped students + records. When not scoping, these are pass-throughs.
+  const scopedStudents = useMemo(() => {
+    if (!scopeToMine) return dbStudents;
+    const allow = new Set(myClassSectionIds);
+    return dbStudents.filter(s => allow.has(s.class_section_id));
+  }, [dbStudents, myClassSectionIds, scopeToMine]);
+
+  const scopedRecords = useMemo(() => {
+    if (!scopeToMine) return yearRecords;
+    const allow = new Set(myClassSectionIds);
+    return yearRecords.filter(r => allow.has(r.student?.class_section_id));
+  }, [yearRecords, myClassSectionIds, scopeToMine]);
+
   // Today's records only.
   const todayRecords = useMemo(
-    () => yearRecords.filter(r => r.date === today),
-    [yearRecords, today]
+    () => scopedRecords.filter(r => r.date === today),
+    [scopedRecords, today]
   );
 
   // Today's counts straight off the records.
@@ -128,8 +175,8 @@ export default function Dashboard() {
   const absent = useMemo(() => todayRecords.filter(r => r.status === 'absent').length, [todayRecords]);
   const late = useMemo(() => todayRecords.filter(r => r.status === 'late').length, [todayRecords]);
 
-  // Total students for the selected year (or all years).
-  const totalStudents = dbStudents.length;
+  // Total students for the selected year / scope.
+  const totalStudents = scopedStudents.length;
   const attendanceRate = totalStudents > 0 ? Math.round((present / totalStudents) * 100) : 0;
 
   // Class-by-class stats — single attendance pass, grouped client-side by class_section_id.
@@ -144,14 +191,18 @@ export default function Dashboard() {
       else if (r.status === 'absent') bucket.absent += 1;
       else if (r.status === 'late') bucket.late += 1;
     }
-    // Total students per section, scoped to current year filter.
+    // Total students per section, scoped to current year + view scope.
     const totalsBySection = new Map();
-    for (const s of dbStudents) {
+    for (const s of scopedStudents) {
       const id = s.class_section_id;
       if (!id) continue;
       totalsBySection.set(id, (totalsBySection.get(id) || 0) + 1);
     }
-    return classSections.map(section => {
+    // Limit the rendered sections to the teacher's homerooms when scoped.
+    const sectionsToShow = scopeToMine
+      ? classSections.filter(s => myClassSectionIds.includes(s.id))
+      : classSections;
+    return sectionsToShow.map(section => {
       const counts = byClass.get(section.id) || { present: 0, absent: 0, late: 0 };
       const totalForSection = totalsBySection.get(section.id) || (counts.present + counts.absent + counts.late);
       return {
@@ -164,7 +215,7 @@ export default function Dashboard() {
         total: totalForSection,
       };
     });
-  }, [todayRecords, dbStudents, classSections]);
+  }, [todayRecords, scopedStudents, classSections, scopeToMine, myClassSectionIds]);
 
   // Weekly chart data: last 7 days, present/absent/late counts per day.
   const weeklyAttendance = useMemo(() => {
@@ -177,7 +228,7 @@ export default function Dashboard() {
       days.push({ iso, day: label, present: 0, absent: 0, late: 0 });
     }
     const byIso = new Map(days.map(d => [d.iso, d]));
-    for (const r of yearRecords) {
+    for (const r of scopedRecords) {
       const bucket = byIso.get(r.date);
       if (!bucket) continue;
       if (r.status === 'present') bucket.present += 1;
@@ -185,7 +236,7 @@ export default function Dashboard() {
       else if (r.status === 'late') bucket.late += 1;
     }
     return days;
-  }, [yearRecords]);
+  }, [scopedRecords]);
 
   // Arrival time distribution for today (half-hour buckets, sorted by time).
   const dailyArrivalTimes = useMemo(() => {
@@ -276,7 +327,37 @@ export default function Dashboard() {
       <div className="page-header">
         <div>
           <h1><span className="word k">Dashboard</span>{selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}</h1>
-          <p className="page-subtitle">{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+          <p className="page-subtitle">
+            {scopeToMine
+              ? 'Showing your homeroom classes'
+              : (isTeacher ? 'Showing all classes' : new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}
+          </p>
+          {isTeacher && hasHomeroom && (
+            <div className="scope-toggle" role="tablist" aria-label="View scope">
+              <span className="tape tl" />
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewScope === 'mine'}
+                className={`scope-pill ${viewScope === 'mine' ? 'is-active' : ''}`}
+                onClick={() => setViewScope('mine')}
+              >
+                My Classes
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewScope === 'all'}
+                className={`scope-pill ${viewScope === 'all' ? 'is-active' : ''}`}
+                onClick={() => setViewScope('all')}
+              >
+                All School
+              </button>
+            </div>
+          )}
+          {isTeacher && !hasHomeroom && (
+            <p className="scope-note">You are not assigned a homeroom — showing all-school data</p>
+          )}
         </div>
         <div className="page-header-actions">
           <button className="btn btn-outline" onClick={() => toast('All students marked present', 'success')}><UserCheck size={16} /> Mark All Present</button>

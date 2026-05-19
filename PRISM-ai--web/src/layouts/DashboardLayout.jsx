@@ -52,7 +52,7 @@ export default function DashboardLayout() {
   const { notifications, unreadCount, markAllRead } = useNotifications();
   const { user, profile, signOut } = useAuth();
 
-  const role = profile?.role || 'admin';
+  const role = profile?.role;
 
   const displayName = profile?.full_name || user?.email || 'Admin Hafiz';
   const avatarInitials = useMemo(() => {

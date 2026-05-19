@@ -1,16 +1,22 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, FileUp, ArrowUp, ArrowDown } from 'lucide-react';
+import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, Trash2, FileUp, ArrowUp, ArrowDown } from 'lucide-react';
 import { classes, classColors, years } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
+import { useAuth } from '../contexts/AuthContext.jsx';
 import Pagination from '../components/Pagination';
 import useStudents from '../hooks/useStudents';
+import useYears from '../hooks/useYears';
+import useClassSections from '../hooks/useClassSections';
+import { supabase } from '../lib/supabase';
 import { SkeletonCard } from '../components/Skeleton';
 import './Students.css';
 
 export default function Students() {
   const toast = useToast();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
 
   // Year context (safe fallback if context not yet available)
   let yearCtx;
@@ -33,15 +39,22 @@ export default function Students() {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
 
-  // Add Student form fields
+  // Add/Edit modal form fields (Supabase-shape now, not mock-shape)
+  const [modalMode, setModalMode] = useState('add'); // 'add' | 'edit'
+  const [editingStudentId, setEditingStudentId] = useState(null);
   const [formName, setFormName] = useState('');
-  const [formClass, setFormClass] = useState('');
-  const [formAge, setFormAge] = useState('');
-  const [formGender, setFormGender] = useState('M');
-  const [formParentName, setFormParentName] = useState('');
-  const [formParentEmail, setFormParentEmail] = useState('');
-  const [formParentPhone, setFormParentPhone] = useState('');
+  const [formStudentNumber, setFormStudentNumber] = useState('');
+  const [formYear, setFormYear] = useState('');
+  const [formClassSectionId, setFormClassSectionId] = useState('');
+  const [formGender, setFormGender] = useState('male');
+  const [formDob, setFormDob] = useState('');
+  const [formPhotoUrl, setFormPhotoUrl] = useState('');
   const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+
+  // Delete confirmation state
+  const [studentToDelete, setStudentToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Sync filterYear when global selectedYear changes
   useEffect(() => {
@@ -50,18 +63,25 @@ export default function Students() {
 
   // Load students from Supabase. When filterYear === 'all', pass undefined so the hook returns all years.
   const hookYear = filterYear === 'all' ? undefined : Number(filterYear);
-  const { students: dbStudents, loading, error } = useStudents({ year: hookYear });
+  const { students: dbStudents, loading, error, refresh } = useStudents({ year: hookYear });
+
+  // Lookups for the form (years to pick from, class sections filtered by year)
+  const { years: yearOptions } = useYears();
+  const formYearNumber = formYear === '' ? undefined : Number(formYear);
+  const { classSections: formClassOptions } = useClassSections({ year: formYearNumber });
 
   // Normalize DB rows into the legacy UI shape so the rest of this page can render unchanged.
   // attendanceRate is intentionally null until per-student attendance queries are wired up.
   const students = useMemo(() => (dbStudents || []).map(row => ({
     id: row.id,
+    studentNumber: row.student_number || '',
     name: row.full_name || '',
     year: row.year_num,
     class: row.class_section?.name || '',
     classId: row.class_section_id,
     classColor: row.class_section?.color || classColors[row.class_section?.name] || null,
     gender: (row.gender || '').toUpperCase().startsWith('F') ? 'F' : 'M',
+    rawGender: row.gender || 'male',
     dob: row.dob || null,
     age: null,
     photoUrl: row.photo_url || null,
@@ -129,35 +149,146 @@ export default function Students() {
 
   const resetForm = () => {
     setFormName('');
-    setFormClass('');
-    setFormAge('');
-    setFormGender('M');
-    setFormParentName('');
-    setFormParentEmail('');
-    setFormParentPhone('');
+    setFormStudentNumber('');
+    setFormYear('');
+    setFormClassSectionId('');
+    setFormGender('male');
+    setFormDob('');
+    setFormPhotoUrl('');
     setErrors({});
+    setSubmitting(false);
+    setEditingStudentId(null);
   };
 
-  const handleAddStudent = () => {
-    const newErrors = {};
-    if (!formName.trim()) newErrors.name = 'Name is required';
-    if (!formClass) newErrors.class = 'Class is required';
-    if (!formParentName.trim()) newErrors.parentName = 'Parent name is required';
-    if (!formParentEmail.trim()) newErrors.parentEmail = 'Parent email is required';
-
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors);
-      return;
-    }
-
-    setShowModal(false);
+  const handleOpenAdd = () => {
+    if (!isAdmin) return;
     resetForm();
-    toast('Student added successfully', 'success');
+    setModalMode('add');
+    // Sensible suggested student number; admin can override.
+    setFormStudentNumber('PRISM-' + Date.now().toString(36).toUpperCase());
+    setShowModal(true);
+  };
+
+  const handleOpenEdit = (s) => {
+    if (!isAdmin) return;
+    resetForm();
+    setModalMode('edit');
+    setEditingStudentId(s.id);
+    setFormName(s.name || '');
+    setFormStudentNumber(s.studentNumber || '');
+    setFormYear(s.year ? String(s.year) : '');
+    setFormClassSectionId(s.classId || '');
+    setFormGender((s.rawGender || 'male').toLowerCase().startsWith('f') ? 'female' : 'male');
+    setFormDob(s.dob || '');
+    setFormPhotoUrl(s.photoUrl || '');
+    setShowModal(true);
   };
 
   const handleCloseModal = () => {
+    if (submitting) return;
     setShowModal(false);
     resetForm();
+  };
+
+  const validate = () => {
+    const next = {};
+    if (!formName.trim()) next.name = 'Name is required';
+    if (modalMode === 'add' && !formStudentNumber.trim()) next.studentNumber = 'Student number is required';
+    if (!formYear) next.year = 'Year is required';
+    if (!formClassSectionId) next.classSectionId = 'Class is required';
+    return next;
+  };
+
+  const handleSubmitStudent = async () => {
+    const next = validate();
+    setErrors(next);
+    if (Object.keys(next).length > 0) return;
+
+    setSubmitting(true);
+    try {
+      if (modalMode === 'add') {
+        const payload = {
+          student_number: formStudentNumber.trim(),
+          full_name: formName.trim(),
+          year_num: Number(formYear),
+          class_section_id: formClassSectionId,
+          gender: formGender,
+          dob: formDob || null,
+          photo_url: formPhotoUrl.trim() || null,
+        };
+        const { error: insertError } = await supabase.from('students').insert(payload);
+        if (insertError) {
+          console.error('Students: insert failed', insertError);
+          toast(insertError.message || 'Could not add student', 'error');
+          setSubmitting(false);
+          return;
+        }
+        toast(`Added ${payload.full_name}`, 'success');
+      } else {
+        const payload = {
+          full_name: formName.trim(),
+          year_num: Number(formYear),
+          class_section_id: formClassSectionId,
+          gender: formGender,
+          dob: formDob || null,
+          photo_url: formPhotoUrl.trim() || null,
+        };
+        const { error: updateError } = await supabase
+          .from('students')
+          .update(payload)
+          .eq('id', editingStudentId);
+        if (updateError) {
+          console.error('Students: update failed', updateError);
+          toast(updateError.message || 'Could not save changes', 'error');
+          setSubmitting(false);
+          return;
+        }
+        toast('Student updated', 'success');
+      }
+
+      setShowModal(false);
+      resetForm();
+      refresh();
+    } catch (err) {
+      console.error('Students: submit failed', err);
+      toast('Something went wrong. Please try again.', 'error');
+      setSubmitting(false);
+    }
+  };
+
+  const handleOpenDelete = (s) => {
+    if (!isAdmin) return;
+    setStudentToDelete(s);
+  };
+
+  const handleCancelDelete = () => {
+    if (deleting) return;
+    setStudentToDelete(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!studentToDelete) return;
+    setDeleting(true);
+    try {
+      const { error: deleteError } = await supabase
+        .from('students')
+        .delete()
+        .eq('id', studentToDelete.id);
+      if (deleteError) {
+        console.error('Students: delete failed', deleteError);
+        toast(deleteError.message || 'Could not delete student', 'error');
+        setDeleting(false);
+        return;
+      }
+      toast(`Deleted ${studentToDelete.name}`, 'success');
+      setStudentToDelete(null);
+      setDeleting(false);
+      refresh();
+    } catch (err) {
+      console.error('Students: delete failed', err);
+      toast('Something went wrong. Please try again.', 'error');
+      setDeleting(false);
+    }
   };
 
   return (
@@ -172,9 +303,11 @@ export default function Students() {
         </div>
         <div className="header-actions">
           <button className="btn btn-outline" onClick={() => toast('CSV import started', 'info')}><FileUp size={16} /> Import CSV</button>
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-            <Plus size={16} /> Add Student
-          </button>
+          {isAdmin && (
+            <button className="btn btn-primary" onClick={handleOpenAdd}>
+              <Plus size={16} /> Add Student
+            </button>
+          )}
         </div>
       </div>
 
@@ -281,7 +414,12 @@ export default function Students() {
                 <p className="student-parent">Parent: {s.parent || '—'}</p>
                 <div className="student-actions">
                   <button className="btn btn-outline btn-sm-grid" onClick={() => setSelectedStudent(s)}><Eye size={14} /> View</button>
-                  <button className="btn btn-warm btn-sm-grid" onClick={() => toast('Edit mode opened', 'info')}><Edit3 size={14} /> Edit</button>
+                  {isAdmin && (
+                    <>
+                      <button className="btn btn-warm btn-sm-grid" onClick={() => handleOpenEdit(s)}><Edit3 size={14} /> Edit</button>
+                      <button className="btn btn-danger btn-sm-grid" onClick={() => handleOpenDelete(s)}><Trash2 size={14} /> Delete</button>
+                    </>
+                  )}
                 </div>
               </div>
             );
@@ -333,7 +471,12 @@ export default function Students() {
                     <td>
                       <div className="table-actions">
                         <button className="btn btn-secondary btn-sm-table" onClick={() => setSelectedStudent(s)}>View</button>
-                        <button className="btn btn-outline btn-sm-table" onClick={() => toast('Edit mode opened', 'info')}>Edit</button>
+                        {isAdmin && (
+                          <>
+                            <button className="btn btn-outline btn-sm-table" onClick={() => handleOpenEdit(s)}>Edit</button>
+                            <button className="btn btn-danger btn-sm-table" onClick={() => handleOpenDelete(s)}>Delete</button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -396,59 +539,144 @@ export default function Students() {
         </div>
       )}
 
-      {/* ADD STUDENT MODAL */}
-      {showModal && (
+      {/* ADD / EDIT STUDENT MODAL — admin only */}
+      {showModal && isAdmin && (
         <div className="modal-overlay" onClick={handleCloseModal}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Add New Student</h2>
-              <button className="modal-close-btn" onClick={handleCloseModal}><X size={20} /></button>
+              <h2>{modalMode === 'edit' ? 'Edit Student' : 'Add New Student'}</h2>
+              <button className="modal-close-btn" onClick={handleCloseModal} disabled={submitting}><X size={20} /></button>
             </div>
-            <div className="face-upload">
-              <Upload size={32} />
-              <p>Upload or capture face photo</p>
-              <small>For AI face recognition</small>
-            </div>
+
+            {modalMode === 'add' && (
+              <div className="face-upload">
+                <Upload size={32} />
+                <p>Upload or capture face photo</p>
+                <small>For AI face recognition (coming soon)</small>
+              </div>
+            )}
+
             <div className="form-group">
               <label>Full Name</label>
-              <input type="text" placeholder="Enter student name" className={errors.name ? 'input-error' : ''} value={formName} onChange={e => { setFormName(e.target.value); setErrors(prev => ({ ...prev, name: '' })); }} />
+              <input
+                type="text"
+                placeholder="Enter student name"
+                className={errors.name ? 'input-error' : ''}
+                value={formName}
+                onChange={e => { setFormName(e.target.value); setErrors(prev => ({ ...prev, name: '' })); }}
+                disabled={submitting}
+              />
               {errors.name && <span className="field-error">{errors.name}</span>}
             </div>
+
+            <div className="form-group">
+              <label>Student Number {modalMode === 'edit' && <span className="user-form-hint">(read-only)</span>}</label>
+              <input
+                type="text"
+                placeholder="e.g. PRISM-AB12CD"
+                className={errors.studentNumber ? 'input-error' : ''}
+                value={formStudentNumber}
+                onChange={e => { setFormStudentNumber(e.target.value); setErrors(prev => ({ ...prev, studentNumber: '' })); }}
+                disabled={modalMode === 'edit' || submitting}
+              />
+              {errors.studentNumber && <span className="field-error">{errors.studentNumber}</span>}
+            </div>
+
             <div className="form-row-3">
               <div className="form-group">
-                <label>Class</label>
-                <select className={errors.class ? 'input-error' : ''} value={formClass} onChange={e => { setFormClass(e.target.value); setErrors(prev => ({ ...prev, class: '' })); }}>
+                <label>Year</label>
+                <select
+                  className={errors.year ? 'input-error' : ''}
+                  value={formYear}
+                  onChange={e => {
+                    setFormYear(e.target.value);
+                    // Year changed -> reset class so old class isn't out of range
+                    setFormClassSectionId('');
+                    setErrors(prev => ({ ...prev, year: '', classSectionId: '' }));
+                  }}
+                  disabled={submitting}
+                >
                   <option value="">Select</option>
-                  {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                  {(yearOptions || []).map(y => (
+                    <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>
+                  ))}
                 </select>
-                {errors.class && <span className="field-error">{errors.class}</span>}
+                {errors.year && <span className="field-error">{errors.year}</span>}
               </div>
               <div className="form-group">
-                <label>Age</label>
-                <input type="number" placeholder="Age" value={formAge} onChange={e => setFormAge(e.target.value)} />
+                <label>Class</label>
+                <select
+                  className={errors.classSectionId ? 'input-error' : ''}
+                  value={formClassSectionId}
+                  onChange={e => { setFormClassSectionId(e.target.value); setErrors(prev => ({ ...prev, classSectionId: '' })); }}
+                  disabled={!formYear || submitting}
+                >
+                  <option value="">{formYear ? 'Select' : 'Pick a year first'}</option>
+                  {(formClassOptions || []).map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                {errors.classSectionId && <span className="field-error">{errors.classSectionId}</span>}
               </div>
               <div className="form-group">
                 <label>Gender</label>
-                <select value={formGender} onChange={e => setFormGender(e.target.value)}>
-                  <option value="M">Male</option>
-                  <option value="F">Female</option>
+                <select value={formGender} onChange={e => setFormGender(e.target.value)} disabled={submitting}>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
                 </select>
               </div>
             </div>
+
             <div className="form-group">
-              <label>Parent Name</label>
-              <input type="text" placeholder="Enter parent name" className={errors.parentName ? 'input-error' : ''} value={formParentName} onChange={e => { setFormParentName(e.target.value); setErrors(prev => ({ ...prev, parentName: '' })); }} />
-              {errors.parentName && <span className="field-error">{errors.parentName}</span>}
+              <label>Date of Birth <span className="user-form-hint">(optional)</span></label>
+              <input
+                type="date"
+                value={formDob}
+                onChange={e => setFormDob(e.target.value)}
+                disabled={submitting}
+              />
             </div>
+
             <div className="form-group">
-              <label>Parent Email</label>
-              <input type="email" placeholder="Enter parent email" className={errors.parentEmail ? 'input-error' : ''} value={formParentEmail} onChange={e => { setFormParentEmail(e.target.value); setErrors(prev => ({ ...prev, parentEmail: '' })); }} />
-              {errors.parentEmail && <span className="field-error">{errors.parentEmail}</span>}
+              <label>Photo URL <span className="user-form-hint">(optional)</span></label>
+              <input
+                type="text"
+                placeholder="https://..."
+                value={formPhotoUrl}
+                onChange={e => setFormPhotoUrl(e.target.value)}
+                disabled={submitting}
+              />
             </div>
-            <div className="form-group"><label>Parent Phone</label><input type="tel" placeholder="Enter phone number" value={formParentPhone} onChange={e => setFormParentPhone(e.target.value)} /></div>
+
             <div className="modal-footer">
-              <button className="btn btn-outline" onClick={handleCloseModal}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleAddStudent}>Add Student</button>
+              <button className="btn btn-outline" onClick={handleCloseModal} disabled={submitting}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSubmitStudent} disabled={submitting}>
+                {submitting
+                  ? (modalMode === 'edit' ? 'Saving...' : 'Adding...')
+                  : (modalMode === 'edit' ? 'Save Changes' : 'Add Student')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE STUDENT CONFIRMATION — admin only */}
+      {studentToDelete && isAdmin && (
+        <div className="modal-overlay" onClick={handleCancelDelete}>
+          <div className="modal student-delete-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Delete Student?</h2>
+              <button className="modal-close-btn" onClick={handleCancelDelete} disabled={deleting}><X size={20} /></button>
+            </div>
+            <p className="student-delete-message">
+              Delete <strong>{studentToDelete.name}</strong>? This also removes
+              all their attendance records, parent links, and teacher notes.
+            </p>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={handleCancelDelete} disabled={deleting}>Cancel</button>
+              <button className="btn btn-danger" onClick={handleConfirmDelete} disabled={deleting}>
+                {deleting ? 'Deleting...' : 'Delete Student'}
+              </button>
             </div>
           </div>
         </div>

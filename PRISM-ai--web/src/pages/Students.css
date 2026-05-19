@@ -475,6 +475,30 @@
   border-top: 2px dashed var(--ink);
 }
 
+/* === DELETE CONFIRMATION ================================= */
+.student-delete-modal { max-width: 460px; }
+.student-delete-message {
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.45;
+  margin: 4px 0 6px;
+  color: var(--ink);
+}
+.student-delete-message strong {
+  font-family: var(--display);
+  font-weight: 900;
+  color: var(--red);
+}
+
+/* Small hint label used inside form labels (e.g. "(optional)") */
+.user-form-hint {
+  font-family: var(--body);
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-weight: normal;
+  margin-left: 4px;
+}
+
 /* === RESPONSIVE ========================================== */
 @media (max-width: 1180px) {
   .students-grid { grid-template-columns: repeat(3, 1fr); }
