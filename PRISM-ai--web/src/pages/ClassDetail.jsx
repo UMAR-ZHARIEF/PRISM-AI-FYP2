@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Users, UserCheck, UserX, Clock, ClipboardCheck, Mail } from 'lucide-react';
+import { ArrowLeft, Users, UserCheck, UserX, Clock, ClipboardCheck, Mail, Info } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { classes, classColors, years } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
+import { useAuth } from '../contexts/AuthContext';
 import { SkeletonCard, SkeletonChart } from '../components/Skeleton';
 import './ClassDetail.css';
 
@@ -57,6 +58,21 @@ export default function ClassDetail() {
   );
   const classSectionId = section?.id;
   const teacher = section?.homeroom_teacher || null;
+
+  // Teacher scoping: if a teacher is viewing a class outside their homeroom(s),
+  // surface a small informational note. Admins (and teachers viewing their own
+  // homeroom) never see it.
+  const { profile } = useAuth();
+  const isTeacher = profile?.role === 'teacher';
+  const teacherHomeroomIds = useMemo(() => {
+    if (!isTeacher || !profile?.id) return [];
+    return (classSections || [])
+      .filter(s => s.homeroom_teacher_id === profile.id)
+      .map(s => s.id);
+  }, [classSections, isTeacher, profile]);
+  const teacherHasHomeroom = teacherHomeroomIds.length > 0;
+  const isMyHomeroom = !!classSectionId && teacherHomeroomIds.includes(classSectionId);
+  const showOutsideHomeroomNote = isTeacher && teacherHasHomeroom && !isMyHomeroom && !!classSectionId;
 
   const { students: dbStudents, loading: studentsLoading, error: studentsError } =
     useStudents({ classSectionId });
@@ -211,6 +227,15 @@ export default function ClassDetail() {
       <Link to="/dashboard" className="pencil-link classdetail-back">
         <ArrowLeft size={18} /> Back to Dashboard
       </Link>
+
+      {/* TEACHER-SCOPE NOTE: viewing a class outside their homeroom */}
+      {showOutsideHomeroomNote && (
+        <div className="classdetail-scope-note" role="note">
+          <span className="tape tl" />
+          <Info size={18} />
+          <p>You are viewing a class outside your homeroom. Showing read-only stats.</p>
+        </div>
+      )}
 
       {/* PAGE HEADER */}
       <div className="page-header classdetail-header">

@@ -1,11 +1,12 @@
-import { useState, useMemo } from 'react';
-import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classes, classColors, aiModelHistory, years } from '../data/mockData';
 import useProfiles from '../hooks/useProfiles';
 import useAuditLogs from '../hooks/useAuditLogs';
 import useAiModels from '../hooks/useAiModels';
 import useStudents from '../hooks/useStudents';
+import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { SkeletonTable } from '../components/Skeleton';
@@ -56,7 +57,40 @@ export default function AdminPanel() {
   const [facePage, setFacePage] = useState(1);
 
   // --- Auth (admin's JWT for /api/admin/users calls) ---
-  const { session, user: authUser } = useAuth();
+  const { session, user: authUser, profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
+
+  // Face enrollment state (admin-only panel)
+  const [enrollStudentId, setEnrollStudentId] = useState('');
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollStatus, setEnrollStatus] = useState(null);
+
+  // Real face-enrollment status: Set of lowercased names from
+  // ai-service/edge/enrolled_students.json (served by GET /api/ai/enrolled).
+  // We poll every 30s so freshly enrolled students appear without a manual
+  // reload, and we also refetch immediately after a successful enrollment.
+  const [enrolledFaces, setEnrolledFaces] = useState(() => new Set());
+
+  const fetchEnrolledFaces = async () => {
+    try {
+      const res = await fetch('/api/ai/enrolled');
+      if (!res.ok) return;
+      const body = await res.json();
+      const names = (body?.enrolled || [])
+        .map(e => (e?.name || '').toLowerCase().trim())
+        .filter(Boolean);
+      setEnrolledFaces(new Set(names));
+    } catch (err) {
+      // Server may be down — leave the previous snapshot in place silently.
+      console.warn('AdminPanel: /api/ai/enrolled fetch failed', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchEnrolledFaces();
+    const id = setInterval(fetchEnrolledFaces, 30000);
+    return () => clearInterval(id);
+  }, []);
 
   // --- Supabase-backed data ---
   const profilesArgs = roleFilter === 'all' ? {} : { role: roleFilter };
@@ -65,12 +99,49 @@ export default function AdminPanel() {
   const { models: aiModels, loading: modelsLoading, error: modelsError } = useAiModels();
   const { students: studentList, loading: studentsLoading, error: studentsError } = useStudents();
 
-  // face_registered is NOT yet on the students table — default everyone to false.
+  // Derived from /api/ai/enrolled (which reads enrolled_students.json on the
+  // server). Maps student.id → true if their full_name (lowercased) appears
+  // in the enrolled set, false otherwise. Edge case: two students sharing a
+  // name would both flip to registered if one is enrolled — acceptable at
+  // FYP scale, and the camera AI has the same limitation.
   const faceStatus = useMemo(() => {
     const map = {};
-    studentList.forEach(s => { map[s.id] = false; });
+    studentList.forEach(s => {
+      const key = (s.full_name || '').toLowerCase().trim();
+      map[s.id] = key ? enrolledFaces.has(key) : false;
+    });
     return map;
-  }, [studentList]);
+  }, [studentList, enrolledFaces]);
+
+  // Biometric consent map: studentId → 'granted' | 'refused' | 'pending'
+  // PDPA s.40 requires explicit parental consent before face data can be processed.
+  // Face enrolment is gated on this map in handleRegisterFace below.
+  const [consentMap, setConsentMap] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from('biometric_consents')
+      .select('student_id, granted, revoked_at, created_at')
+      .is('revoked_at', null)
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn('AdminPanel: failed to load biometric_consents', error.message);
+          return;
+        }
+        const map = {};
+        (data || []).forEach(row => {
+          if (!(row.student_id in map)) {
+            map[row.student_id] = row.granted ? 'granted' : 'refused';
+          }
+        });
+        setConsentMap(map);
+      });
+    return () => { cancelled = true; };
+  }, [studentList.length]);
+
+  const consentStatusFor = (studentId) => consentMap[studentId] || 'pending';
 
   // --- Audit log filtering (client-side on target_type) ---
   const filteredLogs = logFilter === 'all'
@@ -337,12 +408,73 @@ export default function AdminPanel() {
     return groups;
   };
 
-  const handleRegisterFace = () => {
+  const handleRegisterFace = (student) => {
+    const status = consentStatusFor(student.id);
+    if (status === 'pending') {
+      toast(
+        `Cannot enrol: no parental consent on file for ${student.full_name}. The parent must complete the Biometric Consent in the Parent Portal first.`,
+        'error',
+        5000,
+      );
+      return;
+    }
+    if (status === 'refused') {
+      toast(
+        `Parent has explicitly refused biometric processing for ${student.full_name}. Use manual attendance.`,
+        'error',
+        5000,
+      );
+      return;
+    }
     toast('Coming soon', 'info');
   };
 
   const handleRemoveFace = () => {
     toast('Coming soon', 'info');
+  };
+
+  // Trigger the Python enrollment script for the selected student.
+  // Blocks for ~5–10s while the script captures faces. The Express endpoint
+  // only returns once the Python child exits, so the button stays disabled
+  // and a status banner is shown to the operator throughout.
+  const handleStartEnrollment = async () => {
+    if (!enrollStudentId) {
+      toast('Pick a student first.', 'error');
+      return;
+    }
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      return;
+    }
+    const target = studentList.find(s => s.id === enrollStudentId);
+    setEnrolling(true);
+    setEnrollStatus('Python is opening the camera. Look at the camera and stay still for ~5 seconds. The window will close when capture is complete.');
+    try {
+      const res = await fetch('/api/ai/enroll', {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({ student_id: enrollStudentId }),
+      });
+      if (!res.ok) {
+        const msg = await parseApiError(res);
+        toast(msg, 'error', 5000);
+        setEnrollStatus(null);
+        setEnrolling(false);
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      toast(body.message || `Enrolled ${target?.full_name || 'student'}`, 'success');
+      setEnrollStatus(null);
+      setEnrolling(false);
+      // Refresh the enrolled set so the just-enrolled student flips to
+      // "Registered" in the grid without waiting for the 30s poll.
+      fetchEnrolledFaces();
+    } catch (err) {
+      console.error('enroll failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+      setEnrollStatus(null);
+      setEnrolling(false);
+    }
   };
 
   const classColorMap = { Bestari: 'b', Bijak: 'r', Cerdik: 'g', Cerdas: 'o', Pandai: 'y' };
@@ -431,7 +563,9 @@ export default function AdminPanel() {
                   <option value="parent">Parent</option>
                 </select>
               </div>
-              <button className="btn btn-yellow" onClick={handleOpenAddUser}><Plus size={16} /> Add User</button>
+              {isAdmin && (
+                <button className="btn btn-yellow" onClick={handleOpenAddUser}><Plus size={16} /> Add User</button>
+              )}
             </div>
           </div>
           {profilesLoading ? (
@@ -446,12 +580,12 @@ export default function AdminPanel() {
                   <th className="sortable" onClick={() => handleSort('role')}>Role <SortIcon col="role" /></th>
                   <th>Phone</th>
                   <th>Email</th>
-                  <th>Actions</th>
+                  {isAdmin && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {paginatedUsers.length === 0 ? (
-                  <tr><td colSpan={5} className="empty-state">No results found.</td></tr>
+                  <tr><td colSpan={isAdmin ? 5 : 4} className="empty-state">No results found.</td></tr>
                 ) : (
                   paginatedUsers.map((u, i) => (
                     <tr key={u.id}>
@@ -467,27 +601,29 @@ export default function AdminPanel() {
                       </td>
                       <td><span className={`badge ${roleBadge[u.role] || 'badge-teacher'}`}>{(u.role || '').charAt(0).toUpperCase() + (u.role || '').slice(1)}</span></td>
                       <td className="mono">{u.phone || '—'}</td>
-                      <td className="mono admin-cell-email">—</td>
-                      <td>
-                        <div className="admin-action-btns">
-                          <button
-                            className="btn btn-outline btn-icon"
-                            onClick={() => handleOpenEditUser(u)}
-                            aria-label={`Edit ${u.full_name || 'user'}`}
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          {authUser?.id !== u.id && (
+                      <td className="mono admin-cell-email">{u.email || '—'}</td>
+                      {isAdmin && (
+                        <td>
+                          <div className="admin-action-btns">
                             <button
-                              className="btn btn-danger btn-icon"
-                              onClick={() => handleOpenDeleteUser(u)}
-                              aria-label={`Delete ${u.full_name || 'user'}`}
+                              className="btn btn-outline btn-icon"
+                              onClick={() => handleOpenEditUser(u)}
+                              aria-label={`Edit ${u.full_name || 'user'}`}
                             >
-                              <Trash2 size={14} />
+                              <Edit3 size={14} />
                             </button>
-                          )}
-                        </div>
-                      </td>
+                            {authUser?.id !== u.id && (
+                              <button
+                                className="btn btn-danger btn-icon"
+                                onClick={() => handleOpenDeleteUser(u)}
+                                aria-label={`Delete ${u.full_name || 'user'}`}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}
@@ -557,7 +693,20 @@ export default function AdminPanel() {
       )}
 
       {/* LOGS TAB */}
-      {tab === 'logs' && (
+      {tab === 'logs' && !isAdmin && (
+        <div className="card admin-card admin-locked-card">
+          <span className="tape bl" />
+          <div className="admin-locked-body">
+            <div className="admin-locked-icon"><Lock size={28} /></div>
+            <h2>Admin access required</h2>
+            <p>
+              This area is restricted to administrators. Contact the school
+              admin if you need access.
+            </p>
+          </div>
+        </div>
+      )}
+      {tab === 'logs' && isAdmin && (
         <div className="card admin-card admin-logs-card">
           <span className="tape bl" />
           <div className="card-header">
@@ -625,7 +774,20 @@ export default function AdminPanel() {
       )}
 
       {/* AI TAB */}
-      {tab === 'ai' && (
+      {tab === 'ai' && !isAdmin && (
+        <div className="card admin-card admin-locked-card">
+          <span className="tape tr" />
+          <div className="admin-locked-body">
+            <div className="admin-locked-icon"><Lock size={28} /></div>
+            <h2>Admin access required</h2>
+            <p>
+              This area is restricted to administrators. Contact the school
+              admin if you need access.
+            </p>
+          </div>
+        </div>
+      )}
+      {tab === 'ai' && isAdmin && (
         <div>
           {modelsLoading ? (
             <div className="ai-status-grid">
@@ -702,6 +864,54 @@ export default function AdminPanel() {
             <div className="card admin-card"><div className="empty-state admin-empty">Could not load students. Please try again.</div></div>
           ) : (
             <>
+              {/* Enroll a new face — admin-only */}
+              {isAdmin && (
+                <div className="card admin-card face-enroll-card">
+                  <span className="tape tl" />
+                  <div className="card-header">
+                    <div>
+                      <h2>Enroll a new face</h2>
+                    </div>
+                  </div>
+                  <p className="face-enroll-blurb">
+                    Pick a student, then click <strong>Start Enrollment</strong>.
+                    A Python window will open the camera and capture five
+                    frames. Keep the student facing the camera and still until
+                    the window closes.
+                  </p>
+                  <div className="face-enroll-row">
+                    <select
+                      className="face-enroll-select"
+                      value={enrollStudentId}
+                      onChange={e => setEnrollStudentId(e.target.value)}
+                      disabled={enrolling}
+                    >
+                      <option value="">— Pick a student —</option>
+                      {studentList
+                        .slice()
+                        .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
+                        .map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.full_name} (Year {s.year_num} &middot; {s.class_section?.name || '—'})
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      className="btn btn-green"
+                      onClick={handleStartEnrollment}
+                      disabled={enrolling || !enrollStudentId}
+                    >
+                      <Camera size={16} /> {enrolling ? 'Enrolling…' : 'Start Enrollment'}
+                    </button>
+                  </div>
+                  {enrollStatus && (
+                    <div className="face-enroll-status">
+                      <ScanFace size={18} /> {enrollStatus}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Stats */}
               <div className="grid-4 face-stats-row">
                 <div className="stat-card s-blue reveal reveal-1">
@@ -801,8 +1011,15 @@ export default function AdminPanel() {
                   <div className="face-student-grid">
                     {paginatedFaceStudents.map(s => {
                       const className = s.class_section?.name || '—';
+                      const consent = consentStatusFor(s.id);
+                      const consentBadge = consent === 'granted'
+                        ? { cls: 'badge-consent-yes', icon: <ShieldCheck size={12} />, label: 'Consent OK' }
+                        : consent === 'refused'
+                          ? { cls: 'badge-consent-no', icon: <ShieldAlert size={12} />, label: 'Parent refused' }
+                          : { cls: 'badge-consent-pending', icon: <ShieldAlert size={12} />, label: 'Awaiting consent' };
+                      const canRegister = consent === 'granted';
                       return (
-                        <div key={s.id} className={`face-student-card ${faceStatus[s.id] ? 'registered' : 'not-registered'}`}>
+                        <div key={s.id} className={`face-student-card ${faceStatus[s.id] ? 'registered' : 'not-registered'} consent-${consent}`}>
                           <div className="face-student-top">
                             <div className={`avatar ${classColorMap[className] || 'k'}`}>
                               {getInitials(s.full_name)}
@@ -811,6 +1028,11 @@ export default function AdminPanel() {
                               <strong>{s.full_name}</strong>
                               <span className="face-student-meta mono">Year {s.year_num} &bull; {className}</span>
                             </div>
+                          </div>
+                          <div className="face-consent-row">
+                            <span className={`badge ${consentBadge.cls}`}>
+                              {consentBadge.icon} {consentBadge.label}
+                            </span>
                           </div>
                           <div className="face-student-bottom">
                             <span className={`badge ${faceStatus[s.id] ? 'badge-face-reg' : 'badge-face-unreg'}`}>
@@ -821,7 +1043,12 @@ export default function AdminPanel() {
                                 <UserX size={14} /> Remove
                               </button>
                             ) : (
-                              <button className="btn btn-green btn-face-register" onClick={() => handleRegisterFace(s)} >
+                              <button
+                                className="btn btn-green btn-face-register"
+                                onClick={() => handleRegisterFace(s)}
+                                disabled={!canRegister}
+                                title={canRegister ? '' : 'Parental consent required before enrolment'}
+                              >
                                 <Camera size={14} /> Register Face
                               </button>
                             )}

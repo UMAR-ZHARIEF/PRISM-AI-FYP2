@@ -4,6 +4,238 @@
    handwritten labels, slight rotations everywhere.
    ============================================================ */
 
+/* === Sibling switcher (multi-child families) ================ */
+.pp-sibling-switcher {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 22px;
+  padding: 14px 18px;
+  background: var(--paper-light);
+  clip-path: var(--cut-2);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-0.4deg);
+  flex-wrap: wrap;
+}
+
+.pp-sibling-label {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-style: italic;
+  font-size: 20px;
+  color: var(--red);
+  transform: rotate(-3deg);
+  display: inline-block;
+  flex-shrink: 0;
+  padding-left: 4px;
+}
+
+.pp-sibling-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pp-sibling-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px 10px 12px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-2);
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: transform 0.18s ease, background 0.2s ease, color 0.2s ease;
+  text-align: left;
+}
+
+.pp-sibling-pill:nth-child(odd)  { transform: rotate(-1deg); }
+.pp-sibling-pill:nth-child(even) { transform: rotate( 1deg); }
+
+.pp-sibling-pill:hover {
+  transform: translateY(-3px) rotate(0);
+  background: var(--yellow);
+}
+
+.pp-sibling-pill.is-active {
+  background: var(--green);
+  color: var(--paper-light);
+  border-color: var(--ink);
+  box-shadow: 4px 5px 0 rgba(31, 26, 18, 0.2);
+  transform: rotate(0);
+}
+.pp-sibling-pill.is-active:hover {
+  transform: translateY(-3px) rotate(0);
+  background: var(--green);
+}
+
+.pp-sibling-avatar {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--yellow);
+  color: var(--ink);
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: -0.03em;
+  clip-path: var(--cut-pill);
+  transform: rotate(-4deg);
+  border: 2px solid var(--ink);
+  flex-shrink: 0;
+}
+.pp-sibling-pill.is-active .pp-sibling-avatar {
+  background: var(--paper-light);
+  color: var(--green);
+}
+
+.pp-sibling-meta {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+  gap: 2px;
+}
+.pp-sibling-name {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+}
+.pp-sibling-class {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.pp-sibling-tag {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-style: italic;
+  font-size: 13px;
+  color: var(--red);
+  background: var(--paper-light);
+  padding: 2px 8px;
+  clip-path: var(--cut-pill);
+  transform: rotate(4deg);
+  margin-left: 4px;
+}
+.pp-sibling-pill.is-active .pp-sibling-tag {
+  color: var(--red);
+  background: var(--paper-light);
+}
+
+@media (max-width: 640px) {
+  .pp-sibling-switcher {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .pp-sibling-pills {
+    width: 100%;
+  }
+  .pp-sibling-pill {
+    flex: 1 1 auto;
+  }
+}
+
+/* === Biometric consent banner =============================== */
+.pp-consent-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 22px;
+  margin: 0 0 20px;
+  clip-path: var(--cut-2);
+  background: var(--paper-light);
+  box-shadow: 4px 6px 0 rgba(31, 26, 18, 0.18);
+}
+
+.pp-consent-banner-needed {
+  background: rgba(242, 199, 68, 0.25);
+  border-left: 4px solid var(--orange);
+}
+
+.pp-consent-banner-yes {
+  background: rgba(79, 167, 100, 0.18);
+  border-left: 4px solid var(--green);
+}
+
+.pp-consent-banner-no {
+  background: rgba(117, 106, 79, 0.14);
+  border-left: 4px solid var(--ink-faint);
+}
+
+.pp-consent-icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  color: var(--ink);
+  clip-path: var(--cut-pill);
+}
+
+.pp-consent-banner-needed .pp-consent-icon {
+  background: var(--orange);
+  color: var(--paper);
+}
+
+.pp-consent-banner-yes .pp-consent-icon {
+  background: var(--green);
+  color: var(--paper);
+}
+
+.pp-consent-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.pp-consent-text strong {
+  display: block;
+  font-family: var(--display);
+  font-size: 18px;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+
+.pp-consent-text p {
+  margin: 0;
+  font-family: var(--body);
+  font-size: 14px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.pp-consent-banner .btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .pp-consent-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .pp-consent-banner .btn {
+    width: 100%;
+  }
+}
+
 .parent-portal {
   background: var(--paper);
   color: var(--ink);

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { BarChart3, Users, Filter, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import { classColors, years } from '../data/mockData';
 import { useYear } from '../layouts/DashboardLayout';
+import { useAuth } from '../contexts/AuthContext';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
@@ -34,6 +35,53 @@ export default function ClassComparison() {
   /* ── Load students in scope (one call; group client-side) ── */
   const { students: dbStudents, loading: studentsLoading } = useStudents({ year: yearNum });
 
+  /* ── Teacher scoping: limit picker to homerooms by default ── */
+  const { profile } = useAuth();
+  const isTeacher = profile?.role === 'teacher';
+
+  const teacherHomeroomIds = useMemo(() => {
+    if (!isTeacher || !profile?.id) return [];
+    return (classSections || [])
+      .filter(s => s.homeroom_teacher_id === profile.id)
+      .map(s => s.id);
+  }, [classSections, isTeacher, profile?.id]);
+  const teacherHasHomeroom = teacherHomeroomIds.length > 0;
+
+  // Default ON for teachers with a homeroom. Hidden for admins.
+  const [myHomeroomsOnly, setMyHomeroomsOnly] = useState(() => isTeacher);
+
+  // If we later discover the teacher has no homeroom, force the filter off
+  // so the dropdowns are not empty.
+  useEffect(() => {
+    if (isTeacher && classSections && classSections.length > 0 && !teacherHasHomeroom) {
+      setMyHomeroomsOnly(false);
+    }
+  }, [isTeacher, teacherHasHomeroom, classSections]);
+
+  // The list of sections the picker offers.
+  const filterToMine = isTeacher && myHomeroomsOnly && teacherHasHomeroom;
+  const visibleClassSections = useMemo(() => {
+    if (!filterToMine) return classSections;
+    const allow = new Set(teacherHomeroomIds);
+    return (classSections || []).filter(s => allow.has(s.id));
+  }, [classSections, filterToMine, teacherHomeroomIds]);
+
+  // Drop any picked classes that fall outside the visible set (e.g. teacher
+  // toggles "My homerooms only" back on after picking a class that isn't theirs).
+  useEffect(() => {
+    if (!filterToMine) return;
+    setSelectedClassIds(prev => {
+      const allow = new Set(visibleClassSections.map(c => c.id));
+      let changed = false;
+      const next = new Set();
+      prev.forEach(id => {
+        if (allow.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [filterToMine, visibleClassSections]);
+
   /* ── Today's date (YYYY-MM-DD) for "today" counts ── */
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -59,7 +107,7 @@ export default function ClassComparison() {
     });
   };
 
-  const selectAll = () => setSelectedClassIds(new Set(classSections.map(c => c.id)));
+  const selectAll = () => setSelectedClassIds(new Set(visibleClassSections.map(c => c.id)));
   const clearAll = () => setSelectedClassIds(new Set());
 
   /* ── Active sections (only those the user toggled on, in display order) ── */
@@ -246,6 +294,24 @@ export default function ClassComparison() {
       {/* ── CONTROLS ── */}
       <div className="card comparison-controls-card">
         <span className="tape tl" />
+        {isTeacher && teacherHasHomeroom && (
+          <div className="comparison-scope-row">
+            <label className="comparison-scope-check">
+              <input
+                type="checkbox"
+                checked={myHomeroomsOnly}
+                onChange={e => {
+                  setMyHomeroomsOnly(e.target.checked);
+                  setSelectedClassIds(new Set());
+                }}
+              />
+              <span>My homerooms only</span>
+            </label>
+          </div>
+        )}
+        {isTeacher && !teacherHasHomeroom && (
+          <p className="comparison-scope-note">You are not assigned a homeroom — showing all classes</p>
+        )}
         <div className="comparison-controls">
           {/* Year filter */}
           <div className="comparison-control-group">
@@ -273,12 +339,12 @@ export default function ClassComparison() {
               <Users size={16} /> Classes
             </label>
             <div className="comparison-class-toggles">
-              {sectionsLoading && classSections.length === 0 ? (
+              {sectionsLoading && visibleClassSections.length === 0 ? (
                 <span className="comparison-pick-hint">Loading classes...</span>
-              ) : classSections.length === 0 ? (
+              ) : visibleClassSections.length === 0 ? (
                 <span className="comparison-pick-hint">No classes available</span>
               ) : (
-                classSections.map(cls => {
+                visibleClassSections.map(cls => {
                   const checked = selectedClassIds.has(cls.id);
                   const cc = colorFor(cls.name);
                   return (

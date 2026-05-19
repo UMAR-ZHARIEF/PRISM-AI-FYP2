@@ -8,11 +8,13 @@ import Students from './pages/Students';
 import Reports from './pages/Reports';
 import AdminPanel from './pages/AdminPanel';
 import ParentPortal from './pages/ParentPortal';
+import ParentConsent from './pages/ParentConsent';
 import ClassDetail from './pages/ClassDetail';
 import Attendance from './pages/Attendance';
 import StudentProfile from './pages/StudentProfile';
 import ClassComparison from './pages/ClassComparison';
 import Camera from './pages/Camera';
+import LegalPage from './pages/legal/LegalPage';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
 export default function App() {
@@ -22,7 +24,11 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/terms" element={<LegalPage kind="terms" />} />
+        <Route path="/privacy" element={<LegalPage kind="privacy" />} />
+        <Route path="/biometric-consent" element={<LegalPage kind="biometric" />} />
         <Route path="/parent" element={<ProtectedRoute requireRole="parent"><ParentPortal /></ProtectedRoute>} />
+        <Route path="/parent/consent/:studentId" element={<ProtectedRoute requireRole="parent"><ParentConsent /></ProtectedRoute>} />
         <Route path="/dashboard" element={<ProtectedRoute requireRole={['admin', 'teacher', 'assistant']}><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="students" element={<Students />} />

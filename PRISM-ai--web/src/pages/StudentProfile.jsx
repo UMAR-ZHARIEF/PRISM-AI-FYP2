@@ -1,11 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Mail, Phone, UserCheck, UserX, Clock } from 'lucide-react';
+import { ArrowLeft, Mail, Phone, UserCheck, UserX, Clock, Edit2, Trash2, X, AlertTriangle } from 'lucide-react';
 import { classColors } from '../data/mockData';
 import useStudent from '../hooks/useStudent';
 import useAttendance from '../hooks/useAttendance';
 import useTeacherNotes from '../hooks/useTeacherNotes';
 import AttendanceCalendar from '../components/AttendanceCalendar';
+import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../components/Toast';
+import { supabase } from '../lib/supabase';
 import './StudentProfile.css';
 
 const WORD_COLOR_MAP = {
@@ -33,13 +36,26 @@ export default function StudentProfile() {
   const { studentId } = useParams();
 
   const { student, loading: studentLoading, error: studentError } = useStudent(studentId);
-  const { records: attendanceRecords, loading: attendanceLoading } = useAttendance({ studentId });
+  const { records: attendanceRecords, loading: attendanceLoading, refresh: refreshAttendance } = useAttendance({ studentId });
   const { notes, addNote, loading: notesLoading } = useTeacherNotes(studentId);
+  const { profile } = useAuth();
+  const toast = useToast();
+  const isAdmin = profile?.role === 'admin';
 
   // Note composer state
   const [noteText, setNoteText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
+  // Attendance edit modal state (admin only)
+  const [editOpen, setEditOpen] = useState(false);
+  const [editStatus, setEditStatus] = useState('present');
+  const [editArrival, setEditArrival] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const [editDeleting, setEditDeleting] = useState(false);
+  const [editError, setEditError] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Today's date string (local time, not UTC) used to find today's attendance record.
   // If multiple rows exist for today (e.g. an old seeded morning row plus a fresh
@@ -99,6 +115,112 @@ export default function StudentProfile() {
       handleAddNote();
     }
   };
+
+  // ---------- Admin attendance-edit handlers ----------
+  // Normalize a DB arrival_time (could be 'HH:MM' or 'HH:MM:SS') into
+  // 'HH:MM' suitable for a <input type="time">.
+  function normalizeArrivalForInput(value) {
+    if (!value || value === '-') return '';
+    const trimmed = String(value).trim();
+    const match = trimmed.match(/^(\d{2}):(\d{2})/);
+    return match ? `${match[1]}:${match[2]}` : '';
+  }
+
+  const openEditModal = () => {
+    if (!todayRecord) return;
+    setEditStatus(todayRecord.status || 'present');
+    setEditArrival(normalizeArrivalForInput(todayRecord.arrival_time));
+    setEditNotes(todayRecord.notes || '');
+    setEditError(null);
+    setConfirmDelete(false);
+    setEditOpen(true);
+  };
+
+  const closeEditModal = () => {
+    if (editSaving || editDeleting) return;
+    setEditOpen(false);
+    setConfirmDelete(false);
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!todayRecord || editSaving || editDeleting) return;
+    setEditSaving(true);
+    setEditError(null);
+
+    // Absent rows don't carry an arrival time.
+    const arrivalForDb =
+      editStatus === 'absent'
+        ? null
+        : editArrival
+          ? `${editArrival}:00`
+          : null;
+
+    const trimmedNotes = editNotes.trim();
+    const payload = {
+      status: editStatus,
+      arrival_time: arrivalForDb,
+      notes: trimmedNotes.length > 0 ? trimmedNotes : null,
+    };
+
+    const { error: updateErr } = await supabase
+      .from('attendance_records')
+      .update(payload)
+      .eq('id', todayRecord.id);
+
+    setEditSaving(false);
+
+    if (updateErr) {
+      setEditError(updateErr.message || 'Failed to update record.');
+      if (toast) toast('Could not update attendance record.', 'error');
+      return;
+    }
+
+    if (toast) toast('Attendance record updated.', 'success');
+    setEditOpen(false);
+    setConfirmDelete(false);
+    if (refreshAttendance) refreshAttendance();
+  };
+
+  const handleDeleteRecord = async () => {
+    if (!todayRecord || editSaving || editDeleting) return;
+    // First click: ask for confirmation inline.
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setEditDeleting(true);
+    setEditError(null);
+
+    const { error: deleteErr } = await supabase
+      .from('attendance_records')
+      .delete()
+      .eq('id', todayRecord.id);
+
+    setEditDeleting(false);
+
+    if (deleteErr) {
+      setEditError(deleteErr.message || 'Failed to delete record.');
+      if (toast) toast('Could not delete attendance record.', 'error');
+      return;
+    }
+
+    if (toast) toast('Attendance record deleted.', 'success');
+    setEditOpen(false);
+    setConfirmDelete(false);
+    if (refreshAttendance) refreshAttendance();
+  };
+
+  // Close modal on Escape
+  useEffect(() => {
+    if (!editOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeEditModal();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editOpen, editSaving, editDeleting]);
 
   // Loading skeleton — show before student is known
   if (studentLoading) {
@@ -298,6 +420,19 @@ export default function StudentProfile() {
             <span className="sprofile-timein-value">{todayTimeIn}</span>
           </div>
         )}
+
+        {/* Admin-only: edit today's attendance record */}
+        {isAdmin && todayRecord && (
+          <button
+            type="button"
+            className="sprofile-att-edit-btn"
+            onClick={openEditModal}
+            title="Correct today's attendance record"
+          >
+            <Edit2 size={14} />
+            <span>Edit today's record</span>
+          </button>
+        )}
       </div>
 
       {/* ATTENDANCE CALENDAR */}
@@ -369,6 +504,128 @@ export default function StudentProfile() {
           )}
         </div>
       </div>
+
+      {/* ADMIN-ONLY: EDIT ATTENDANCE MODAL */}
+      {isAdmin && editOpen && todayRecord && (
+        <div className="modal-overlay" onClick={closeEditModal}>
+          <div
+            className="modal sprofile-edit-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sprofile-edit-title"
+          >
+            <div className="sprofile-edit-header">
+              <h2 id="sprofile-edit-title">Edit today's attendance</h2>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={closeEditModal}
+                disabled={editSaving || editDeleting}
+                aria-label="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <p className="sprofile-edit-sub">
+              {fullName} <span className="sprofile-edit-date mono">{todayRecord.date}</span>
+            </p>
+
+            <div className="sprofile-edit-field">
+              <label className="sprofile-edit-label" htmlFor="sprofile-edit-status">Status</label>
+              <select
+                id="sprofile-edit-status"
+                className="sprofile-edit-input"
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value)}
+                disabled={editSaving || editDeleting}
+              >
+                <option value="present">Present</option>
+                <option value="absent">Absent</option>
+                <option value="late">Late</option>
+              </select>
+            </div>
+
+            {editStatus !== 'absent' && (
+              <div className="sprofile-edit-field">
+                <label className="sprofile-edit-label" htmlFor="sprofile-edit-arrival">
+                  Arrival time <span className="sprofile-edit-optional">(optional)</span>
+                </label>
+                <input
+                  id="sprofile-edit-arrival"
+                  type="time"
+                  className="sprofile-edit-input"
+                  value={editArrival}
+                  onChange={(e) => setEditArrival(e.target.value)}
+                  disabled={editSaving || editDeleting}
+                />
+              </div>
+            )}
+
+            <div className="sprofile-edit-field">
+              <label className="sprofile-edit-label" htmlFor="sprofile-edit-notes">
+                Notes <span className="sprofile-edit-optional">(optional)</span>
+              </label>
+              <textarea
+                id="sprofile-edit-notes"
+                className="sprofile-edit-input sprofile-edit-textarea"
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                rows={3}
+                placeholder="Why was this record corrected?"
+                disabled={editSaving || editDeleting}
+              />
+            </div>
+
+            {editError && (
+              <p className="sprofile-edit-error" role="alert">
+                <AlertTriangle size={14} /> {editError}
+              </p>
+            )}
+
+            {confirmDelete && (
+              <p className="sprofile-edit-confirm" role="alert">
+                Delete this attendance record permanently? Click <strong>Delete</strong> again to confirm.
+              </p>
+            )}
+
+            <div className="sprofile-edit-actions">
+              <button
+                type="button"
+                className="btn btn-danger sprofile-edit-delete"
+                onClick={handleDeleteRecord}
+                disabled={editSaving || editDeleting}
+              >
+                <Trash2 size={14} />
+                {editDeleting
+                  ? 'Deleting…'
+                  : confirmDelete
+                    ? 'Confirm delete'
+                    : 'Delete record'}
+              </button>
+              <div className="sprofile-edit-actions-right">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={closeEditModal}
+                  disabled={editSaving || editDeleting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-green"
+                  onClick={handleSaveEdit}
+                  disabled={editSaving || editDeleting}
+                >
+                  {editSaving ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

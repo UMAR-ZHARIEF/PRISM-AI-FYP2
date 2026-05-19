@@ -19,6 +19,38 @@
   font-size: 20px;
 }
 
+/* ---------- Teacher scope note (outside-homeroom) ---------- */
+.classdetail-scope-note {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  margin-bottom: 22px;
+  background: var(--paper-light);
+  border: 2px dashed var(--ink);
+  clip-path: var(--cut-pill);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-0.6deg);
+  max-width: 720px;
+}
+.classdetail-scope-note .tape {
+  top: -10px;
+  left: 20px;
+}
+.classdetail-scope-note svg {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+.classdetail-scope-note p {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 17px;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.3;
+}
+
 /* ---------- Page header ---------- */
 .classdetail-header {
   display: flex;
