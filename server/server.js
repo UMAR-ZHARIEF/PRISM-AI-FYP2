@@ -110,6 +110,38 @@ async function requireAdmin(req, res, next) {
   }
 }
 
+// Same as requireAdmin but allows role === 'admin' OR 'teacher'. Used for the
+// AI start/stop endpoints — teachers are the staff physically in classrooms
+// who actually need to turn the camera on/off. Parents and assistants stay
+// blocked.
+async function requireAdminOrTeacher(req, res, next) {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'Missing token' });
+    if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+    const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !userData?.user) return res.status(401).json({ error: 'Invalid token' });
+
+    const { data: profile, error: pErr } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    if (pErr || !profile) return res.status(403).json({ error: 'No profile' });
+    if (profile.role !== 'admin' && profile.role !== 'teacher') {
+      return res.status(403).json({ error: 'Admin or teacher only' });
+    }
+
+    req.actor = { id: profile.id, role: profile.role };
+    next();
+  } catch (e) {
+    console.error('requireAdminOrTeacher failed:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
 // Fire-and-forget audit log writer. Never throws; logs failures only.
 function logAudit(actorId, action, targetId, metadata) {
   if (!supabase) return;
@@ -595,7 +627,7 @@ app.get('/api/ai/process', (req, res) => {
 });
 
 // POST /api/ai/start — spawn the Python face-recognition service.
-app.post('/api/ai/start', requireAdmin, (req, res) => {
+app.post('/api/ai/start', requireAdminOrTeacher, (req, res) => {
   if (aiProcess && aiProcess.exitCode === null) {
     return res.status(409).json({
       error: 'AI service already running',
@@ -661,7 +693,7 @@ app.post('/api/ai/start', requireAdmin, (req, res) => {
 });
 
 // POST /api/ai/stop — terminate the running Python child.
-app.post('/api/ai/stop', requireAdmin, (req, res) => {
+app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
   if (!aiProcess || aiProcess.exitCode !== null) {
     return res.status(404).json({ error: 'AI service is not running' });
   }
