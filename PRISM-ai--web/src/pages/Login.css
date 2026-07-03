@@ -166,6 +166,26 @@
   font-family: var(--body); font-size: 16px; color: var(--ink); cursor: pointer;
 }
 .checkbox-label input { accent-color: var(--red); width: 18px; height: 18px; }
+.checkbox-label.legal-agree {
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+.checkbox-label.legal-agree input { margin-top: 2px; }
+.checkbox-label.legal-agree .pencil-link { color: var(--blue); }
+
+.login-legal-links {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: var(--accent);
+  font-size: 14px;
+  color: var(--ink-faint);
+}
+.login-legal-links span { color: var(--ink-faint); }
 
 .login-btn {
   width: 100%;
