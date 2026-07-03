@@ -198,6 +198,12 @@ export default function Landing() {
             <Link to="/login" className="pencil-link">Admin Login</Link>
           </div>
           <div className="footer-col">
+            <h4>Legal</h4>
+            <Link to="/terms" className="pencil-link">Terms of Service</Link>
+            <Link to="/privacy" className="pencil-link">Privacy Policy</Link>
+            <Link to="/biometric-consent" className="pencil-link">Biometric Consent</Link>
+          </div>
+          <div className="footer-col">
             <h4>Contact</h4>
             <p>Kuala Lumpur, Malaysia</p>
             <p>info@prismai.edu</p>

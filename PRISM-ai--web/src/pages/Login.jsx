@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Camera, Eye, EyeOff, CheckCircle, Shield, Zap, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import { recordTermsAndPrivacyAcceptance } from '../lib/policyAcceptance';
 import './Login.css';
 
 const highlights = [
@@ -14,6 +15,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [agreed, setAgreed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
@@ -34,6 +36,10 @@ export default function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage('');
+    if (!agreed) {
+      setErrorMessage('You must agree to the Terms of Service and Privacy Policy to continue.');
+      return;
+    }
     setSubmitting(true);
     const { error } = await signIn(email, password);
     if (error) {
@@ -41,7 +47,13 @@ export default function Login() {
         ? 'Invalid email or password'
         : error.message;
       setErrorMessage(friendly);
+      setSubmitting(false);
+      return;
     }
+    // Sign-in succeeded; record acceptance of current Terms + Privacy.
+    // Failures here are non-fatal — the LegalGate component will re-catch
+    // unacceptable state on the next navigation.
+    recordTermsAndPrivacyAcceptance().catch(() => {});
     setSubmitting(false);
   };
 
@@ -112,9 +124,19 @@ export default function Login() {
             </div>
 
             <div className="login-options">
-              <label className="checkbox-label">
-                <input type="checkbox" defaultChecked />
-                <span>Remember me</span>
+              <label className="checkbox-label legal-agree">
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={(e) => setAgreed(e.target.checked)}
+                  required
+                />
+                <span>
+                  I agree to the{' '}
+                  <Link to="/terms" className="pencil-link" target="_blank" rel="noopener noreferrer">Terms of Service</Link>{' '}
+                  and{' '}
+                  <Link to="/privacy" className="pencil-link" target="_blank" rel="noopener noreferrer">Privacy Policy</Link>
+                </span>
               </label>
             </div>
 
@@ -133,6 +155,14 @@ export default function Login() {
             <p className="login-footer-text">
               <Link to="/" className="pencil-link"><ArrowLeft size={14} style={{ verticalAlign: 'middle' }} /> Back to Home</Link>
             </p>
+
+            <div className="login-legal-links">
+              <Link to="/terms" className="pencil-link">Terms</Link>
+              <span>•</span>
+              <Link to="/privacy" className="pencil-link">Privacy</Link>
+              <span>•</span>
+              <Link to="/biometric-consent" className="pencil-link">Biometric Notice</Link>
+            </div>
           </form>
         </section>
       </div>
