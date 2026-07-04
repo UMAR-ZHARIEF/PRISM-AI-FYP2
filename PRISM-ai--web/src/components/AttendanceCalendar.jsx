@@ -9,8 +9,16 @@ const MONTH_NAMES = [
 ];
 const DAY_HEADERS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
+// Format a Date as 'YYYY-MM-DD' (local, no timezone shift)
+function toLocalISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function AttendanceCalendar({ studentId }) {
-  const today = new Date(2026, 4, 11); // May 11, 2026 — app "today"
+  const today = useMemo(() => new Date(), []); // app "today" — stable across renders
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth()); // 0-indexed
   const [tooltip, setTooltip] = useState(null); // { date, status, timeIn, cellEl }
@@ -56,10 +64,10 @@ export default function AttendanceCalendar({ studentId }) {
       const dow = date.getDay(); // 0=Sun, 6=Sat
       if (dow === 0 || dow === 6) continue; // skip weekends
 
-      const dateStr = date.toISOString().split('T')[0];
+      const dateStr = toLocalISODate(date);
       const record = historyMap[dateStr] || null;
       const isFuture = date > today;
-      const isToday = dateStr === today.toISOString().split('T')[0];
+      const isToday = dateStr === toLocalISODate(today);
 
       currentWeek.push({ day: d, dateStr, record, isFuture, isToday });
 

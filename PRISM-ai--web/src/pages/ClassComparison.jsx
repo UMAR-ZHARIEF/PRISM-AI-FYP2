@@ -15,6 +15,14 @@ import './ClassComparison.css';
 
 const PIE_COLORS_GENDER = ['#2F75C9', '#F49AB6'];
 
+// Format a Date as 'YYYY-MM-DD' (local, no timezone shift)
+function toLocalISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function ClassComparison() {
   /* ── Global year context (safe fallback) ── */
   let yearCtx;
@@ -83,15 +91,14 @@ export default function ClassComparison() {
   }, [filterToMine, visibleClassSections]);
 
   /* ── Today's date (YYYY-MM-DD) for "today" counts ── */
-  const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const todayIso = useMemo(() => toLocalISODate(new Date()), []);
 
   /* ── Last 30 days window for attendance rate ── */
   const { fromIso, toIso } = useMemo(() => {
     const to = new Date();
     const from = new Date();
     from.setDate(to.getDate() - 29);
-    const fmt = (d) => d.toISOString().slice(0, 10);
-    return { fromIso: fmt(from), toIso: fmt(to) };
+    return { fromIso: toLocalISODate(from), toIso: toLocalISODate(to) };
   }, []);
 
   const { records: attendanceRecords, loading: attendanceLoading } =

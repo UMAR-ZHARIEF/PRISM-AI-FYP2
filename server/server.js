@@ -47,6 +47,16 @@ if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
   console.warn('[Supabase] DISABLED — missing SUPABASE_URL or SUPABASE_SECRET_KEY env. Detections will be in-memory only.');
 }
 
+// ── Date Helpers ─────────────────────────────────────────────────────────────
+
+// YYYY-MM-DD in LOCAL time (toISOString would give the UTC date — wrong before 8 AM MYT)
+function localDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // ── In-Memory Data Store ─────────────────────────────────────────────────────
 // This stores all live data from the AI. In production, use a database.
 
@@ -61,6 +71,27 @@ let liveData = {
 
 // Track which students have been marked present today (prevent duplicates)
 const presentToday = new Set();
+
+// The local calendar day the in-memory store currently reflects. Without a
+// rollover, a server left running past midnight still has yesterday's names
+// in presentToday, so every day-2 detection gets skipped as a "duplicate".
+let currentDay = localDateStr(new Date());
+
+// Request-driven daily reset — called from the AI POST handler and from
+// /api/health (the dashboard polls health every 5s, so this fires within
+// seconds of midnight even when the camera is off). Deliberately leaves
+// liveData.students (the enrolled list persists across days) and
+// aiStatus/lastUpdate (they describe the AI link, not the day) untouched.
+function resetIfNewDay() {
+  const today = localDateStr(new Date());
+  if (today === currentDay) return;
+  presentToday.clear();
+  liveData.attendanceToday = [];
+  liveData.recentActivity = [];
+  liveData.notifications = [];
+  currentDay = today;
+  console.log(`[RESET] New day ${today} — cleared in-memory attendance`);
+}
 
 // ── AI Child Process State ───────────────────────────────────────────────────
 // Tracks the Python face_recognition.py subprocess that admins can spawn /
@@ -168,6 +199,9 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Health check
 app.get('/api/health', (req, res) => {
+  // Piggyback the midnight rollover on the dashboard's 5-second health poll
+  // so the day resets promptly even when no detections are coming in.
+  resetIfNewDay();
   res.json({
     status: 'ok',
     aiStatus: liveData.aiStatus,
@@ -194,6 +228,10 @@ app.get('/api/attendance/summary', (req, res) => {
 
 // POST: Receive attendance data from Python AI
 app.post('/api/attendance', (req, res) => {
+  // Roll the day over first — otherwise a detection just after midnight would
+  // be dropped as a duplicate of yesterday's check-in.
+  resetIfNewDay();
+
   const { timestamp, detections, classroom_id } = req.body;
 
   if (!detections || !Array.isArray(detections)) {
@@ -325,8 +363,9 @@ app.post('/api/attendance', (req, res) => {
           continue;
         }
 
-        // 3) Build date + arrival time
-        const isoDate = now.toISOString().slice(0, 10);            // YYYY-MM-DD
+        // 3) Build date + arrival time — both in LOCAL time. toISOString()
+        //    is UTC, which would file pre-8AM MYT detections under yesterday.
+        const isoDate = localDateStr(now);                         // YYYY-MM-DD (local)
         const arrivalTime = now.toTimeString().slice(0, 8);        // HH:MM:SS
 
         // 4) Upsert into attendance_records (unique on student_id,date)
@@ -424,6 +463,9 @@ app.post('/api/attendance/reset', (req, res) => {
   liveData.recentActivity = [];
   liveData.notifications = [];
   presentToday.clear();
+  // Sync the rollover marker so resetIfNewDay() doesn't clear a second time
+  // on the next health poll after a manual reset.
+  currentDay = localDateStr(new Date());
   console.log('[RESET] Attendance cleared for new day');
   res.json({ success: true, message: 'Attendance reset for new day' });
 });
