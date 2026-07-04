@@ -27,6 +27,7 @@ unique constraint).
 | `SUPABASE_SECRET_KEY`  | yes\*    | The new dashboard name for what used to be the `service_role` key. Find it under **Project Settings → API → "Secret key"**. Format starts with `sb_secret_…`. If the dashboard still uses the older naming, look for the `service_role` key marked **secret**. |
 | `SUPABASE_SERVICE_KEY` | yes\*    | Fallback name if your tooling still uses the old variable. The script reads this if `SUPABASE_SECRET_KEY` is unset.                                                                                                                                            |
 | `STAFF_PASSWORD`       | no       | Shared temporary password for admin / teacher / assistant accounts. Defaults to `Welcome123!`. Staff change it on first login.                                                                                                                                |
+| `ANCHOR_DATE`          | no       | `YYYY-MM-DD` override for the date all seeded data is re-anchored to. Defaults to the most recent weekday on-or-before today (local time). See **Re-anchoring** below.                                                                                        |
 
 \* Exactly one of `SUPABASE_SECRET_KEY` / `SUPABASE_SERVICE_KEY` must be set.
 
@@ -90,7 +91,36 @@ node migrate-mock-data.mjs
 
 Safe. Existing `auth.users` rows are detected and reused; every other
 table upserts on its natural key. Running twice in a row will produce
-the same end state.
+the same end state. Runs on different days shift the seeded dates — see
+**Re-anchoring** below.
+
+## Re-anchoring
+
+The mock dataset is frozen around `2026-05-11` (the "mock anchor"). So
+the demo never looks stale, every run re-anchors all seeded dates to
+the **run anchor**: the `ANCHOR_DATE` env var (`YYYY-MM-DD`) if set,
+otherwise the most recent weekday on-or-before today in local time (a
+Saturday/Sunday run anchors to Friday).
+
+- **Attendance** is remapped by school-day *rank*: the distinct mock
+  dates map onto consecutive Mon–Fri school days ending at the anchor,
+  so the freshest rows always sit on the most recent school day and no
+  weekend dates are ever produced.
+- **School events** and **audit logs** are shifted by the calendar-day
+  delta between the anchor and the mock anchor (audit logs keep their
+  time-of-day). The **ai_models** `deployed_at` weekly ladder ends at
+  the anchor.
+
+Re-running is safe and idempotent. Events, audit logs, and AI models
+are deduped on re-run (matched by title / action / name+version), so a
+new anchor replaces their old-dated copies. Attendance upserts on
+`(student_id, date)`, so rows seeded under a *previous* anchor are left
+in place — they simply become extra history behind the new anchor.
+
+```powershell
+$env:ANCHOR_DATE = "2026-07-03"   # optional — omit to use the last weekday
+node migrate-mock-data.mjs
+```
 
 ## Troubleshooting
 
