@@ -21,6 +21,14 @@ const WORD_COLOR_MAP = {
 
 const AVA_COLORS = ['r', 'y', 'b', 'g', 'o'];
 
+// Format a Date as 'YYYY-MM-DD' (local, no timezone shift)
+function toLocalISODate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function ClassDetail() {
   const { year, className } = useParams();
   const toast = useToast();
@@ -39,7 +47,7 @@ export default function ClassDetail() {
       d.setDate(today.getDate() - i);
       days.push(d);
     }
-    const iso = (d) => d.toISOString().slice(0, 10);
+    const iso = (d) => toLocalISODate(d);
     return {
       fromDate: iso(days[0]),
       toDate: iso(days[days.length - 1]),
@@ -144,7 +152,7 @@ export default function ClassDetail() {
 
     const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const weeklyData = weekDays.map(d => {
-      const key = d.toISOString().slice(0, 10);
+      const key = toLocalISODate(d);
       const bucket = byDate.get(key) || { present: 0, absent: 0, late: 0 };
       return { day: DAY_LABELS[d.getDay()], ...bucket };
     });

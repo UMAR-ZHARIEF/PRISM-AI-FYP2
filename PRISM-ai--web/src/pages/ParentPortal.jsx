@@ -9,8 +9,8 @@ import useSchoolEvents from '../hooks/useSchoolEvents';
 import { supabase } from '../lib/supabase';
 import './ParentPortal.css';
 
-// App "today" anchor — matches the demo data anchor used elsewhere (e.g. AttendanceCalendar).
-const APP_TODAY = new Date(2026, 4, 11); // May 11, 2026
+// App "today" anchor — the real current date.
+const APP_TODAY = new Date();
 
 // Format a Date as 'YYYY-MM-DD' (local, no timezone shift)
 function toISODate(d) {
