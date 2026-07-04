@@ -478,7 +478,7 @@ def main():
     parser.add_argument("--debug", action="store_true",
                         help="Show debug visualization window")
     parser.add_argument("--det-size", type=int, default=320,
-                        help="Face detection input size (default: 640)")
+                        help="Face detection input size (default: 320)")
     parser.add_argument("--stream-port", type=int, default=5174,
                         help="Port for the MJPEG live-stream HTTP server (default: 5174)")
 

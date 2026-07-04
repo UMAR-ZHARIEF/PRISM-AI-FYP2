@@ -140,7 +140,7 @@ export default function Camera() {
     setProcError('');
     const token = session?.access_token;
     if (!token) {
-      setProcError('You must be signed in as an admin to control the AI service.');
+      setProcError('You must be signed in as an admin or teacher to control the AI service.');
       return;
     }
     setProcBusy(true);
