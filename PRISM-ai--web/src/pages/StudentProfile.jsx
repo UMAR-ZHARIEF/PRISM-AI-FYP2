@@ -5,6 +5,7 @@ import { classColors } from '../data/mockData';
 import useStudent from '../hooks/useStudent';
 import useAttendance from '../hooks/useAttendance';
 import useTeacherNotes from '../hooks/useTeacherNotes';
+import useEnrolledFaces from '../hooks/useEnrolledFaces';
 import AttendanceCalendar from '../components/AttendanceCalendar';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
@@ -38,6 +39,7 @@ export default function StudentProfile() {
   const { student, loading: studentLoading, error: studentError } = useStudent(studentId);
   const { records: attendanceRecords, loading: attendanceLoading, refresh: refreshAttendance } = useAttendance({ studentId });
   const { notes, addNote, loading: notesLoading } = useTeacherNotes(studentId);
+  const { enrolledNames } = useEnrolledFaces();
   const { profile } = useAuth();
   const toast = useToast();
   const isAdmin = profile?.role === 'admin';
@@ -89,7 +91,7 @@ export default function StudentProfile() {
     if (!student || !student.dob) return null;
     const dob = new Date(student.dob);
     if (Number.isNaN(dob.getTime())) return null;
-    const ref = new Date(2026, 4, 11); // app "today"
+    const ref = new Date();
     let years = ref.getFullYear() - dob.getFullYear();
     const m = ref.getMonth() - dob.getMonth();
     if (m < 0 || (m === 0 && ref.getDate() < dob.getDate())) years--;
@@ -299,7 +301,8 @@ export default function StudentProfile() {
   const todayStatus = todayRecord ? todayRecord.status : null;
   const todayTimeIn = todayRecord ? todayRecord.arrival_time : null;
 
-  const faceRegistered = false; // not stored in DB yet — default to false per Wave 3 brief
+  // Real status from the AI service's enrolled-faces list (GET /api/ai/enrolled).
+  const faceRegistered = enrolledNames.has(fullName.toLowerCase().trim());
 
   return (
     <div className="sprofile-page">
