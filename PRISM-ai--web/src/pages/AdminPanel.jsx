@@ -6,6 +6,7 @@ import useProfiles from '../hooks/useProfiles';
 import useAuditLogs from '../hooks/useAuditLogs';
 import useAiModels from '../hooks/useAiModels';
 import useStudents from '../hooks/useStudents';
+import useEnrolledFaces from '../hooks/useEnrolledFaces';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext.jsx';
@@ -67,30 +68,10 @@ export default function AdminPanel() {
 
   // Real face-enrollment status: Set of lowercased names from
   // ai-service/edge/enrolled_students.json (served by GET /api/ai/enrolled).
-  // We poll every 30s so freshly enrolled students appear without a manual
-  // reload, and we also refetch immediately after a successful enrollment.
-  const [enrolledFaces, setEnrolledFaces] = useState(() => new Set());
-
-  const fetchEnrolledFaces = async () => {
-    try {
-      const res = await fetch('/api/ai/enrolled');
-      if (!res.ok) return;
-      const body = await res.json();
-      const names = (body?.enrolled || [])
-        .map(e => (e?.name || '').toLowerCase().trim())
-        .filter(Boolean);
-      setEnrolledFaces(new Set(names));
-    } catch (err) {
-      // Server may be down — leave the previous snapshot in place silently.
-      console.warn('AdminPanel: /api/ai/enrolled fetch failed', err);
-    }
-  };
-
-  useEffect(() => {
-    fetchEnrolledFaces();
-    const id = setInterval(fetchEnrolledFaces, 30000);
-    return () => clearInterval(id);
-  }, []);
+  // The shared hook polls every 30s so freshly enrolled students appear
+  // without a manual reload; we also refetch immediately after a successful
+  // enrollment via refreshEnrolledFaces().
+  const { enrolledNames: enrolledFaces, refresh: refreshEnrolledFaces } = useEnrolledFaces();
 
   // --- Supabase-backed data ---
   const profilesArgs = roleFilter === 'all' ? {} : { role: roleFilter };
@@ -468,7 +449,7 @@ export default function AdminPanel() {
       setEnrolling(false);
       // Refresh the enrolled set so the just-enrolled student flips to
       // "Registered" in the grid without waiting for the 30s poll.
-      fetchEnrolledFaces();
+      refreshEnrolledFaces();
     } catch (err) {
       console.error('enroll failed', err);
       toast('Could not reach the server. Is the API running?', 'error');

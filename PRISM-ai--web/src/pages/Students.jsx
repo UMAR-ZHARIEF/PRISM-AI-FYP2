@@ -9,6 +9,7 @@ import Pagination from '../components/Pagination';
 import useStudents from '../hooks/useStudents';
 import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
+import useEnrolledFaces from '../hooks/useEnrolledFaces';
 import { supabase } from '../lib/supabase';
 import { SkeletonCard } from '../components/Skeleton';
 import './Students.css';
@@ -70,6 +71,9 @@ export default function Students() {
   const formYearNumber = formYear === '' ? undefined : Number(formYear);
   const { classSections: formClassOptions } = useClassSections({ year: formYearNumber });
 
+  // Real face-enrollment status from the AI bridge (shared hook, polls every 30s).
+  const { enrolledNames } = useEnrolledFaces();
+
   // Normalize DB rows into the legacy UI shape so the rest of this page can render unchanged.
   // attendanceRate is intentionally null until per-student attendance queries are wired up.
   const students = useMemo(() => (dbStudents || []).map(row => ({
@@ -86,11 +90,11 @@ export default function Students() {
     age: null,
     photoUrl: row.photo_url || null,
     attendanceRate: null,
-    faceRegistered: false,
+    faceRegistered: enrolledNames.has((row.full_name || '').toLowerCase().trim()),
     parent: '',
     parentEmail: '',
     parentPhone: '',
-  })), [dbStudents]);
+  })), [dbStudents, enrolledNames]);
 
   const filtered = students.filter(s => {
     const matchYear = filterYear === 'all' || s.year === Number(filterYear);
@@ -552,7 +556,7 @@ export default function Students() {
               <div className="face-upload">
                 <Upload size={32} />
                 <p>Upload or capture face photo</p>
-                <small>For AI face recognition (coming soon)</small>
+                <small>Enroll faces via Admin Panel → Face Registration</small>
               </div>
             )}
 
