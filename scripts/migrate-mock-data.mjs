@@ -18,11 +18,21 @@
 //
 // Idempotent: re-running the script is safe. auth.users creation falls
 // back to listUsers() lookup on "already registered" errors; all other
-// inserts use upsert on a natural key.
+// inserts use upsert on a natural key (or a title/action-matched
+// delete-then-insert for tables without one).
+//
+// Date re-anchoring: the mock dataset is frozen around MOCK_TODAY
+// (2026-05-11). On every run the script re-anchors all seeded dates to
+// the run anchor — ANCHOR_DATE env if set, else the most recent weekday
+// on-or-before today (local time). Attendance is remapped by school-day
+// rank (weekday-only structure preserved, freshest rows on the anchor);
+// school_events and audit_logs are shifted by the calendar-day delta;
+// the ai_models deployed_at ladder ends at the anchor.
 //
 // Required env: SUPABASE_URL, SUPABASE_SECRET_KEY (falls back to
 // SUPABASE_SERVICE_KEY for backward compat). Optional: STAFF_PASSWORD
-// (default 'Welcome123!').
+// (default 'Welcome123!'), ANCHOR_DATE (YYYY-MM-DD, defaults to the
+// most recent weekday).
 // =====================================================================
 
 import { createClient } from '@supabase/supabase-js';
@@ -85,8 +95,126 @@ const {
 
 // ---------- helpers ----------------------------------------------------
 
-// Today's anchor for mock data is 2026-05-11 (see generateAttendanceHistory).
+// The mock dataset is frozen around 2026-05-11 (see
+// generateAttendanceHistory in mockData.js). Every date the script
+// seeds is re-anchored from this to the run anchor computed below.
 const MOCK_TODAY = '2026-05-11';
+
+// ----- BEGIN RE-ANCHOR HELPERS (pure: no env/db/mock access) -----------
+// The BEGIN/END markers let the scratch tests extract and import this
+// block verbatim, so what is tested is exactly what ships.
+
+// Format a Date as local YYYY-MM-DD. Never use toISOString() for
+// date-only values: it converts to UTC first, which shifts the day for
+// timezones east of Greenwich (e.g. Malaysia, UTC+8).
+function fmtDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// 'YYYY-MM-DD' -> Date at local midnight. Throws on malformed input or
+// impossible dates (e.g. 2026-02-31), which JS would silently roll over.
+function parseLocalDate(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s).trim());
+  if (!m) throw new Error(`not a YYYY-MM-DD date: ${JSON.stringify(s)}`);
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  if (fmtDate(d) !== m[0]) throw new Error(`not a real calendar date: ${s}`);
+  return d;
+}
+
+// Monday-Friday check (local weekday).
+function isSchoolDay(d) {
+  const dow = d.getDay();
+  return dow >= 1 && dow <= 5;
+}
+
+// Most recent weekday at-or-before the given instant: Sat/Sun roll back
+// to Friday. Returns a new Date at local midnight.
+function mostRecentWeekday(now) {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  while (!isSchoolDay(d)) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+// Resolve the run anchor: ANCHOR_DATE override if provided, else the
+// most recent weekday on-or-before `now` in local time.
+function resolveAnchor(envValue, now = new Date()) {
+  if (envValue) return fmtDate(parseLocalDate(envValue));
+  return fmtDate(mostRecentWeekday(now));
+}
+
+// Signed whole calendar days from one YYYY-MM-DD to another. Rounded so
+// a DST hour in either direction cannot skew the result.
+function daysBetween(fromStr, toStr) {
+  const ms = parseLocalDate(toStr) - parseLocalDate(fromStr);
+  return Math.round(ms / 86400000);
+}
+
+// Shift a YYYY-MM-DD by N calendar days using local Date math.
+function shiftDateStr(dateStr, deltaDays) {
+  const d = parseLocalDate(dateStr);
+  d.setDate(d.getDate() + deltaDays);
+  return fmtDate(d);
+}
+
+// N consecutive school days (Mon-Fri) ascending, ENDING at the anchor.
+// The anchor is always the last entry (the default anchor is always a
+// weekday; an explicit weekend ANCHOR_DATE is honoured as given).
+function buildSchoolDays(anchorStr, count) {
+  const days = [];
+  const d = parseLocalDate(anchorStr);
+  days.push(fmtDate(d));
+  while (days.length < count) {
+    d.setDate(d.getDate() - 1);
+    if (isSchoolDay(d)) days.unshift(fmtDate(d));
+  }
+  return days;
+}
+
+// Rank-remap a set of historical date strings onto consecutive school
+// days ending at the anchor: oldest -> oldest, newest -> anchor. This
+// preserves the weekday-only cadence and never produces weekend dates,
+// regardless of what the source dates look like.
+function buildDateRankMap(oldDates, anchorStr) {
+  const sorted = [...new Set(oldDates)].sort();
+  const newDays = buildSchoolDays(anchorStr, sorted.length);
+  const map = new Map();
+  for (let i = 0; i < sorted.length; i++) map.set(sorted[i], newDays[i]);
+  return map;
+}
+
+// ----- END RE-ANCHOR HELPERS --------------------------------------------
+
+// Anchor for THIS run. Everything date-shaped that the script seeds is
+// expressed relative to this instead of the frozen MOCK_TODAY.
+let ANCHOR;
+try {
+  ANCHOR = resolveAnchor(process.env.ANCHOR_DATE);
+} catch (err) {
+  console.error(`ERROR: invalid ANCHOR_DATE: ${err.message}`);
+  process.exit(1);
+}
+
+// Flat calendar-day shift, applied to school_events and audit_logs.
+const ANCHOR_DAY_DELTA = daysBetween(MOCK_TODAY, ANCHOR);
+
+// Attendance instead uses school-day RANK remapping: collect every
+// distinct date across all attendanceHistory arrays (plus MOCK_TODAY,
+// where the attendanceToday rows live), and map them by rank onto
+// consecutive Mon-Fri school days ending at the anchor. The freshest
+// seeded data therefore always sits on the most recent school day.
+const ATTENDANCE_DATE_MAP = buildDateRankMap(
+  [
+    MOCK_TODAY,
+    ...Object.values(attendanceHistory).flatMap((recs) =>
+      recs.map((r) => r.date)
+    ),
+  ],
+  ANCHOR
+);
+const SCHOOL_DAY_COUNT = ATTENDANCE_DATE_MAP.size;
 
 // Role remap: mock uses 'homeroom' and 'subject' which both collapse to
 // the schema's 'teacher' enum value.
@@ -158,9 +286,10 @@ function parseAuditTimestamp(s) {
 }
 
 function dobFromAge(age) {
-  // Anchor on mock "today" so dob is deterministic across runs.
-  const today = new Date(MOCK_TODAY);
-  const year = today.getUTCFullYear() - age;
+  // Anchor on the run anchor so ages stay truthful as time passes.
+  // dob may change across re-runs when the anchor year moves on; that
+  // is fine because students upsert on student_number.
+  const year = parseLocalDate(ANCHOR).getFullYear() - age;
   return `${year}-01-01`;
 }
 
@@ -542,7 +671,8 @@ async function stepG_attendance(studentMap, staffMap, classSectionMap) {
     for (const r of records) {
       rows.push({
         student_id: studentUuid,
-        date: r.date,
+        // Re-anchored by school-day rank (see ATTENDANCE_DATE_MAP).
+        date: ATTENDANCE_DATE_MAP.get(r.date) ?? r.date,
         status: r.status,
         arrival_time: parseClockTime(r.timeIn),
         marked_by: markedBy,
@@ -550,14 +680,15 @@ async function stepG_attendance(studentMap, staffMap, classSectionMap) {
     }
   }
 
-  // Today's rows (attendanceToday)
+  // Today's rows (attendanceToday) — written at the run anchor, the
+  // most recent school day.
   for (const t of attendanceToday) {
     const studentUuid = studentMap.get(t.studentId);
     if (!studentUuid) continue;
     const markedBy = homeroomByClass.get(`${t.year}|${t.class}`) ?? null;
     rows.push({
       student_id: studentUuid,
-      date: MOCK_TODAY,
+      date: ANCHOR,
       status: t.status,
       arrival_time: parseClockTime(t.timeIn),
       marked_by: markedBy,
@@ -595,20 +726,24 @@ async function stepH_schoolEvents(staffMap) {
   const rows = schoolEvents.map((e) => ({
     title: e.title,
     description: null,
-    event_date: e.date,
+    // Events are future announcements: a flat calendar-day shift keeps
+    // them the same distance ahead of the anchor as they were ahead of
+    // MOCK_TODAY (exact weekday does not matter here).
+    event_date: shiftDateStr(e.date, ANCHOR_DAY_DELTA),
     event_type: e.type,
     created_by: createdBy,
   }));
 
   // school_events has no natural unique key, so guard against duplicates
-  // by deleting matching (title,event_date) before insert. This keeps the
-  // script idempotent without changing the schema.
+  // by deleting matching titles before insert. Matching on title ONLY
+  // (not event_date) means a re-run with a new anchor replaces the
+  // old-dated copy instead of stranding it. The five seeded titles are
+  // distinctive, so this will not touch operator-created events.
   for (const r of rows) {
     const { error: delErr } = await supabase
       .from('school_events')
       .delete()
-      .eq('title', r.title)
-      .eq('event_date', r.event_date);
+      .eq('title', r.title);
     if (delErr) {
       recordError('H', `${r.title}`, delErr);
       continue;
@@ -627,11 +762,13 @@ async function stepH_schoolEvents(staffMap) {
 
 async function stepI_aiModels() {
   console.log(`\n[Step I] Inserting ${aiModelHistory.length} ai_models rows…`);
-  // Derive name + version + deployed_at; last entry is 'active'.
-  const today = new Date(MOCK_TODAY);
+  // Derive name + version + deployed_at; last entry is 'active'. The
+  // weekly deployment ladder ends at the run anchor, so the active
+  // model always looks freshly deployed.
+  const anchor = new Date(`${ANCHOR}T00:00:00Z`);
   const rows = aiModelHistory.map((row, i) => {
     const weeksAgo = aiModelHistory.length - 1 - i;
-    const deployed = new Date(today);
+    const deployed = new Date(anchor);
     deployed.setUTCDate(deployed.getUTCDate() - weeksAgo * 7);
     return {
       name: 'face-recognition-v1',
@@ -758,14 +895,23 @@ async function stepK_auditLogs(staffMap) {
       log.user === 'System'
         ? null
         : (nameToAuthId.get(log.user.toLowerCase()) ?? null);
-    const createdAt = parseAuditTimestamp(log.timestamp);
+    // Re-anchor: shift the mock timestamp by the run's calendar-day
+    // delta, preserving the original time-of-day.
+    let createdAt = parseAuditTimestamp(log.timestamp);
+    if (createdAt) {
+      const [datePart, timePart] = createdAt.split('T');
+      createdAt = `${shiftDateStr(datePart, ANCHOR_DAY_DELTA)}T${timePart}`;
+    }
 
-    // Idempotency: match on (actor_id, action, created_at).
+    // Idempotency: match on (actor_id, action) — created_at is
+    // deliberately NOT matched, so seed rows written under a previous
+    // anchor are replaced on re-run instead of piling up. The seeded
+    // action strings are distinctive full sentences, so real
+    // user-generated audit rows are not at risk.
     let q = supabase
       .from('audit_logs')
       .delete()
       .eq('action', log.action);
-    if (createdAt) q = q.eq('created_at', createdAt);
     if (actorId === null) q = q.is('actor_id', null);
     else q = q.eq('actor_id', actorId);
     const { error: delErr } = await q;
@@ -798,7 +944,14 @@ async function main() {
   console.log('PRISM-AI mock-data migration starting');
   console.log(`  url:            ${SUPABASE_URL}`);
   console.log(`  staff password: ${STAFF_PASSWORD}`);
-  console.log(`  mock today:     ${MOCK_TODAY}`);
+  console.log(`  mock anchor:    ${MOCK_TODAY}`);
+  console.log(`  anchor date:    ${ANCHOR}`);
+  console.log(
+    `  day offset:     ${ANCHOR_DAY_DELTA >= 0 ? '+' : ''}${ANCHOR_DAY_DELTA} calendar day(s) from mock anchor`
+  );
+  console.log(
+    `  school days:    ${SCHOOL_DAY_COUNT} attendance dates remapped`
+  );
 
   // Sanity ping: try to list one row from years (set up by seed.sql).
   const { error: pingErr } = await supabase
