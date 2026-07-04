@@ -1,0 +1,61 @@
+# ---------------------------------------------------------------------------
+# Supabase keep-alive
+#
+# WHY: The hosted Supabase project runs on the free tier, which auto-pauses
+# the database after roughly one week without API traffic. This workflow
+# sends one tiny authenticated REST request per day so the project never
+# goes idle. Zero cost: GitHub Actions minutes are free for public repos.
+#
+# WHAT IT DOES:
+#   GET {SUPABASE_URL}/rest/v1/years?select=year_num&limit=1
+# using the PUBLIC anon key (least privilege - the same key the frontend
+# ships with). A non-2xx response fails the job, and GitHub emails the repo
+# owner about the failed scheduled run - that failure email is the alerting.
+#
+# SETUP (required once, no secrets ever live in this file - the repo is
+# public): add two repository secrets under
+#   Settings -> Secrets and variables -> Actions -> New repository secret
+#     SUPABASE_URL        e.g. https://<project-ref>.supabase.co
+#     SUPABASE_ANON_KEY   the public anon key (same value as
+#                         VITE_SUPABASE_ANON_KEY in PRISM-ai--web/.env.local)
+#
+# KNOWN LIMITATION: On public repos GitHub automatically disables scheduled
+# workflows after 60 days without repository activity (no pushes). GitHub
+# emails a warning before disabling. Mitigation: any commit re-enables the
+# schedule (or click "Enable workflow" in the Actions tab). If the repo will
+# sit untouched for more than 60 days, also install the local fallback:
+# scripts/register-keepalive-task.ps1 (Windows Task Scheduler).
+# ---------------------------------------------------------------------------
+name: Supabase keep-alive
+
+on:
+  schedule:
+    # 03:17 UTC daily = 11:17 AM Malaysia time (UTC+8).
+    # Off-the-hour minute chosen deliberately: GitHub delays/drops jobs
+    # scheduled at popular times like :00.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST endpoint
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "::error::Repo secrets SUPABASE_URL and/or SUPABASE_ANON_KEY are not set. Add them under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          # --fail makes any non-2xx response exit non-zero, which fails the
+          # job and triggers GitHub's failure email to the repo owner.
+          body="$(curl --fail --silent --show-error --max-time 30 \
+            "${SUPABASE_URL%/}/rest/v1/years?select=year_num&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")"
+          echo "OK: Supabase is awake - response: ${body}"
