@@ -17,21 +17,33 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import gpu_check
+
 # ── InsightFace Setup ─────────────────────────────────────────────────────────
 
 def init_face_app(det_size=(640, 640)):
-    """Initialize InsightFace FaceAnalysis with CPU provider."""
+    """Initialize InsightFace FaceAnalysis on a GPU execution provider."""
     from insightface.app import FaceAnalysis
-    
+
+    # Same no-CPU-fallback gate as face_recognition.py — refuses (exit 3)
+    # before the camera is ever opened.
+    providers = gpu_check.require_gpu_providers()
+    det_size = gpu_check.effective_det_size(providers, det_size)
+
     print("[INIT] Loading InsightFace models (SCRFD + ArcFace)...")
     print("[INIT] This may take a moment on first run (downloading models)...")
-    
+
     app = FaceAnalysis(
         name="buffalo_l",
-        providers=["CPUExecutionProvider"]
+        providers=providers,
+        # Enrollment also only needs bbox/kps/det_score/embedding — match
+        # face_recognition.py and skip the genderage/landmark models.
+        allowed_modules=["detection", "recognition"],
     )
     app.prepare(ctx_id=0, det_size=det_size)
-    
+
+    active = gpu_check.verify_gpu_active(app)
+    print(f"[INIT] GPU inference active: {', '.join(sorted(active))}")
     print(f"[INIT] Models loaded successfully. Detection size: {det_size}")
     return app
 

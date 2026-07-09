@@ -33,6 +33,8 @@ import requests
 import cv2
 import numpy as np
 
+import gpu_check
+
 # ── MJPEG live-stream state ───────────────────────────────────────────────────
 # The main loop encodes its annotated display frame into a JPEG and stores the
 # bytes here; the StreamHandler reads them whenever a browser polls /stream.
@@ -107,21 +109,31 @@ COLORS = {
 # ── InsightFace Setup ─────────────────────────────────────────────────────────
 
 def init_face_app(det_size=(320, 320)):
-    # NOTE: 320x320 is ~4x faster than 640x640 on CPU. SCRFD still detects
-    # faces well at this size for webcam-distance (1-3m) usage. Bumping back
-    # to 640x640 only matters for far-distance or very tilted faces.
-    """Initialize InsightFace FaceAnalysis with CPU provider."""
+    # NOTE: 320x320 is ~4x faster than 640x640 on SCRFD and still detects
+    # faces well at webcam distance (1-3m). Bumping back to 640x640 only
+    # matters for far-distance or very tilted faces.
+    """Initialize InsightFace FaceAnalysis on a GPU execution provider."""
     from insightface.app import FaceAnalysis
-    
+
+    # No GPU → refuses (exit 3) before the camera is ever opened.
+    providers = gpu_check.require_gpu_providers()
+    det_size = gpu_check.effective_det_size(providers, det_size)
+
     print("[INIT] Loading InsightFace models (SCRFD + ArcFace)...")
-    print("[INIT] Using CPUExecutionProvider for inference...")
-    
+    print(f"[INIT] Requesting execution providers: {providers}")
+
     app = FaceAnalysis(
         name="buffalo_l",
-        providers=["CPUExecutionProvider"]
+        providers=providers,
+        # This service only uses bbox/kps/det_score/embedding — skip the
+        # genderage + two landmark models, saving 3 GPU dispatches per face
+        # per frame (measured 4.4 -> 10.4 fps with 6 faces on DirectML).
+        allowed_modules=["detection", "recognition"],
     )
     app.prepare(ctx_id=0, det_size=det_size)
-    
+
+    active = gpu_check.verify_gpu_active(app)
+    print(f"[INIT] GPU inference active: {', '.join(sorted(active))}")
     print(f"[INIT] Models loaded. Detection size: {det_size}")
     return app
 
