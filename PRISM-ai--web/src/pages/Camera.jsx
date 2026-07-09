@@ -16,7 +16,7 @@ export default function Camera() {
   // Process-management state for the Python child that Express supervises.
   // `running` = Express has a live child PID; distinct from `ai.status`
   // which only flips to 'online' once Python actually POSTs detections.
-  const [proc, setProc] = useState({ running: false, pid: null, startedAt: null });
+  const [proc, setProc] = useState({ running: false, pid: null, startedAt: null, lastError: null });
   const [procBusy, setProcBusy] = useState(false); // true during start/stop in-flight
   const [procError, setProcError] = useState('');
 
@@ -71,7 +71,7 @@ export default function Camera() {
       const r = await fetch('/api/ai/process');
       if (!r.ok) return;
       const d = await r.json();
-      setProc({ running: !!d.running, pid: d.pid ?? null, startedAt: d.startedAt ?? null });
+      setProc({ running: !!d.running, pid: d.pid ?? null, startedAt: d.startedAt ?? null, lastError: d.lastError ?? null });
     } catch {
       // Express down — leave state as-is.
     }
@@ -171,6 +171,11 @@ export default function Camera() {
 
   // --- Helpers -------------------------------------------------------------
   const aiOnline = ai.status === 'online';
+  // What to show in the error box: an immediate start/stop failure wins;
+  // otherwise the server-side reason the last AI run died (e.g. the GPU
+  // gate's "Incompatible hardware — GPU required"). Only shown while the
+  // process is down — a fresh start clears it on the server.
+  const serviceError = procError || (!proc.running && proc.lastError) || '';
   const lastUpdateLabel = ai.lastUpdate
     ? new Date(ai.lastUpdate).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     : '—';
@@ -338,10 +343,10 @@ export default function Camera() {
             )}
           </div>
 
-          {procError && (
+          {serviceError && (
             <div className="live-cam-ai-error" role="alert">
               <AlertTriangle size={16} />
-              <span>{procError}</span>
+              <span>{serviceError}</span>
             </div>
           )}
 

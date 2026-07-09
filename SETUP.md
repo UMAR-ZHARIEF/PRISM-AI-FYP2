@@ -16,7 +16,7 @@ Browser ── React + Vite dev server (:5173)
               │  /api proxied ──────────► Express bridge (:3001) ──► hosted Supabase
               │                              │                       (PostgreSQL + Auth + RLS)
               │  /stream proxied ─────────► Python edge AI (127.0.0.1:5174)
-              │                              (InsightFace SCRFD + ArcFace, CPU)
+              │                              (InsightFace SCRFD + ArcFace, GPU)
               └── Camera page Start/Stop ──► bridge spawns/kills the Python process
 ```
 
@@ -41,6 +41,7 @@ Browser ── React + Vite dev server (:5173)
 | Python | **3.11** (project venv was built with 3.11.9) | InsightFace + OpenCV edge service. |
 | Git | any recent | clone the repo. |
 | A webcam | any | only needed for the AI/camera features. |
+| A GPU | DirectX 12-capable (Windows: NVIDIA/AMD/Intel, incl. integrated) or NVIDIA CUDA (Linux) | **required for the AI camera service only** — it refuses to start without one ("Incompatible hardware — GPU required"; no CPU fallback). The web app itself runs on anything. |
 | A Supabase account | free tier is fine | hosted PostgreSQL + Auth. Create a new project at <https://supabase.com> before step 5. |
 | Internet | once, at first AI start | auto-downloads the InsightFace `buffalo_l` model pack (~280 MB). |
 
@@ -139,11 +140,20 @@ pip install -r requirements.txt
 cd ../..
 ```
 
-`requirements.txt` pulls `insightface>=0.7.3`, `onnxruntime` (CPU — no GPU or
-CUDA needed), `opencv-python`, `numpy`, `requests`, `Pillow`. If pip tries to
-compile InsightFace's C++ extension on Windows and fails, install the
-"Microsoft C++ Build Tools" (Visual Studio Build Tools) and re-run the
-`pip install`.
+`requirements.txt` pulls `insightface>=0.7.3`, `opencv-python`, `numpy`,
+`requests`, `Pillow`, and a **GPU** onnxruntime build — `onnxruntime-directml`
+on Windows (works on any DirectX 12 GPU: NVIDIA, AMD, or Intel integrated) or
+`onnxruntime-gpu` on Linux (needs NVIDIA CUDA 12 + cuDNN 9). The AI service
+**requires a GPU** and refuses to start with
+`Incompatible hardware — GPU required` if no CUDA/DirectML provider is
+available; there is deliberately no CPU fallback. macOS has neither CUDA nor
+DirectML, so a Mac cannot be the camera machine (the web app still runs).
+Under DirectML the face detector runs at its native 640x640 input (other
+sizes crash the DirectML provider) — the service adjusts this automatically
+and logs the override.
+If pip tries to compile InsightFace's C++ extension on Windows and fails,
+install the "Microsoft C++ Build Tools" (Visual Studio Build Tools) and
+re-run the `pip install`.
 
 ## 5) Environment files
 
@@ -340,6 +350,14 @@ roughly a week of inactivity. Symptoms: DNS errors like "no such host" for
 Fix: open the Supabase dashboard and click **Restore/Resume** on the
 project, then reload the app.
 
+**"Incompatible hardware — GPU required" when starting the AI or enrolling.**
+The machine has no usable GPU execution provider. The Python service checks
+for CUDA/DirectML at startup and refuses to run on CPU by design. Fixes:
+on Windows make sure the venv has `onnxruntime-directml` (not plain
+`onnxruntime`) and the machine has a DirectX 12 GPU with a working driver;
+on Linux install `onnxruntime-gpu` plus NVIDIA CUDA 12 + cuDNN 9. Run the
+camera service on a GPU machine — the web app and bridge can stay anywhere.
+
 **First Start AI hangs or fails on the model download.** The `buffalo_l`
 download needs outbound internet; corporate firewalls/proxies can block it.
 Retry on an open network. If a partial download got corrupted, delete
@@ -361,6 +379,15 @@ it (see above).
 **Enrollment returns "Stop the AI service first before enrolling".** By
 design — recognition and enrollment cannot share the webcam. Stop the AI,
 enroll, start it again.
+
+**`pip install` fails with `SSL: CERTIFICATE_VERIFY_FAILED` (self-signed
+certificate in certificate chain).** Antivirus/web filters that intercept
+HTTPS break pip, because pip trusts only its own bundled CA list (not the
+Windows certificate store where the filter registered its root). Workaround:
+
+```powershell
+pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+```
 
 **Seeder fails with `cannot read public.years` / missing class_sections.**
 The migrations or `seed.sql` were not applied (step 6). Apply them and

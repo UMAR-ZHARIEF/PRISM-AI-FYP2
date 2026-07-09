@@ -101,6 +101,14 @@ let aiProcess = null;
 let aiStartedAt = null;
 let aiLastExitCode = null;
 let aiLastExitAt = null;
+let aiLastError = null;
+
+// gpu_check.py refuses to run on machines without CUDA/DirectML: it prints a
+// GPU_REQUIRED marker line to stderr and exits with code 3 — no CPU fallback.
+// Map either signal to the user-facing message shown on the Camera page
+// (must stay in sync with gpu_check.GPU_REQUIRED_MSG).
+const AI_EXIT_GPU_REQUIRED = 3;
+const GPU_REQUIRED_MSG = 'Incompatible hardware — GPU required';
 
 function aiPaths() {
   const aiDir = path.join(__dirname, '..', 'ai-service', 'edge');
@@ -743,6 +751,7 @@ app.get('/api/ai/process', (req, res) => {
     startedAt: aiStartedAt,
     lastExitCode: aiLastExitCode,
     lastExitAt: aiLastExitAt,
+    lastError: aiLastError,
   });
 });
 
@@ -808,19 +817,27 @@ app.post('/api/ai/start', requireAdminOrTeacher, (req, res) => {
     aiStartedAt = new Date().toISOString();
     aiLastExitCode = null;
     aiLastExitAt = null;
+    aiLastError = null;
 
     child.stdout.on('data', (chunk) => {
       const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      lines.forEach((l) => console.log(`[AI:stdout] ${l}`));
+      lines.forEach((l) => {
+        console.log(`[AI:stdout] ${l}`);
+        if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
+      });
     });
     child.stderr.on('data', (chunk) => {
       const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      lines.forEach((l) => console.warn(`[AI:stderr] ${l}`));
+      lines.forEach((l) => {
+        console.warn(`[AI:stderr] ${l}`);
+        if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
+      });
     });
     child.on('exit', (code, signal) => {
       console.log(`[AI] Python child exited code=${code} signal=${signal}`);
       aiLastExitCode = code;
       aiLastExitAt = new Date().toISOString();
+      if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
       if (aiProcess === child) aiProcess = null;
     });
     child.on('error', (err) => {
@@ -911,7 +928,14 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
       logAudit(req.actor.id, 'face.enroll', student_id, { name: student.full_name });
       res.json({ success: true, message: `Enrolled ${student.full_name}` });
     } else {
-      res.status(500).json({ error: 'Enrollment failed', code, stderr: stderr.slice(-500) });
+      // Surface the GPU gate's refusal verbatim — "Enrollment failed" would
+      // hide the real (hardware) reason from the admin.
+      const gpuBlocked = code === AI_EXIT_GPU_REQUIRED || stderr.includes('GPU_REQUIRED');
+      res.status(500).json({
+        error: gpuBlocked ? GPU_REQUIRED_MSG : 'Enrollment failed',
+        code,
+        stderr: stderr.slice(-500),
+      });
     }
   });
   child.on('error', (e) => res.status(500).json({ error: e.message }));

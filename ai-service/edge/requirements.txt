@@ -1,13 +1,26 @@
 # PRISM-AI Edge Service Dependencies
-# Face Detection & Recognition
-insightface>=0.7.3
-onnxruntime>=1.16.0
+# Face Detection & Recognition — pinned: the whole pipeline (FaceAnalysis
+# provider plumbing, gpu_check session verification, bundled insightface_src)
+# is built and verified against 0.7.3; 1.x changed the packaging
+insightface==0.7.3
+
+# GPU inference runtime — the edge AI REFUSES to start without a GPU
+# execution provider (see gpu_check.py; no CPU fallback by design).
+#   Windows: onnxruntime-directml (any DirectX 12 GPU — NVIDIA/AMD/Intel).
+#            DirectML runs SCRFD only at its native det-size 640x640
+#            (gpu_check.effective_det_size enforces this automatically);
+#            verified working: 1.15.1 and 1.24.4.
+#   Linux:   onnxruntime-gpu (needs NVIDIA CUDA 12 + cuDNN 9)
+#   macOS:   has neither CUDA nor DirectML — unsupported as the camera machine
+onnxruntime-directml>=1.15.1 ; sys_platform == 'win32'
+onnxruntime-gpu>=1.17 ; sys_platform == 'linux'
 
 # Computer Vision
 opencv-python>=4.8.0
 
-# Numerical Computing
-numpy>=1.24.0
+# Numerical Computing — pinned <2: insightface 0.7.3's compiled extension is
+# built against the NumPy 1.x ABI and crashes on import under NumPy 2
+numpy>=1.24.0,<2
 
 # HTTP Client (for API communication)
 requests>=2.31.0
