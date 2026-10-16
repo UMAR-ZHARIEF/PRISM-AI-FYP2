@@ -88,7 +88,7 @@ export default function ParentPortal() {
 
     supabase
       .from('parent_students')
-      .select('student_id, is_primary, student:students(id, full_name, year_num, class_section:class_sections(name))')
+      .select('student_id, is_primary, student:students(id, full_name, year_num, class_section:class_sections(name, homeroom_teacher:profiles(*)))')
       .eq('parent_id', parentId)
       .order('is_primary', { ascending: false })
       .then(({ data, error }) => {
@@ -279,6 +279,22 @@ export default function ParentPortal() {
   const parentInitials = parentName
     ? parentName.split(' ').map((n) => n[0]).join('').slice(0, 2)
     : '';
+
+  // Homeroom teacher rides in on the parent_students embed for the active child.
+  // It can be null (vacant post, or the profile not readable), so the Contact
+  // Teacher card has to cope without it — never show an invented name.
+  const activeChildRow = children.find((row) => row.student_id === selectedChildId);
+  const homeroomTeacher =
+    (activeChildRow && activeChildRow.student && activeChildRow.student.class_section &&
+      activeChildRow.student.class_section.homeroom_teacher) || null;
+  const teacherName = (homeroomTeacher && homeroomTeacher.full_name) || '';
+  const teacherEmail = (homeroomTeacher && homeroomTeacher.email) || '';
+  const teacherInitials = teacherName
+    ? teacherName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
+    : '';
+  const mailSubject = student && student.year_num != null && childClassName
+    ? `Regarding ${childName} (Year ${student.year_num} ${childClassName})`
+    : `Regarding ${childName}`;
 
   // Today's record drives the banner. If there's no record for today yet, fall back
   // to a synthetic 'present' record so the banner doesn't crash; the badge still
@@ -577,17 +593,35 @@ export default function ParentPortal() {
                 <h2><Mail size={18} /> Contact Teacher</h2>
               </header>
 
-              <div className="pp-teacher">
-                <div className="avatar y pp-teacher-avatar">CF</div>
-                <div className="pp-teacher-info">
-                  <strong>Cikgu Fatimah</strong>
-                  <small>Class Bestari Teacher</small>
-                </div>
-              </div>
+              {teacherName ? (
+                <>
+                  <div className="pp-teacher">
+                    <div className="avatar y pp-teacher-avatar">{teacherInitials}</div>
+                    <div className="pp-teacher-info">
+                      <strong>{teacherName}</strong>
+                      <small>{childClassName ? `Class ${childClassName} Teacher` : 'Homeroom teacher'}</small>
+                    </div>
+                  </div>
 
-              <button className="btn btn-primary pp-contact-btn">
-                <Mail size={16} /> Send Message
-              </button>
+                  {teacherEmail ? (
+                    <a
+                      className="btn btn-primary pp-contact-btn"
+                      href={`mailto:${teacherEmail}?subject=${encodeURIComponent(mailSubject)}`}
+                    >
+                      <Mail size={16} /> Send Message
+                    </a>
+                  ) : (
+                    <p className="pp-empty-hint">No email on file for this teacher.</p>
+                  )}
+                </>
+              ) : (
+                <div className="pp-teacher">
+                  <div className="pp-teacher-info">
+                    <strong>{childClassName ? `Class ${childClassName}` : 'Homeroom teacher'}</strong>
+                    <small>No homeroom teacher listed yet.</small>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="card pp-announce-card">
