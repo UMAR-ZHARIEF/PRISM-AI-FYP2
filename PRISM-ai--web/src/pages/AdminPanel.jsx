@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classes, classColors, aiModelHistory, years } from '../data/mockData';
@@ -65,6 +65,9 @@ export default function AdminPanel() {
   const [enrollStudentId, setEnrollStudentId] = useState('');
   const [enrolling, setEnrolling] = useState(false);
   const [enrollStatus, setEnrollStatus] = useState(null);
+  // Lets the per-card "Register Face" buttons scroll the operator up to the
+  // enrollment card after preselecting the student in its picker.
+  const enrollCardRef = useRef(null);
 
   // Real face-enrollment status: Set of lowercased names from
   // ai-service/edge/enrolled_students.json (served by GET /api/ai/enrolled).
@@ -407,11 +410,49 @@ export default function AdminPanel() {
       );
       return;
     }
-    toast('Coming soon', 'info');
+    if (!isAdmin) {
+      toast('Face enrollment is admin-only.', 'error');
+      return;
+    }
+    // The capture itself runs through the enrollment card's flow — preselect
+    // the student there and bring the operator to it.
+    setEnrollStudentId(student.id);
+    enrollCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    toast(`${student.full_name} selected — click Start Enrollment when ready.`, 'info');
   };
 
-  const handleRemoveFace = () => {
-    toast('Coming soon', 'info');
+  // Delete the stored face embedding for a student (admin-only endpoint).
+  // Re-enrolling afterwards is just the normal Register Face flow.
+  const handleRemoveFace = async (student) => {
+    if (!student) return;
+    if (!isAdmin || !session?.access_token) {
+      toast('Removing a face enrollment is admin-only.', 'error');
+      return;
+    }
+    const ok = window.confirm(
+      `Remove the enrolled face for ${student.full_name}? The camera will no longer recognize them until they are enrolled again.`,
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/ai/enrolled/${encodeURIComponent(student.full_name)}`, {
+        method: 'DELETE',
+        headers: apiHeaders(),
+      });
+      if (!res.ok) {
+        toast(await parseApiError(res), 'error', 5000);
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      toast(
+        `Removed face enrollment for ${body.name || student.full_name}.${body.aiRunning ? ' Restart the AI to apply it to the live camera.' : ''}`,
+        'success',
+        5000,
+      );
+      refreshEnrolledFaces();
+    } catch (err) {
+      console.error('remove face failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+    }
   };
 
   // Trigger the Python enrollment script for the selected student.
@@ -847,7 +888,7 @@ export default function AdminPanel() {
             <>
               {/* Enroll a new face — admin-only */}
               {isAdmin && (
-                <div className="card admin-card face-enroll-card">
+                <div className="card admin-card face-enroll-card" ref={enrollCardRef}>
                   <span className="tape tl" />
                   <div className="card-header">
                     <div>

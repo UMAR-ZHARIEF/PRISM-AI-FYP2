@@ -779,6 +779,38 @@ app.get('/api/ai/enrolled', (req, res) => {
   }
 });
 
+// DELETE /api/ai/enrolled/:name — remove one student's face embedding.
+// Admin-only: this deletes biometric data. enrolled_students.json is keyed
+// by name until enrollment moves to student UUIDs, so the (URL-encoded)
+// name is the identifier here. A running AI keeps its in-memory copy until
+// the next start — the response says so and the UI relays it.
+app.delete('/api/ai/enrolled/:name', requireAdmin, (req, res) => {
+  try {
+    const target = (req.params.name || '').trim().toLowerCase();
+    if (!target) return res.status(400).json({ error: 'Student name required' });
+    const { aiDir } = aiPaths();
+    const dbPath = path.join(aiDir, 'enrolled_students.json');
+    if (!fs.existsSync(dbPath)) {
+      return res.status(404).json({ error: 'No faces enrolled yet' });
+    }
+    const json = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+    const students = Array.isArray(json.students) ? json.students : [];
+    const idx = students.findIndex(st => (st.name || '').trim().toLowerCase() === target);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'That student has no enrolled face' });
+    }
+    const [removed] = students.splice(idx, 1);
+    json.students = students;
+    fs.writeFileSync(dbPath, JSON.stringify(json, null, 2), 'utf-8');
+    logAudit(req.actor.id, 'face.unenroll', null, { name: removed.name });
+    const aiRunning = !!(aiProcess && aiProcess.exitCode === null);
+    return res.json({ success: true, name: removed.name, aiRunning });
+  } catch (e) {
+    console.error('[ai/unenroll] failed:', e);
+    return res.status(500).json({ error: 'Failed to update enrolled_students.json' });
+  }
+});
+
 // POST /api/ai/start — spawn the Python face-recognition service.
 app.post('/api/ai/start', requireAdminOrTeacher, (req, res) => {
   if (aiProcess && aiProcess.exitCode === null) {
@@ -903,6 +935,10 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
     '--name', student.full_name,
     '--class', student.class_section?.name || 'Unknown',
     '--camera', '0',
+    // The admin picked this student deliberately, so a re-enrollment replaces
+    // the stored embedding in place instead of tripping the duplicate guard
+    // (the old interactive prompt crashed under stdio:'ignore' — EOFError).
+    '--overwrite',
   ], {
     cwd: aiDir,
     windowsHide: false,
