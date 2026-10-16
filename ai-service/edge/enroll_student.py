@@ -69,7 +69,10 @@ def save_database(db):
 
 def add_student(db, name, class_name, embedding):
     """Add a new student to the database."""
-    student_id = len(db["students"]) + 1
+    # max()+1, not len()+1: once entries can be deleted (admin remove-face),
+    # len()+1 would reissue an id that is still in use.
+    existing_ids = [s.get("id", 0) for s in db["students"]]
+    student_id = max(existing_ids, default=0) + 1
     
     student = {
         "id": student_id,
@@ -238,9 +241,28 @@ def main():
                         help="Number of face captures to average (default: 5)")
     parser.add_argument("--det-size", type=int, default=640,
                         help="Detection input size (default: 640)")
-    
+    parser.add_argument("--overwrite", action="store_true",
+                        help="Replace the stored embedding if the student is "
+                             "already enrolled (non-interactive)")
+
     args = parser.parse_args()
-    
+
+    # Duplicate check BEFORE any camera/model work. This script is spawned by
+    # Express with stdin ignored, so the old interactive "Overwrite? (y/n)"
+    # prompt died with EOFError — replaced by the explicit --overwrite flag,
+    # and failing fast here means no camera window ever opens just to refuse.
+    db = load_database()
+    existing = None
+    for student in db["students"]:
+        if student["name"].lower() == args.name.lower():
+            existing = student
+            break
+
+    if existing and not args.overwrite:
+        print(f"[FAILED] Student '{args.name}' is already enrolled (ID: {existing['id']}).")
+        print("         Re-run with --overwrite to replace the stored embedding.")
+        sys.exit(2)
+
     # Initialize InsightFace
     app = init_face_app(det_size=(args.det_size, args.det_size))
     
@@ -255,25 +277,17 @@ def main():
         print("\n[FAILED] Enrollment failed. No embedding captured.")
         sys.exit(1)
     
-    # Save to database
-    db = load_database()
-    
-    # Check for duplicate name
-    for student in db["students"]:
-        if student["name"].lower() == args.name.lower():
-            print(f"\n[WARN] Student '{args.name}' already exists (ID: {student['id']})")
-            response = input("Overwrite? (y/n): ").strip().lower()
-            if response == 'y':
-                student["embedding"] = embedding.tolist()
-                student["enrolled_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-                save_database(db)
-                print(f"[OK] Updated embedding for '{args.name}'")
-                return
-            else:
-                print("[INFO] Enrollment cancelled.")
-                return
-    
-    student_id = add_student(db, args.name, args.class_name, embedding)
+    if existing:
+        # Re-enrollment: replace in place, keep the id, and refresh the class
+        # in case the student moved sections since the first enrollment.
+        existing["embedding"] = embedding.tolist()
+        existing["class"] = args.class_name
+        existing["enrolled_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        save_database(db)
+        student_id = existing["id"]
+        print(f"\n[OK] Replaced stored embedding for '{args.name}'")
+    else:
+        student_id = add_student(db, args.name, args.class_name, embedding)
     
     print(f"\n{'='*60}")
     print(f"  ENROLLMENT COMPLETE")
