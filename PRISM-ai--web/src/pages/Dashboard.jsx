@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { notifications, recentActivity, classColors, classes } from '../data/mockData';
+import { classColors, classes } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
 import Pagination from '../components/Pagination';
@@ -10,6 +10,7 @@ import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skelet
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
+import useNotifications from '../hooks/useNotifications';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import './Dashboard.css';
@@ -31,6 +32,18 @@ function bucketArrival(t) {
   if (Number.isNaN(h)) return null;
   const half = m >= 30 ? 30 : 0;
   return `${String(h).padStart(2, '0')}:${String(half).padStart(2, '0')}`;
+}
+
+// Relative "5m ago" label from an ISO timestamp (same shape as StudentProfile's).
+function timeAgo(iso) {
+  if (!iso) return '';
+  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 export default function Dashboard() {
@@ -88,6 +101,10 @@ export default function Dashboard() {
   const { students: dbStudents, loading: studentsLoading } = useStudents({ year: hookYear });
   const { classSections, loading: sectionsLoading } = useClassSections({ year: hookYear });
   const { records: weekRecords, loading: attendanceLoading, refresh: refreshAttendance } = useAttendance({ fromDate: weekAgo, toDate: today });
+  // Notifications for the panel at the bottom — same rows the topbar bell reads
+  // (RLS already scopes them to the signed-in user). Loads independently, so it
+  // never blocks the page skeleton below.
+  const { notifications, unreadCount, loading: notifLoading } = useNotifications();
 
   // Realtime: when any attendance_records row changes (AI camera insert, manual
   // mark, edit, delete), pull a fresh copy through the hook so the dashboard
@@ -249,6 +266,33 @@ export default function Dashboard() {
     return Array.from(buckets.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([time, count]) => ({ time, count }));
+  }, [todayRecords]);
+
+  // Recent activity: today's records replayed newest-first. Rows with no human
+  // marker are AI camera check-ins (the edge service writes marked_by = null);
+  // everything else was marked manually — we don't join the marker's profile,
+  // so those lines are phrased without an actor.
+  const recentActivity = useMemo(() => {
+    return todayRecords.map(r => {
+      const name = r.student?.full_name || 'Unknown student';
+      const cls = r.student?.class_section?.name || '';
+      const where = r.student?.year_num
+        ? ` (Year ${r.student.year_num}${cls ? ` ${cls}` : ''})`
+        : (cls ? ` (${cls})` : '');
+      const time = r.arrival_time || (r.marked_at ? new Date(r.marked_at).toTimeString().slice(0, 8) : '');
+      const isAI = !r.marked_by;
+      return {
+        id: r.id || r.student_id,
+        user: isAI ? 'System' : null,
+        action: isAI
+          ? `${name}${where} checked in via face recognition`
+          : `Marked ${name}${where} as ${r.status}`,
+        time,
+        type: r.status === 'present' ? 'success' : r.status === 'late' ? 'warning' : 'danger',
+      };
+    })
+      .sort((a, b) => b.time.localeCompare(a.time))
+      .slice(0, 12);
   }, [todayRecords]);
 
   // Flatten today's records into the legacy row shape so the table renders unchanged.
@@ -548,12 +592,14 @@ export default function Dashboard() {
             <h2><Activity size={20} /> Recent Activity</h2>
           </div>
           <div className="activity-timeline">
-            {recentActivity.map(a => (
+            {recentActivity.length === 0 ? (
+              <div className="empty-state">No activity yet today.</div>
+            ) : recentActivity.map(a => (
               <div key={a.id} className="timeline-item">
                 <div className={`timeline-dot dot-${a.type}`} />
                 <div className="timeline-content">
-                  <p><strong>{a.user}</strong> &mdash; {a.action}</p>
-                  <small className="mono">{a.timestamp}</small>
+                  <p>{a.user ? <><strong>{a.user}</strong> &mdash; </> : null}{a.action}</p>
+                  <small className="mono">{a.time ? a.time.slice(0, 5) : '—'}</small>
                 </div>
               </div>
             ))}
@@ -564,15 +610,19 @@ export default function Dashboard() {
           <span className="tape bl" />
           <div className="card-header">
             <h2>Notifications</h2>
-            <span className="badge badge-absent">{notifications.length}</span>
+            {unreadCount > 0 && <span className="badge badge-absent">{unreadCount}</span>}
           </div>
           <div className="notif-list">
-            {notifications.map(n => (
+            {notifLoading ? (
+              <div className="empty-state">Loading notifications...</div>
+            ) : notifications.length === 0 ? (
+              <div className="empty-state">No notifications yet.</div>
+            ) : notifications.slice(0, 10).map(n => (
               <div key={n.id} className={`notif-item notif-${n.type}`}>
                 <AlertTriangle size={18} />
                 <div>
-                  <p>{n.message}</p>
-                  <small className="mono">{n.time}</small>
+                  <p>{n.title && <strong>{n.title}</strong>}{n.title && n.body ? ' — ' : ''}{n.body}</p>
+                  <small className="mono">{timeAgo(n.created_at)}</small>
                 </div>
               </div>
             ))}
