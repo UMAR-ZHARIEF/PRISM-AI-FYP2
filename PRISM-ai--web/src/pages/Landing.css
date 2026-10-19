@@ -161,6 +161,15 @@
 .mini-stat.s-orange { background: var(--orange); color: var(--paper-light); }
 .mini-stat.s-red    { background: var(--red);    color: var(--paper-light); }
 
+/* Caveat label: the ledger and trio above are sample data, not live figures */
+.hero-sample-note {
+  font-family: var(--accent);
+  font-size: 19px;
+  color: var(--ink-soft);
+  text-align: center;
+  transform: rotate(-2deg);
+}
+
 /* === SECTIONS === */
 .section { padding: 96px 32px; border-top: 3px dashed var(--ink); }
 .section-container { max-width: 1280px; margin: 0 auto; }

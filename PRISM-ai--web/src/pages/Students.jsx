@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, Trash2, FileUp, ArrowUp, ArrowDown } from 'lucide-react';
-import { classes, classColors, years } from '../data/mockData';
+import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
 import { useAuth } from '../contexts/AuthContext.jsx';
@@ -70,6 +70,10 @@ export default function Students() {
   const { years: yearOptions } = useYears();
   const formYearNumber = formYear === '' ? undefined : Number(formYear);
   const { classSections: formClassOptions } = useClassSections({ year: formYearNumber });
+
+  // Real class sections scoped to the active year filter: drives the Classes stat and the class filter.
+  const filterYearNumber = filterYear === 'all' ? undefined : Number(filterYear);
+  const { classSections: filterClassSections } = useClassSections({ year: filterYearNumber });
 
   // Real face-enrollment status from the AI bridge (shared hook, polls every 30s).
   const { enrolledNames } = useEnrolledFaces();
@@ -306,7 +310,6 @@ export default function Students() {
           </h1>
         </div>
         <div className="header-actions">
-          <button className="btn btn-outline" onClick={() => toast('CSV import started', 'info')}><FileUp size={16} /> Import CSV</button>
           {isAdmin && (
             <button className="btn btn-primary" onClick={handleOpenAdd}>
               <Plus size={16} /> Add Student
@@ -331,7 +334,7 @@ export default function Students() {
         </div>
         <div className="stat-card">
           <div className="icon-box" style={{ background: '#FEF3C7' }}><Grid3X3 size={22} color="var(--warning)" /></div>
-          <div className="stat-info"><h3>{classes.length}</h3><p>Classes</p></div>
+          <div className="stat-info"><h3>{filterClassSections.length}</h3><p>Classes</p></div>
         </div>
       </div>
 
@@ -345,11 +348,11 @@ export default function Students() {
           <div className="toolbar-filters">
             <select className="search-input filter-class" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
               <option value="all">All Classes</option>
-              {classes.map(c => <option key={c} value={c}>{c}</option>)}
+              {filterClassSections.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
             </select>
             <select className="search-input filter-face" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
               <option value="all">All Years</option>
-              {years.map(y => <option key={y} value={y}>Year {y}</option>)}
+              {yearOptions.map(y => <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>)}
             </select>
             <select className="search-input filter-face" value={filterFace} onChange={e => setFilterFace(e.target.value)}>
               <option value="all">All Face Status</option>

@@ -23,7 +23,7 @@ export default class ErrorBoundary extends Component {
           <span className="tape tl" />
           <AlertTriangle size={48} />
           <h2>Something went wrong</h2>
-          <p>An unexpected error occurred. The development team has been notified.</p>
+          <p>An unexpected error occurred. Please refresh the page. If the problem persists, please report it to the school administrator.</p>
           <details className="error-boundary-details">
             <summary>Technical details</summary>
             <pre>{String(this.state.error)}</pre>
