@@ -1,12 +1,14 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { classes, classColors, aiModelHistory, years } from '../data/mockData';
+import { classColors } from '../data/mockData';
 import useProfiles from '../hooks/useProfiles';
 import useAuditLogs from '../hooks/useAuditLogs';
 import useAiModels from '../hooks/useAiModels';
 import useStudents from '../hooks/useStudents';
 import useEnrolledFaces from '../hooks/useEnrolledFaces';
+import useYears from '../hooks/useYears';
+import useClassSections from '../hooks/useClassSections';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext.jsx';
@@ -15,6 +17,17 @@ import Pagination from '../components/Pagination';
 import './AdminPanel.css';
 
 const PER_PAGE = 8;
+
+// System Settings defaults — mirror the seeded values in migration
+// 0005_app_settings_and_checkout.sql (single app_settings row, id = 1).
+const SETTINGS_DEFAULTS = {
+  school_name: 'PRISM-AI Primary School',
+  late_cutoff: '08:00',
+  det_size: 320,
+  match_threshold: 0.4,
+};
+// Face-detection input sizes the AI service accepts (pixels).
+const DET_SIZE_OPTIONS = [320, 640, 960, 1280];
 
 export default function AdminPanel() {
   const [tab, setTab] = useState('users');
@@ -82,6 +95,34 @@ export default function AdminPanel() {
   const { logs: auditLogsData, loading: logsLoading, error: logsError } = useAuditLogs({ limit: 100 });
   const { models: aiModels, loading: modelsLoading, error: modelsError } = useAiModels();
   const { students: studentList, loading: studentsLoading, error: studentsError } = useStudents();
+  // Real year / class lists for the Face Registration filters (P7): the old
+  // mock years/classes arrays are gone.
+  const { years } = useYears();
+  const { classSections } = useClassSections();
+
+  // --- Overview system health (best-effort single fetch) ---
+  // Active Cameras = is the Express process currently supervising the Python
+  // AI (GET /api/ai/process, same source the Camera page uses). System Uptime
+  // = GET /api/health uptimeSeconds (added by the server lane); shown as '—'
+  // until the server provides it.
+  const [aiProcRunning, setAiProcRunning] = useState(false);
+  const [uptimeSeconds, setUptimeSeconds] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/ai/process')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled && d) setAiProcRunning(Boolean(d.running)); })
+      .catch(() => { /* server offline — card stays at 0 */ });
+    fetch('/api/health')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d) return;
+        const secs = Number(d.uptimeSeconds);
+        if (Number.isFinite(secs)) setUptimeSeconds(secs);
+      })
+      .catch(() => { /* server offline — card stays at — */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // Derived from /api/ai/enrolled (which reads enrolled_students.json on the
   // server). Maps student.id → true if their full_name (lowercased) appears
@@ -376,10 +417,11 @@ export default function AdminPanel() {
   const totalFacePages = Math.ceil(faceFilteredStudents.length / FACE_PER_PAGE);
   const paginatedFaceStudents = faceFilteredStudents.slice((facePage - 1) * FACE_PER_PAGE, facePage * FACE_PER_PAGE);
 
-  // Build progress data grouped by year and class
+  // Build progress data grouped by year and class. Uses the real years and
+  // class sections from Supabase (P7) — groups with no students are skipped.
   const getProgressData = () => {
-    const filteredYears = faceYearFilter === 'all' ? years : [Number(faceYearFilter)];
-    const filteredClasses = faceClassFilter === 'all' ? classes : [faceClassFilter];
+    const filteredYears = faceYearFilter === 'all' ? years.map(y => y.year_num) : [Number(faceYearFilter)];
+    const filteredClasses = faceClassFilter === 'all' ? classSections.map(c => c.name) : [faceClassFilter];
     const groups = [];
     filteredYears.forEach(y => {
       filteredClasses.forEach(c => {
@@ -391,6 +433,18 @@ export default function AdminPanel() {
     });
     return groups;
   };
+
+  // Colour for a class name: palette map first (seed colours match it),
+  // then the class section's own colour column, then plain ink.
+  const classColorOf = (name) => classColors[name]
+    || classSections.find(c => c.name === name)?.color
+    || 'var(--ink)';
+
+  // Class names repeat across years in class_sections — offer each once.
+  const faceClassNames = useMemo(
+    () => [...new Set(classSections.map(c => c.name))],
+    [classSections],
+  );
 
   const handleRegisterFace = (student) => {
     const status = consentStatusFor(student.id);
@@ -501,11 +555,140 @@ export default function AdminPanel() {
 
   const classColorMap = { Bestari: 'b', Bijak: 'r', Cerdik: 'g', Cerdas: 'o', Pandai: 'y' };
 
+  // --- System Settings (Supabase table app_settings, single row id = 1) ---
+  // Staff can read the row; only admins may update it (RLS). Non-admins get
+  // the form disabled with no Save/Reset buttons.
+  const [settingsForm, setSettingsForm] = useState(SETTINGS_DEFAULTS);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+
+  useEffect(() => {
+    // loading starts true and the effect runs once — no synchronous resets
+    // needed here.
+    let cancelled = false;
+    supabase
+      .from('app_settings')
+      .select('school_name, late_cutoff, det_size, match_threshold')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data, error: queryError }) => {
+        if (cancelled) return;
+        if (queryError) {
+          console.error('AdminPanel: failed to load app_settings', queryError);
+          setSettingsError(queryError);
+        } else if (data) {
+          setSettingsForm({
+            school_name: data.school_name ?? SETTINGS_DEFAULTS.school_name,
+            // Postgres `time` comes back as 'HH:MM:SS'; the time input on a
+            // 60s step only accepts 'HH:MM'.
+            late_cutoff: (data.late_cutoff || SETTINGS_DEFAULTS.late_cutoff).slice(0, 5),
+            det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
+            match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+          });
+        }
+        // No row yet → keep the defaults in the form; saving will report
+        // honestly that the record is missing until migration 0005 seeds it.
+        setSettingsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleSaveSettings = async () => {
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      return;
+    }
+    if (!settingsForm.school_name.trim()) {
+      toast('School name cannot be empty.', 'error');
+      return;
+    }
+    setSettingsSaving(true);
+    const payload = {
+      school_name: settingsForm.school_name.trim(),
+      late_cutoff: settingsForm.late_cutoff || SETTINGS_DEFAULTS.late_cutoff,
+      det_size: Number(settingsForm.det_size),
+      match_threshold: Number(settingsForm.match_threshold),
+    };
+    const { data, error: updateError } = await supabase
+      .from('app_settings')
+      .update(payload)
+      .eq('id', 1)
+      .select();
+    setSettingsSaving(false);
+    if (updateError) {
+      console.error('AdminPanel: failed to save app_settings', updateError);
+      toast("Couldn't save settings. Only admins can change them.", 'error');
+      return;
+    }
+    if (!data || data.length === 0) {
+      toast('Settings were not saved — the settings record is missing from the database.', 'error', 5000);
+      return;
+    }
+    setSettingsForm({ ...payload });
+    toast('Settings saved.', 'success');
+  };
+
+  // Reset puts the migration defaults back into the form only — nothing is
+  // written until the operator clicks Save Settings.
+  const handleResetSettings = () => {
+    setSettingsForm({ ...SETTINGS_DEFAULTS });
+    toast('Form reset to defaults. Click Save Settings to keep them.', 'info');
+  };
+
+  // Server uptime from GET /api/health uptimeSeconds, e.g. '4h 12m'.
+  const formatUptime = (secs) => {
+    if (secs == null || !Number.isFinite(secs) || secs < 0) return '—';
+    const totalMinutes = Math.floor(secs / 60);
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${Math.floor(secs)}s`;
+  };
+
+  // Latest deployed model's accuracy for the overview card (useAiModels
+  // orders by deployed_at desc, so models[0] is the newest). The table
+  // column is `accuracy` and already holds a percent (e.g. 95.50).
+  const latestAccuracy = aiModels.length > 0 && aiModels[0].accuracy != null
+    ? Math.round(Number(aiModels[0].accuracy) * 100) / 100
+    : null;
+  const latestAccuracyLabel = latestAccuracy != null ? `${latestAccuracy}%` : '—';
+
+  // 'Model Accuracy Over Time' series built from the real ai_models rows:
+  // x = deployed date, y = accuracy. Oldest first so the line reads left to
+  // right through time.
+  const accuracyHistory = useMemo(() => (
+    aiModels
+      .filter(m => m.deployed_at && m.accuracy != null)
+      .slice()
+      .reverse()
+      .map((m) => {
+        const d = new Date(m.deployed_at);
+        return {
+          date: Number.isNaN(d.getTime())
+            ? (m.version || '?')
+            : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          accuracy: Math.round(Number(m.accuracy) * 100) / 100,
+        };
+      })
+  ), [aiModels]);
+
+  // Y axis padded ±2 points around the real data, clamped to 0–100.
+  const accuracyDomain = useMemo(() => {
+    if (accuracyHistory.length === 0) return [0, 100];
+    const values = accuracyHistory.map(p => p.accuracy);
+    return [
+      Math.max(0, Math.floor(Math.min(...values) - 2)),
+      Math.min(100, Math.ceil(Math.max(...values) + 2)),
+    ];
+  }, [accuracyHistory]);
+
   const overviewStats = [
     { label: 'Total Users', value: profiles.length, icon: Users, variant: 's-blue', tape: 'tl' },
-    { label: 'Active Cameras', value: 2, icon: Wifi, variant: 's-green', tape: 'tr' },
-    { label: 'System Uptime', value: '99.5%', icon: Server, variant: 's-yellow', tape: 'bl' },
-    { label: 'AI Accuracy', value: '95.5%', icon: Cpu, variant: 's-orange', tape: 'br' },
+    { label: 'Active Cameras', value: aiProcRunning ? 1 : 0, icon: Wifi, variant: 's-green', tape: 'tr' },
+    { label: 'System Uptime', value: formatUptime(uptimeSeconds), icon: Server, variant: 's-yellow', tape: 'bl' },
+    { label: 'AI Accuracy', value: latestAccuracyLabel, icon: Cpu, variant: 's-orange', tape: 'br' },
   ];
 
   const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', assistant: 'badge-assistant', parent: 'badge-teacher' };
@@ -667,50 +850,91 @@ export default function AdminPanel() {
               <h2>System Settings</h2>
             </div>
           </div>
-          <div className="settings-grid">
-            <div className="settings-section">
-              <h3>School Information</h3>
-              <div className="form-group"><label>School Name</label><input type="text" defaultValue="SK Ceria PRISM-AI" /></div>
-              <div className="form-group"><label>Address</label><input type="text" defaultValue="Kuala Lumpur, Malaysia" /></div>
-              <div className="form-group">
-                <label>School Hours</label>
-                <div className="admin-time-row">
-                  <input type="time" defaultValue="07:30" />
-                  <input type="time" defaultValue="12:00" />
+          {settingsLoading ? (
+            <div className="admin-loading-block">
+              <div className="skeleton-line w-40" />
+              <div className="skeleton-line w-60" />
+              <div className="skeleton-line w-30" />
+              <div className="skeleton-line w-60" />
+            </div>
+          ) : settingsError ? (
+            <div className="empty-state admin-empty">Could not load settings. Please try again.</div>
+          ) : (
+            <>
+              <div className="settings-grid">
+                <div className="settings-section">
+                  <h3>School</h3>
+                  <div className="form-group">
+                    <label>School Name</label>
+                    <input
+                      type="text"
+                      value={settingsForm.school_name}
+                      onChange={e => setSettingsForm(f => ({ ...f, school_name: e.target.value }))}
+                      disabled={!isAdmin || settingsSaving}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Late Cutoff</label>
+                    <input
+                      type="time"
+                      value={settingsForm.late_cutoff}
+                      onChange={e => setSettingsForm(f => ({ ...f, late_cutoff: e.target.value }))}
+                      disabled={!isAdmin || settingsSaving}
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <h3>Recognition</h3>
+                  <div className="form-group">
+                    <label>Detection Size</label>
+                    <select
+                      value={settingsForm.det_size}
+                      onChange={e => setSettingsForm(f => ({ ...f, det_size: Number(e.target.value) }))}
+                      disabled={!isAdmin || settingsSaving}
+                    >
+                      {DET_SIZE_OPTIONS.map(size => <option key={size} value={size}>{size}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Match Threshold</label>
+                    <input
+                      type="range"
+                      min="0.3"
+                      max="0.6"
+                      step="0.01"
+                      className="admin-range"
+                      value={settingsForm.match_threshold}
+                      onChange={e => setSettingsForm(f => ({ ...f, match_threshold: Number(e.target.value) }))}
+                      disabled={!isAdmin || settingsSaving}
+                    />
+                    <div className="admin-range-labels">
+                      <span>30%</span>
+                      <span>{Math.round(settingsForm.match_threshold * 100)}% (current)</span>
+                      <span>60%</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="form-group"><label>Late Threshold</label><input type="time" defaultValue="08:00" /></div>
-            </div>
-
-            <div className="settings-section">
-              <h3>Notification Settings</h3>
-              <div className="toggle-row"><span>Arrival notifications to parents</span><label className="toggle-switch"><input type="checkbox" defaultChecked /><span className="toggle-slider" /></label></div>
-              <div className="toggle-row"><span>Absence alerts to parents</span><label className="toggle-switch"><input type="checkbox" defaultChecked /><span className="toggle-slider" /></label></div>
-              <div className="toggle-row"><span>Late arrival alerts</span><label className="toggle-switch"><input type="checkbox" defaultChecked /><span className="toggle-slider" /></label></div>
-              <div className="toggle-row"><span>Unrecognized face alerts</span><label className="toggle-switch"><input type="checkbox" defaultChecked /><span className="toggle-slider" /></label></div>
-              <div className="toggle-row"><span>Weekly report to admin</span><label className="toggle-switch"><input type="checkbox" defaultChecked /><span className="toggle-slider" /></label></div>
-            </div>
-
-            <div className="settings-section">
-              <h3>Camera Settings</h3>
-              <div className="form-group"><label>Camera IP Address</label><input type="text" defaultValue="192.168.1.100" /></div>
-              <div className="form-group">
-                <label>Resolution</label>
-                <select><option>1080p (Full HD)</option><option>720p (HD)</option><option>480p (SD)</option></select>
+              <p className="settings-hint">
+                Recognition settings apply the next time the AI service starts;
+                late cutoff applies to new AI check-ins.
+              </p>
+              <div className="admin-settings-footer">
+                {!isAdmin && (
+                  <p className="settings-readonly-note">Viewing only — ask an admin to change these.</p>
+                )}
+                {isAdmin && (
+                  <>
+                    <button className="btn btn-outline" onClick={handleResetSettings} disabled={settingsSaving}>Reset Defaults</button>
+                    <button className="btn btn-green" onClick={handleSaveSettings} disabled={settingsSaving}>
+                      {settingsSaving ? 'Saving...' : 'Save Settings'}
+                    </button>
+                  </>
+                )}
               </div>
-              <div className="form-group">
-                <label>Recognition Threshold</label>
-                <input type="range" min="50" max="99" defaultValue="85" className="admin-range" />
-                <div className="admin-range-labels">
-                  <span>50%</span><span>85% (current)</span><span>99%</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="admin-settings-footer">
-            <button className="btn btn-outline" onClick={() => toast('Settings reset to defaults', 'info')}>Reset Defaults</button>
-            <button className="btn btn-green" onClick={() => toast('Settings saved successfully', 'success')}>Save Settings</button>
-          </div>
+            </>
+          )}
         </div>
       )}
 
@@ -859,15 +1083,22 @@ export default function AdminPanel() {
                 <h2>Model Accuracy Over Time</h2>
               </div>
             </div>
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={aiModelHistory}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(31,26,18,0.18)" />
-                <XAxis dataKey="date" fontSize={12} stroke="#1F1A12" />
-                <YAxis fontSize={12} domain={[88, 98]} stroke="#1F1A12" />
-                <Tooltip contentStyle={{ background: '#FAF1DA', border: '2px solid #1F1A12', fontFamily: 'Patrick Hand' }} />
-                <Line type="monotone" dataKey="accuracy" stroke="#E04A3F" strokeWidth={3} dot={{ fill: '#E04A3F', r: 5, stroke: '#1F1A12', strokeWidth: 1 }} />
-              </LineChart>
-            </ResponsiveContainer>
+            {accuracyHistory.length === 0 ? (
+              <div className="empty-state admin-empty">No model accuracy data yet.</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={280}>
+                <LineChart data={accuracyHistory}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(31,26,18,0.18)" />
+                  <XAxis dataKey="date" fontSize={12} stroke="#1F1A12" />
+                  <YAxis fontSize={12} domain={accuracyDomain} stroke="#1F1A12" />
+                  <Tooltip
+                    contentStyle={{ background: '#FAF1DA', border: '2px solid #1F1A12', fontFamily: 'Patrick Hand' }}
+                    formatter={value => [`${value}%`, 'Accuracy']}
+                  />
+                  <Line type="monotone" dataKey="accuracy" stroke="#E04A3F" strokeWidth={3} dot={{ fill: '#E04A3F', r: 5, stroke: '#1F1A12', strokeWidth: 1 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       )}
@@ -966,13 +1197,13 @@ export default function AdminPanel() {
                     <Filter size={16} />
                     <select value={faceYearFilter} onChange={e => { setFaceYearFilter(e.target.value); setFacePage(1); }}>
                       <option value="all">All Years</option>
-                      {years.map(y => <option key={y} value={y}>Year {y}</option>)}
+                      {years.map(y => <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>)}
                     </select>
                   </div>
                   <div className="face-filter-group">
                     <select value={faceClassFilter} onChange={e => { setFaceClassFilter(e.target.value); setFacePage(1); }}>
                       <option value="all">All Classes</option>
-                      {classes.map(c => <option key={c} value={c}>{c}</option>)}
+                      {faceClassNames.map(name => <option key={name} value={name}>{name}</option>)}
                     </select>
                   </div>
                   <div className="face-filter-group">
@@ -996,13 +1227,13 @@ export default function AdminPanel() {
                     <div key={`${g.year}-${g.class}`} className="face-progress-row">
                       <div className="face-progress-label">
                         <span className="face-progress-year mono">Y{g.year}</span>
-                        <span className="face-progress-class" style={{ color: classColors[g.class] }}>{g.class}</span>
+                        <span className="face-progress-class" style={{ color: classColorOf(g.class) }}>{g.class}</span>
                       </div>
                       <div className="face-progress-bar-wrap">
                         <div className="progress-bar face-progress-bar">
                           <div
                             className="progress-fill"
-                            style={{ width: `${g.pct}%`, background: classColors[g.class] }}
+                            style={{ width: `${g.pct}%`, background: classColorOf(g.class) }}
                           />
                         </div>
                       </div>
