@@ -2,8 +2,6 @@ import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Users, UserCheck, UserX, Clock, ClipboardCheck, Mail, Info } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { classes, classColors, years } from '../data/mockData';
-import { useToast } from '../components/Toast';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
@@ -31,11 +29,12 @@ function toLocalISODate(d) {
 
 export default function ClassDetail() {
   const { year, className } = useParams();
-  const toast = useToast();
   const yearNum = Number(year);
 
-  const isValidClass = classes.includes(className);
-  const isValidYear = years.includes(yearNum);
+  // URL gate: validated against the loaded sections, not static constants.
+  // While sections load, the page renders its skeleton; after they load, a URL
+  // matching a real section passes and a genuinely unknown one does not.
+  const yearIsNumeric = Number.isFinite(yearNum);
 
   // Last 7 days window (inclusive of today)
   const { fromDate, toDate, todayISO, weekDays } = useMemo(() => {
@@ -58,7 +57,7 @@ export default function ClassDetail() {
 
   // Resolve class section from URL params
   const { classSections, loading: sectionsLoading, error: sectionsError } =
-    useClassSections({ year: isValidYear ? yearNum : undefined });
+    useClassSections({ year: yearIsNumeric ? yearNum : undefined });
 
   const section = useMemo(
     () => (classSections || []).find(cs => cs.name === className && cs.year_num === yearNum),
@@ -169,12 +168,11 @@ export default function ClassDetail() {
   const lateCount    = todayRecords.filter(r => String(r.status).toLowerCase() === 'late').length;
 
   const wordColor = WORD_COLOR_MAP[className] || 'k';
-  const classColor = classColors[className] || 'var(--ink)';
 
-  // Not-found state — only when params themselves are invalid, or after sections
-  // have loaded and no matching section exists.
-  const sectionMissing = !sectionsLoading && !sectionsError && classSections && !section;
-  if (!isValidClass || !isValidYear || sectionMissing) {
+  // Not-found state — only after sections have loaded and no matching section
+  // exists (a bad year yields no match either, so it lands here too).
+  const sectionMissing = !sectionsLoading && !sectionsError && !section;
+  if (sectionMissing) {
     return (
       <div className="classdetail-page">
         <div className="page-header classdetail-header">
@@ -341,7 +339,9 @@ export default function ClassDetail() {
                         <span className="classdetail-rate-value mono">{rate}%</span>
                       </div>
                     </div>
-                    <p className="classdetail-parent-name">Parent: {s.parent}</p>
+                    {s.parent ? (
+                      <p className="classdetail-parent-name">Parent: {s.parent}</p>
+                    ) : null}
                   </div>
                 </Link>
               );

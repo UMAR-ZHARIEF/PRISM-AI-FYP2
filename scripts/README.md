@@ -1,7 +1,8 @@
 # PRISM-AI seed scripts
 
 One-shot Node.js script that seeds a Supabase project from the mock data
-in `PRISM-ai--web/src/data/mockData.js`. It creates real `auth.users`
+in `scripts/seed-source.mjs` (moved out of the web app's mockData.js in the
+2026-07 dummy sweep). It creates real `auth.users`
 rows for all 44 staff and ~90 parents, then populates every domain table
 (profiles, class_sections, subject_teachers, students, parent_students,
 attendance_records, school_events, ai_models, notifications, audit_logs).

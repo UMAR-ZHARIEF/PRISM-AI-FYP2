@@ -1,22 +1,21 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useContext } from 'react';
 import { Download, Calendar, TrendingUp, Users, UserX, Printer, ArrowUp, ArrowDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend, PieChart, Pie, Cell } from 'recharts';
 import Papa from 'papaparse';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { classes } from '../data/mockData';
 import useAttendance from '../hooks/useAttendance';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import { useToast } from '../components/Toast';
-import { useYear } from '../layouts/DashboardLayout';
+import { YearContext } from '../layouts/DashboardLayout';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 import './Reports.css';
 
 // M palette: Present=green, Late=orange, Absent=red
 const PIE_COLORS = ['#4FA764', '#E04A3F', '#EA8534'];
-// Class comparison: rotate through M palette (5 classes: Bestari, Bijak, Cerdik, Cerdas, Pandai)
+// Class comparison: rotate through the palette for however many class sections exist
 const CLASS_COLORS = ['#2F75C9', '#E04A3F', '#4FA764', '#EA8534', '#F2C744'];
 // Avatar colour rotation for table rows
 const AVA_COLORS = ['r', 'y', 'g', 'o', 'k'];
@@ -31,8 +30,7 @@ export default function Reports() {
   const PER_PAGE = 8;
 
   // Year context (safe fallback if context not yet available)
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
+  const yearCtx = useContext(YearContext) || { selectedYear: null };
   const { selectedYear } = yearCtx;
 
   // Derive date range bounds from the active tab. Format: YYYY-MM-DD.
@@ -282,14 +280,15 @@ export default function Reports() {
     return set.size;
   }, [scopedRecords]);
 
-  // Class list for the filter dropdown — prefer hook-loaded sections; fall back to static.
+  // Class list for the filter dropdown — hook-loaded sections only. When the
+  // sections query fails or returns nothing, the dropdown stays honestly empty
+  // (just "All Classes") instead of falling back to static mock names.
   // When the teacher is scoped to their homerooms, only list those.
   const classList = useMemo(() => {
     const sectionsForList = scopeToMine
       ? (classSections || []).filter(cs => myClassSectionIds.includes(cs.id))
       : (classSections || []);
-    const fromHook = sectionsForList.map(cs => cs.name).filter(Boolean);
-    return fromHook.length > 0 ? Array.from(new Set(fromHook)) : (scopeToMine ? [] : classes);
+    return Array.from(new Set(sectionsForList.map(cs => cs.name).filter(Boolean)));
   }, [classSections, scopeToMine, myClassSectionIds]);
 
   // Reset class filter if the previously chosen class falls outside scope.

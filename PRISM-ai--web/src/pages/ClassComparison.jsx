@@ -1,12 +1,13 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useContext } from 'react';
 import { BarChart3, Users, Filter, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { classColors, years } from '../data/mockData';
-import { useYear } from '../layouts/DashboardLayout';
+import { classColors } from '../data/mockData';
+import { YearContext } from '../layouts/DashboardLayout';
 import { useAuth } from '../contexts/AuthContext';
+import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
@@ -25,9 +26,11 @@ function toLocalISODate(d) {
 
 export default function ClassComparison() {
   /* ── Global year context (safe fallback) ── */
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
+  const yearCtx = useContext(YearContext) || { selectedYear: null };
   const ctxYear = yearCtx.selectedYear;
+
+  /* ── Real school years for the year filter ── */
+  const { years: yearOptions } = useYears();
 
   /* ── Local filter state ── */
   const [selectedYear, setSelectedYear] = useState(ctxYear ? String(ctxYear) : 'all');
@@ -334,8 +337,8 @@ export default function ClassComparison() {
               }}
             >
               <option value="all">All Years</option>
-              {years.map(y => (
-                <option key={y} value={y}>Year {y}</option>
+              {(yearOptions || []).map(y => (
+                <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>
               ))}
             </select>
           </div>
