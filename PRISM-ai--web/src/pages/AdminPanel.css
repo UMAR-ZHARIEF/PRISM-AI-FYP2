@@ -305,60 +305,6 @@
   outline: none;
 }
 
-.toggle-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 0;
-  font-family: var(--body);
-  font-size: 15px;
-  color: var(--ink);
-  border-bottom: 1px dotted rgba(31, 26, 18, 0.25);
-}
-.toggle-row:last-child { border-bottom: none; }
-
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 44px;
-  height: 24px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.toggle-switch input { opacity: 0; width: 0; height: 0; }
-.toggle-slider {
-  position: absolute;
-  inset: 0;
-  background: var(--paper);
-  border: 2px solid var(--ink);
-  border-radius: 24px;
-  transition: background 0.25s;
-}
-.toggle-slider::before {
-  content: '';
-  position: absolute;
-  height: 14px;
-  width: 14px;
-  left: 3px;
-  bottom: 3px;
-  background: var(--ink);
-  border-radius: 50%;
-  transition: transform 0.25s;
-}
-.toggle-switch input:checked + .toggle-slider {
-  background: var(--green);
-}
-.toggle-switch input:checked + .toggle-slider::before {
-  transform: translateX(20px);
-  background: var(--paper-light);
-}
-
-.admin-time-row {
-  display: flex;
-  gap: 8px;
-}
-.admin-time-row input { flex: 1; }
-
 .admin-range {
   width: 100%;
   accent-color: var(--red);
@@ -380,6 +326,27 @@
   padding-top: 16px;
   border-top: 2px dashed rgba(31, 26, 18, 0.22);
   flex-wrap: wrap;
+}
+
+/* Real settings form (app_settings): hint under the grid, read-only note for
+   non-admins, and a quiet disabled state for inputs they cannot change. */
+.settings-hint {
+  margin: 14px 0 0;
+  font-family: var(--body);
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.settings-readonly-note {
+  margin: 8px auto 0 0;
+  font-family: var(--body);
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+.settings-section input:disabled,
+.settings-section select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--paper-deep);
 }
 
 /* ==========================================================================
