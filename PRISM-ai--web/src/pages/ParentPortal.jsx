@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Bell, Calendar, Clock, CheckCircle, XCircle, AlertCircle, LogOut, Mail, ChevronLeft, ChevronRight, Megaphone, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useStudent from '../hooks/useStudent';
@@ -52,7 +52,6 @@ const statusIcon = {
 };
 
 const statusWord = { present: 'Present', absent: 'Absent', late: 'Late' };
-const statusDotColor = { present: 'var(--green)', absent: 'var(--red)', late: 'var(--orange)' };
 
 // Notification type → coloured paper dot
 const notifDotClass = (msg) => {
@@ -63,8 +62,16 @@ const notifDotClass = (msg) => {
 };
 
 export default function ParentPortal() {
-  const { user, profile } = useAuth();
+  const { user, profile, signOut } = useAuth();
+  const navigate = useNavigate();
   const parentId = user ? user.id : null;
+
+  // Really sign out (same pattern as DashboardLayout.handleSignOut): clear the
+  // Supabase session first, only then leave for the landing page.
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/');
+  };
 
   // ── Resolve the children linked to this parent ──
   // The full list of linked children (sorted by is_primary desc) drives the
@@ -159,14 +166,14 @@ export default function ParentPortal() {
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   // Build a UI-shaped attendance history from DB records.
-  // DB: { date, status: 'present'|'absent'|'late', arrival_time: 'HH:MM:SS' }
-  // UI: { date, status, timeIn, timeOut }
+  // DB: { date, status: 'present'|'absent'|'late', arrival_time, time_out }
+  // UI: { date, status, timeIn, timeOut } ('-' = no time recorded)
   const attendanceHistory = useMemo(() => {
     return (attendanceRecords || []).map((r) => ({
       date: r.date,
       status: r.status,
       timeIn: r.status === 'absent' ? '-' : formatTime(r.arrival_time),
-      timeOut: '-', // not stored in DB; preserve UI slot
+      timeOut: formatTime(r.time_out), // real checkout (migration 0005); '-' until the child checks out
     }));
   }, [attendanceRecords]);
 
@@ -236,9 +243,9 @@ export default function ParentPortal() {
               <span className="pp-nav-name">PRISM-AI</span>
             </Link>
             <div className="pp-nav-right">
-              <Link to="/login" className="pp-logout" aria-label="sign out">
+              <button type="button" className="pp-logout" aria-label="sign out" onClick={handleSignOut}>
                 <LogOut size={18} />
-              </Link>
+              </button>
             </div>
           </div>
         </nav>
@@ -296,17 +303,15 @@ export default function ParentPortal() {
     ? `Regarding ${childName} (Year ${student.year_num} ${childClassName})`
     : `Regarding ${childName}`;
 
-  // Today's record drives the banner. If there's no record for today yet, fall back
-  // to a synthetic 'present' record so the banner doesn't crash; the badge still
-  // updates as soon as today's row appears.
+  // Today's record drives the banner. With no record for today yet we show an
+  // honest neutral state instead of pretending the child is present; the real
+  // banner appears the moment today's row lands.
   const todayStr = toISODate(APP_TODAY);
-  const todayRecord =
-    attendanceHistory.find((r) => r.date === todayStr) ||
-    attendanceHistory[0] ||
-    { status: 'present', timeIn: '-', timeOut: '-' };
+  const todayRecord = attendanceHistory.find((r) => r.date === todayStr) || null;
+  const hasTodayRecord = todayRecord !== null;
 
-  const isPresent = todayRecord.status === 'present';
-  const isAbsent  = todayRecord.status === 'absent';
+  const isPresent = todayRecord && todayRecord.status === 'present';
+  const isAbsent  = todayRecord && todayRecord.status === 'absent';
 
   return (
     <div className="parent-portal">
@@ -322,14 +327,10 @@ export default function ParentPortal() {
           </Link>
 
           <div className="pp-nav-right">
-            <button className="pp-bell" aria-label="notifications">
-              <Bell size={20} />
-              <span className="pp-bell-count">{notifications.length}</span>
-            </button>
             <div className="avatar k pp-nav-avatar">{parentInitials}</div>
-            <Link to="/login" className="pp-logout" aria-label="sign out">
+            <button type="button" className="pp-logout" aria-label="sign out" onClick={handleSignOut}>
               <LogOut size={18} />
-            </Link>
+            </button>
           </div>
         </div>
       </nav>
@@ -405,13 +406,13 @@ export default function ParentPortal() {
           </section>
         )}
 
-        {/* === STATUS BANNER (cut paper, green if present, red if absent, orange if late) === */}
-        <section className={`pp-banner ${isPresent ? 'pp-banner-present' : isAbsent ? 'pp-banner-absent' : 'pp-banner-late'} reveal reveal-2`}>
+        {/* === STATUS BANNER (cut paper, green if present, red if absent, orange if late, paper if no record yet) === */}
+        <section className={`pp-banner ${isPresent ? 'pp-banner-present' : isAbsent ? 'pp-banner-absent' : hasTodayRecord ? 'pp-banner-late' : 'pp-banner-neutral'} reveal reveal-2`}>
           <span className="tape tl" />
           <span className="tape br" />
 
           <div className="pp-banner-left">
-            <div className={`avatar ${isPresent ? 'g' : isAbsent ? 'r' : 'o'} pp-child-avatar`}>{childInitials}</div>
+            <div className={`avatar ${isPresent ? 'g' : isAbsent ? 'r' : hasTodayRecord ? 'o' : 'k'} pp-child-avatar`}>{childInitials}</div>
             <div className="pp-banner-text">
               <h1 className="pp-child-name">{childName}</h1>
               <p className="pp-child-meta">
@@ -427,13 +428,21 @@ export default function ParentPortal() {
           </div>
 
           <div className="pp-banner-right">
-            <span className={`badge badge-${todayRecord.status} pp-banner-badge`}>
-              {statusIcon[todayRecord.status]} {statusWord[todayRecord.status]} Today
-            </span>
-            {todayRecord.timeIn !== '-' && (
-              <div className="pp-banner-time">
-                <small>Arrived at {todayRecord.timeIn}</small>
-              </div>
+            {hasTodayRecord ? (
+              <>
+                <span className={`badge badge-${todayRecord.status} pp-banner-badge`}>
+                  {statusIcon[todayRecord.status]} {statusWord[todayRecord.status]} Today
+                </span>
+                {todayRecord.timeIn !== '-' && (
+                  <div className="pp-banner-time">
+                    <small>Arrived at {todayRecord.timeIn}</small>
+                  </div>
+                )}
+              </>
+            ) : (
+              <span className="pp-banner-pending">
+                <Clock size={16} /> No attendance record yet today
+              </span>
             )}
           </div>
         </section>
@@ -537,7 +546,7 @@ export default function ParentPortal() {
                     </div>
                     <div className="pp-history-time">
                       {record.timeIn !== '-' ? (
-                        <><Clock size={14} /> {record.timeIn} &mdash; {record.timeOut}</>
+                        <><Clock size={14} /> {record.timeIn} &mdash; {record.timeOut !== '-' ? record.timeOut : '—'}</>
                       ) : (
                         <span className="pp-history-empty">&mdash;</span>
                       )}

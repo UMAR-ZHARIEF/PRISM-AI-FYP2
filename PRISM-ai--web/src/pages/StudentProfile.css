@@ -168,6 +168,9 @@
   color: var(--ink-soft);
   word-break: break-all;
 }
+.sprofile-parent-entry + .sprofile-parent-entry {
+  margin-top: 14px;
+}
 
 /* Homeroom teacher */
 .sprofile-teacher-name {
@@ -181,7 +184,8 @@
   align-items: center;
   gap: 10px;
 }
-.sprofile-teacher-none {
+.sprofile-teacher-none,
+.sprofile-card-empty {
   font-family: var(--accent);
   font-weight: 700;
   font-size: 18px;

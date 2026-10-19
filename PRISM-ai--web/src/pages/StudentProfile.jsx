@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Mail, Phone, UserCheck, UserX, Clock, Edit2, Trash2, X, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Phone, UserCheck, UserX, Clock, Edit2, Trash2, X, AlertTriangle } from 'lucide-react';
 import { classColors } from '../data/mockData';
 import useStudent from '../hooks/useStudent';
 import useAttendance from '../hooks/useAttendance';
@@ -43,6 +43,91 @@ export default function StudentProfile() {
   const { profile } = useAuth();
   const toast = useToast();
   const isAdmin = profile?.role === 'admin';
+
+  // ── Real parent contacts (parent_students -> profiles) ──
+  // The shared useStudent hook is intentionally untouched (ParentPortal and
+  // ParentConsent also consume it), so this page fetches its own scoped data.
+  const [parents, setParents] = useState(null); // null = not loaded, [] = loaded, none linked
+  const [parentsLoading, setParentsLoading] = useState(Boolean(studentId));
+  const [parentsError, setParentsError] = useState(null);
+
+  // ── Real homeroom teacher (students -> class_sections -> profiles) ──
+  // Same join ParentPortal uses, scoped to this student. null = vacant post
+  // or the teacher profile is not readable — never show an invented name.
+  const [homeroomTeacher, setHomeroomTeacher] = useState(null);
+  const [homeroomLoading, setHomeroomLoading] = useState(Boolean(studentId));
+  const [homeroomError, setHomeroomError] = useState(null);
+
+  useEffect(function fetchParents() {
+    if (!studentId) {
+      setParents(null);
+      setParentsLoading(false);
+      setParentsError(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setParentsLoading(true);
+    setParentsError(null);
+
+    supabase
+      .from('parent_students')
+      .select('parent_id, is_primary, parent:profiles(full_name, phone)')
+      .eq('student_id', studentId)
+      .order('is_primary', { ascending: false })
+      .order('parent_id')
+      .then(function handleResult({ data, error: queryError }) {
+        if (cancelled) return;
+        if (queryError) {
+          console.error('StudentProfile: failed to load parent contacts', queryError);
+          setParentsError(queryError);
+          setParents(null);
+        } else {
+          setParents(data || []);
+        }
+        setParentsLoading(false);
+      });
+
+    return function cleanup() {
+      cancelled = true;
+    };
+  }, [studentId]);
+
+  useEffect(function fetchHomeroomTeacher() {
+    if (!studentId) {
+      setHomeroomTeacher(null);
+      setHomeroomLoading(false);
+      setHomeroomError(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setHomeroomLoading(true);
+    setHomeroomError(null);
+
+    supabase
+      .from('students')
+      .select('class_section:class_sections(name, homeroom_teacher:profiles(full_name, phone))')
+      .eq('id', studentId)
+      .maybeSingle()
+      .then(function handleResult({ data, error: queryError }) {
+        if (cancelled) return;
+        if (queryError) {
+          console.error('StudentProfile: failed to load homeroom teacher', queryError);
+          setHomeroomError(queryError);
+          setHomeroomTeacher(null);
+        } else {
+          setHomeroomTeacher(
+            (data && data.class_section && data.class_section.homeroom_teacher) || null
+          );
+        }
+        setHomeroomLoading(false);
+      });
+
+    return function cleanup() {
+      cancelled = true;
+    };
+  }, [studentId]);
 
   // Note composer state
   const [noteText, setNoteText] = useState('');
@@ -304,6 +389,10 @@ export default function StudentProfile() {
   // Real status from the AI service's enrolled-faces list (GET /api/ai/enrolled).
   const faceRegistered = enrolledNames.has(fullName.toLowerCase().trim());
 
+  // Linked parents with a readable profile row. Empty array = genuinely no
+  // parent linked (rows whose embed came back null are RLS-filtered out).
+  const parentList = (parents || []).filter((row) => row && row.parent);
+
   return (
     <div className="sprofile-page">
       {/* BACK LINK */}
@@ -376,22 +465,44 @@ export default function StudentProfile() {
         <div className="card sprofile-info-card reveal reveal-2">
           <span className="tape tr" />
           <h4 className="sprofile-card-title">Parent Contact</h4>
-          <p className="sprofile-parent-name">—</p>
-          <div className="sprofile-contact-row">
-            <Mail size={15} className="sprofile-contact-icon" />
-            <span className="sprofile-contact-text">—</span>
-          </div>
-          <div className="sprofile-contact-row">
-            <Phone size={15} className="sprofile-contact-icon" />
-            <span className="sprofile-contact-text">—</span>
-          </div>
+          {parentsLoading ? (
+            <p className="sprofile-card-empty">Loading…</p>
+          ) : parentsError ? (
+            <p className="sprofile-card-empty">Couldn&apos;t load parents</p>
+          ) : parentList.length === 0 ? (
+            <p className="sprofile-card-empty">No parent linked</p>
+          ) : (
+            parentList.map((row) => (
+              <div className="sprofile-parent-entry" key={row.parent_id}>
+                <p className="sprofile-parent-name">{row.parent.full_name || '—'}</p>
+                <div className="sprofile-contact-row">
+                  <Phone size={15} className="sprofile-contact-icon" />
+                  <span className="sprofile-contact-text">{row.parent.phone || '—'}</span>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Homeroom Teacher */}
         <div className="card sprofile-info-card reveal reveal-3">
           <span className="tape tl" />
           <h4 className="sprofile-card-title">Homeroom Teacher</h4>
-          <p className="sprofile-teacher-none">No homeroom teacher assigned</p>
+          {homeroomLoading ? (
+            <p className="sprofile-card-empty">Loading…</p>
+          ) : homeroomError ? (
+            <p className="sprofile-card-empty">Couldn&apos;t load teacher</p>
+          ) : homeroomTeacher ? (
+            <>
+              <p className="sprofile-teacher-name">{homeroomTeacher.full_name}</p>
+              <div className="sprofile-contact-row">
+                <Phone size={15} className="sprofile-contact-icon" />
+                <span className="sprofile-contact-text">{homeroomTeacher.phone || '—'}</span>
+              </div>
+            </>
+          ) : (
+            <p className="sprofile-teacher-none">No homeroom teacher assigned</p>
+          )}
         </div>
       </div>
 

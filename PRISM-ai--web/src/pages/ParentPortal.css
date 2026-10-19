@@ -331,33 +331,6 @@
   color: var(--ink);
 }
 
-.pp-bell {
-  position: relative;
-  width: 44px; height: 44px;
-  background: var(--yellow);
-  color: var(--ink);
-  display: flex; align-items: center; justify-content: center;
-  clip-path: var(--cut-pill);
-  transform: rotate(2deg);
-  box-shadow: var(--shadow-paper);
-  transition: transform 0.18s ease;
-}
-.pp-bell:hover { transform: rotate(-2deg) translateY(-2px); }
-.pp-bell-count {
-  position: absolute;
-  top: -6px; right: -6px;
-  min-width: 22px; height: 22px;
-  padding: 0 5px;
-  background: var(--red);
-  color: var(--paper-light);
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 11px;
-  display: flex; align-items: center; justify-content: center;
-  clip-path: var(--cut-pill);
-  transform: rotate(-6deg);
-}
-
 .pp-nav-avatar { transform: rotate(-3deg); }
 
 .pp-logout {
@@ -406,6 +379,27 @@
 .pp-banner-present { background: var(--green); color: var(--paper-light); }
 .pp-banner-absent  { background: var(--red);   color: var(--paper-light); }
 .pp-banner-late    { background: var(--orange);color: var(--paper-light); }
+
+/* Neutral "no record yet" banner — honest state, paper on paper, no faked status */
+.pp-banner-neutral  { background: var(--paper-deep); color: var(--ink); }
+.pp-banner-neutral .pp-child-name   { color: var(--ink); }
+.pp-banner-neutral .pp-child-meta   { color: var(--ink-soft); }
+.pp-banner-neutral .pp-child-avatar { border-color: var(--ink); box-shadow: 0 6px 0 rgba(31, 26, 18, 0.12); }
+
+.pp-banner-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--paper-light);
+  padding: 6px 16px;
+  clip-path: var(--cut-pill);
+  transform: rotate(-1deg);
+  box-shadow: var(--shadow-paper);
+}
 
 .pp-banner-left {
   display: flex;
