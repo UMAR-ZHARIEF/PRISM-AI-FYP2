@@ -1,7 +1,8 @@
 // =====================================================================
 // PRISM-AI mock-data migration script
 // ---------------------------------------------------------------------
-// Seeds a Supabase project from PRISM-ai--web/src/data/mockData.js.
+// Seeds a Supabase project from scripts/seed-source.mjs (moved verbatim
+// out of PRISM-ai--web/src/data/mockData.js, which is UI constants only).
 //
 // Steps (FK-respecting):
 //   A  staff auth.users + profile backfill (admin / teachers / assistant)
@@ -72,15 +73,8 @@ const supabase = createClient(SUPABASE_URL, SECRET_KEY, {
 
 // ---------- mock data --------------------------------------------------
 
-const mockPath = resolve(
-  __dirname,
-  '..',
-  'PRISM-ai--web',
-  'src',
-  'data',
-  'mockData.js'
-);
-const mock = await import(pathToFileURL(mockPath).href);
+const seedSourcePath = resolve(__dirname, 'seed-source.mjs');
+const mock = await import(pathToFileURL(seedSourcePath).href);
 
 const {
   users: mockUsers,
@@ -96,7 +90,7 @@ const {
 // ---------- helpers ----------------------------------------------------
 
 // The mock dataset is frozen around 2026-05-11 (see
-// generateAttendanceHistory in mockData.js). Every date the script
+// generateAttendanceHistory in seed-source.mjs). Every date the script
 // seeds is re-anchored from this to the run anchor computed below.
 const MOCK_TODAY = '2026-05-11';
 

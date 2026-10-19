@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useContext } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Check, X, Clock, ClipboardCheck, Users, ChevronRight } from 'lucide-react';
-import { classes, classColors, years } from '../data/mockData';
-import { useYear } from '../layouts/DashboardLayout';
+import { classColors } from '../data/mockData';
+import { YearContext } from '../layouts/DashboardLayout';
 import { useToast } from '../components/Toast';
 import { SkeletonCard } from '../components/Skeleton';
+import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
@@ -50,9 +51,9 @@ export default function Attendance() {
   const { year, className } = useParams();
   const toast = useToast();
 
-  // Year context with fallback
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
+  // Year context with fallback to the first real year from the DB
+  const { years: dbYears, loading: yearsLoading } = useYears();
+  const yearCtx = useContext(YearContext) || { selectedYear: null };
   const yearNum = year ? Number(year) : null;
 
   const today = new Date();
@@ -69,9 +70,62 @@ export default function Attendance() {
   // Picker mode renders one branch; marking mode renders another. Render both
   // branches from this single component so all hook calls stay top-level.
   if (!className) {
+    const fallbackYear = yearCtx.selectedYear || dbYears[0]?.year_num || null;
+
+    // Years not resolvable yet: show the picker skeleton while they load...
+    if (fallbackYear == null && yearsLoading) {
+      return (
+        <div className="attendance-page">
+          <div className="page-header attendance-header">
+            <div>
+              <h1>
+                <span className="word g">Take</span>{' '}
+                <span className="word k">Attendance</span>
+              </h1>
+              <p className="page-subtitle">{dateString}</p>
+            </div>
+            <div className="attendance-header-icon">
+              <ClipboardCheck size={32} />
+            </div>
+          </div>
+          <div className="class-picker-grid">
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} className={`class-picker-card reveal reveal-${i + 1}`}>
+                <SkeletonCard />
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ...and an honest empty state if the years never arrive.
+    if (fallbackYear == null) {
+      return (
+        <div className="attendance-page">
+          <div className="page-header attendance-header">
+            <div>
+              <h1>
+                <span className="word g">Take</span>{' '}
+                <span className="word k">Attendance</span>
+              </h1>
+              <p className="page-subtitle">{dateString}</p>
+            </div>
+            <div className="attendance-header-icon">
+              <ClipboardCheck size={32} />
+            </div>
+          </div>
+          <div className="card not-found-card">
+            <span className="tape tl" />
+            <p className="not-found-message">Could not load school years. Please try again.</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <PickerView
-        selectedYear={yearCtx.selectedYear || years[0]}
+        selectedYear={fallbackYear}
         dateString={dateString}
         dateISO={dateISO}
       />
@@ -218,14 +272,13 @@ function PickerView({ selectedYear, dateString, dateISO }) {
    ============================================================ */
 function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
   // Resolve :year + :className -> class section row (we need its id).
-  const isValidYear = yearNum != null && years.includes(yearNum);
-  const isValidClass = classes.includes(className);
-
-  const { classSections, loading: sectionsLoading } = useClassSections({ year: isValidYear ? yearNum : undefined });
-  const section = useMemo(() => {
-    if (!isValidYear || !isValidClass) return null;
-    return (classSections || []).find(s => s.name === className) || null;
-  }, [classSections, className, isValidYear, isValidClass]);
+  // Validated against the loaded sections, not static constants: while they
+  // load the marking skeleton renders below, and only a real match passes.
+  const { classSections, loading: sectionsLoading, error: sectionsError } =
+    useClassSections({ year: Number.isFinite(yearNum) ? yearNum : undefined });
+  const section = useMemo(() => (
+    (classSections || []).find(s => s.name === className && s.year_num === yearNum) || null
+  ), [classSections, className, yearNum]);
   const classSectionId = section?.id;
 
   const { students, loading: studentsLoading } = useStudents({ classSectionId });
@@ -278,7 +331,7 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
     if (submitted) setSubmitted(false);
   };
 
-  if (!isValidClass || !isValidYear) {
+  if (sectionsError && !section) {
     return (
       <div className="attendance-page">
         <div className="page-header attendance-header">
@@ -287,16 +340,17 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
               <ArrowLeft size={20} />
             </Link>
             <h1>
-              <span className="word r">Class</span>{' '}
-              <span className="word k">Not Found</span>
+              <span className="word k">Attendance</span>{' '}
+              <span className="dash-sep">&mdash;</span>{' '}
+              <span className={`word ${classWordColor[className] || 'k'}`}>{className}</span>
             </h1>
-            <p className="page-subtitle">The class "{className}" (Year {year}) does not exist.</p>
+            <p className="page-subtitle">Year {yearNum} &middot; {dateString}</p>
           </div>
         </div>
         <div className="card not-found-card">
           <span className="tape tl" />
           <p className="not-found-message">
-            Please go back and select a valid class from the list.
+            Could not load classes. Please try again.
           </p>
           <Link to="/dashboard/attendance" className="btn btn-primary">
             <ArrowLeft size={16} /> Back to Classes
