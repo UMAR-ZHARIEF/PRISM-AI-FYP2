@@ -468,13 +468,54 @@
 /* ---------- Reveal stagger (uses global .reveal anim) ---------- */
 .dashboard-page .stat-card.reveal { animation-fill-mode: both; }
 
+/* ---------- Edit attendance modal (P1) ---------- */
+/* Overlay/paper shell/form fields come from index.css (.modal-overlay, .modal, .form-group). */
+.attendance-edit-modal { max-width: 460px; }
+.attendance-edit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.attendance-edit-header h2 { margin: 0; }
+.attendance-edit-close {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-family: var(--body);
+  line-height: 0;
+}
+.attendance-edit-close:hover { color: var(--red); }
+.attendance-edit-close:disabled { opacity: 0.45; cursor: not-allowed; }
+.attendance-edit-sub {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--ink-soft);
+  margin: 0 0 14px;
+}
+.attendance-edit-readonly {
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin: 0 0 18px;
+}
+.attendance-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
   .dashboard-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 768px) {
   .dashboard-page .page-header { flex-direction: column; align-items: flex-start; gap: 14px; }
-  .dashboard-page .page-header-actions { width: 100%; }
+  .dashboard-page .page-header-actions { width: 100%; max-width: 100%; }
+  .dashboard-page .page-header-actions button { flex: 1 1 auto; }
   .filter-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .filter-select { max-width: unset; }
   table { display: block; overflow-x: auto; }
