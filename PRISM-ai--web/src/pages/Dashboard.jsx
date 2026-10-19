@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck, X } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { classColors, classes } from '../data/mockData';
+import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
 import { useYear } from '../layouts/DashboardLayout';
 import Pagination from '../components/Pagination';
@@ -53,7 +53,18 @@ export default function Dashboard() {
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const toast = useToast();
+  const navigate = useNavigate();
   const PER_PAGE = 8;
+
+  // Bulk "Mark All Present" progress (null total = idle).
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+
+  // Per-row Edit modal state — holds the raw attendance record being edited.
+  const [editRecord, setEditRecord] = useState(null);
+  const [editStatus, setEditStatus] = useState('present');
+  const [editTimeOut, setEditTimeOut] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
 
   // Year context (safe fallback if context not yet available)
   let yearCtx;
@@ -139,7 +150,7 @@ export default function Dashboard() {
   // Admins always see all-school data; teachers default to their homeroom(s)
   // and can opt in to all-school via a toggle. Other roles (parent etc.)
   // also fall back to all-school — they don't see this page in practice.
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const role = profile?.role;
   const isTeacher = role === 'teacher';
 
@@ -296,6 +307,8 @@ export default function Dashboard() {
   }, [todayRecords]);
 
   // Flatten today's records into the legacy row shape so the table renders unchanged.
+  // `record` keeps the raw Supabase row so the per-row Edit modal can update by id.
+  // Time Out reads time_out (added by migration 0005_app_settings_and_checkout.sql).
   const todayRows = useMemo(() => todayRecords.map(r => ({
     studentId: r.student_id,
     name: r.student?.full_name || '',
@@ -303,8 +316,22 @@ export default function Dashboard() {
     year: r.student?.year_num,
     status: r.status,
     timeIn: r.arrival_time || '',
-    timeOut: r.departure_time || '',
+    timeOut: r.time_out || '',
+    record: r,
   })), [todayRecords]);
+
+  // Class filter options come from the real class_sections table (P7),
+  // deduped by name — the same names the table's class chips and classColors use.
+  const classFilterOptions = useMemo(() => {
+    const seen = new Set();
+    const names = [];
+    for (const s of classSections) {
+      if (!s.name || seen.has(s.name)) continue;
+      seen.add(s.name);
+      names.push(s.name);
+    }
+    return names;
+  }, [classSections]);
 
   const filtered = todayRows.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase());
@@ -366,6 +393,133 @@ export default function Dashboard() {
 
   const noAttendanceToday = todayRecords.length === 0;
 
+  // ---------- Bulk: Mark All Present (P1) ---------------------------------
+  // Marks the FULL roster in the current view scope (not just students who
+  // already have a record today — the whole point on a quiet morning) plus
+  // the class filter; the search box is a table-local nicety and does not
+  // narrow the bulk write. Same row shape as hooks/useMarkAttendance.js;
+  // RLS naturally limits teachers to their own classes' records.
+  const handleMarkAllPresent = async () => {
+    if (bulkBusy) return;
+    const roster = scopedStudents.filter(
+      s => filterClass === 'all' || s.class_section?.name === filterClass
+    );
+    if (roster.length === 0) {
+      toast('No students in this view yet — nothing to mark', 'info');
+      return;
+    }
+    const scopeLabel = filterClass === 'all'
+      ? 'all students in this view'
+      : `all students in ${filterClass}`;
+    const confirmed = window.confirm(
+      `Mark ${scopeLabel} present for today (${roster.length} student${roster.length === 1 ? '' : 's'})? This overwrites any existing status.`
+    );
+    if (!confirmed) return;
+
+    setBulkBusy(true);
+    setBulkProgress({ done: 0, total: roster.length });
+
+    // Keep any existing arrival time (e.g. an earlier AI check-in) when the
+    // record already exists; new rows start with no arrival time.
+    const arrivalByStudent = new Map(
+      todayRecords.map(r => [r.student_id, r.arrival_time ?? null])
+    );
+
+    const rows = roster.map(s => ({
+      student_id: s.id,
+      date: today,
+      status: 'present',
+      arrival_time: arrivalByStudent.get(s.id) ?? null, // keep any AI check-in time
+      notes: 'Marked all present (bulk)',
+      marked_by: user ? user.id : null,
+      marked_at: new Date().toISOString(),
+    }));
+
+    // Chunked upsert so one oversized payload can't fail the whole batch.
+    const CHUNK = 50;
+    let ok = 0;
+    let failed = 0;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
+      const { error: upsertError } = await supabase
+        .from('attendance_records')
+        .upsert(chunk, { onConflict: 'student_id,date' });
+      if (upsertError) {
+        failed += chunk.length;
+        console.error('Mark All Present: chunk failed', upsertError);
+      } else {
+        ok += chunk.length;
+      }
+      setBulkProgress({ done: Math.min(i + CHUNK, rows.length), total: rows.length });
+    }
+
+    // One audit row for the whole action (audit_logs INSERT is open to any
+    // authenticated user, so this never blocks the UI on RLS).
+    const { error: auditError } = await supabase.from('audit_logs').insert({
+      actor_id: user ? user.id : null,
+      action: 'attendance.bulk_present',
+      metadata: { count: ok, classFilter: filterClass },
+    });
+    if (auditError) console.warn('Mark All Present: audit log insert failed:', auditError.message);
+
+    setBulkBusy(false);
+    setBulkProgress({ done: 0, total: 0 });
+
+    if (failed === 0) {
+      toast(`Marked ${ok} student${ok === 1 ? '' : 's'} present`, 'success');
+    } else if (ok > 0) {
+      toast(`Marked ${ok} present, but ${failed} could not be saved — please try again`, 'warning');
+    } else {
+      toast('Could not mark anyone present — please try again', 'error');
+    }
+    if (ok > 0 && refreshAttendance) refreshAttendance();
+  };
+
+  // ---------- Per-row Edit (P1) --------------------------------------------
+  const openEditModal = (record) => {
+    setEditRecord(record);
+    setEditStatus(record.status);
+    // time inputs want HH:MM; Postgres returns HH:MM:SS.
+    setEditTimeOut((record.time_out || '').slice(0, 5));
+  };
+
+  const closeEditModal = () => {
+    if (editSaving) return;
+    setEditRecord(null);
+    setEditStatus('present');
+    setEditTimeOut('');
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editRecord || editSaving) return;
+    setEditSaving(true);
+    const payload = {
+      status: editStatus,
+      marked_by: user ? user.id : null,
+      marked_at: new Date().toISOString(),
+    };
+    // Departure is optional: only write time_out when a value was provided,
+    // so editing just the status never disturbs an existing checkout.
+    if (editTimeOut) payload.time_out = editTimeOut;
+
+    const { error: updateError } = await supabase
+      .from('attendance_records')
+      .update(payload)
+      .eq('id', editRecord.id);
+
+    setEditSaving(false);
+    if (updateError) {
+      console.error('Edit attendance: update failed', updateError);
+      toast('Could not save that change — please try again', 'error');
+      return;
+    }
+    toast('Attendance updated', 'success');
+    setEditRecord(null);
+    setEditStatus('present');
+    setEditTimeOut('');
+    if (refreshAttendance) refreshAttendance();
+  };
+
   return (
     <div className="dashboard-page">
       <div className="page-header">
@@ -404,8 +558,10 @@ export default function Dashboard() {
           )}
         </div>
         <div className="page-header-actions">
-          <button className="btn btn-outline" onClick={() => toast('All students marked present', 'success')}><UserCheck size={16} /> Mark All Present</button>
-          <button className="btn btn-primary" onClick={() => toast('Manual check-in mode activated', 'info')}><UserCheck size={16} /> Manual Check-In</button>
+          <button className="btn btn-outline" onClick={handleMarkAllPresent} disabled={bulkBusy}>
+            <UserCheck size={16} /> {bulkBusy ? `Marking ${bulkProgress.done}/${bulkProgress.total}...` : 'Mark All Present'}
+          </button>
+          <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Check-In</button>
         </div>
       </div>
 
@@ -528,7 +684,7 @@ export default function Dashboard() {
               onChange={e => setFilterClass(e.target.value)}
             >
               <option value="all">All Classes</option>
-              {classes.map(c => (
+              {classFilterOptions.map(c => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
@@ -572,7 +728,7 @@ export default function Dashboard() {
                   <td><span className={`badge badge-${a.status}`}>{a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span></td>
                   <td className="mono">{a.timeIn}</td>
                   <td className="mono">{a.timeOut || '—'}</td>
-                  <td><button className="btn btn-outline btn-sm" onClick={() => toast('Edit mode opened', 'info')}>Edit</button></td>
+                  <td><button className="btn btn-outline btn-sm" onClick={() => openEditModal(a.record)}>Edit</button></td>
                 </tr>
               );
             })}
@@ -629,6 +785,50 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* EDIT ATTENDANCE MODAL (P1) */}
+      {editRecord && (
+        <div className="modal-overlay" onClick={closeEditModal}>
+          <div className="modal attendance-edit-modal" onClick={e => e.stopPropagation()}>
+            <div className="attendance-edit-header">
+              <h2>Edit Attendance</h2>
+              <button type="button" className="attendance-edit-close" onClick={closeEditModal} disabled={editSaving} aria-label="Close">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="attendance-edit-sub">
+              {editRecord.student?.full_name || 'Student'}
+              {editRecord.student?.class_section?.name ? ` — ${editRecord.student.class_section.name}` : ''}
+            </p>
+            <p className="attendance-edit-readonly mono">
+              Arrival: {editRecord.arrival_time ? editRecord.arrival_time.slice(0, 5) : 'not recorded'}
+            </p>
+            <div className="form-group">
+              <label>Status</label>
+              <select value={editStatus} onChange={e => setEditStatus(e.target.value)} disabled={editSaving}>
+                <option value="present">Present</option>
+                <option value="absent">Absent</option>
+                <option value="late">Late</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Departure time (optional)</label>
+              <input
+                type="time"
+                value={editTimeOut}
+                onChange={e => setEditTimeOut(e.target.value)}
+                disabled={editSaving}
+              />
+            </div>
+            <div className="attendance-edit-actions">
+              <button type="button" className="btn btn-outline" onClick={closeEditModal} disabled={editSaving}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={handleSaveEdit} disabled={editSaving}>
+                {editSaving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

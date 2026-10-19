@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, createContext, useContext } from 
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
-  Camera, UserCog, Search, ChevronDown, User, Video, ClipboardCheck, BarChart3
+  Camera, UserCog, ChevronDown, User, Video, ClipboardCheck, BarChart3
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
@@ -54,16 +54,16 @@ export default function DashboardLayout() {
 
   const role = profile?.role;
 
-  const displayName = profile?.full_name || user?.email || 'Admin Hafiz';
+  const displayName = profile?.full_name || user?.email || 'Staff';
   const avatarInitials = useMemo(() => {
-    const source = profile?.full_name || user?.email || 'AH';
+    const source = profile?.full_name || user?.email || '··';
     const parts = source.trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return 'AH';
+    if (parts.length === 0) return '··';
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
   }, [profile, user]);
   const roleLabel = useMemo(() => {
-    if (!role) return 'Administrator';
+    if (!role) return 'Staff';
     return role.charAt(0).toUpperCase() + role.slice(1);
   }, [role]);
 
@@ -165,11 +165,6 @@ export default function DashboardLayout() {
           </div>
 
           <div className="topbar-right">
-            <div className="topbar-search">
-              <Search size={16} />
-              <input type="text" placeholder="Search..." />
-            </div>
-
             <div className="topbar-dropdown" ref={notifRef}>
               <button className="topbar-btn" onClick={() => { setNotifOpen(!notifOpen); setUserMenuOpen(false); }}>
                 <Bell size={20} />
@@ -186,8 +181,8 @@ export default function DashboardLayout() {
                       <div key={n.id} className={`dropdown-item notif-${n.type}`}>
                         <div className={`notif-dot dot-${n.type}`} />
                         <div>
-                          <p>{n.body || n.message}</p>
-                          <small>{n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : n.time}</small>
+                          <p>{n.body}</p>
+                          <small>{n.created_at ? new Date(n.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : ''}</small>
                         </div>
                       </div>
                     ))}

@@ -131,6 +131,7 @@
 /* ============ MAIN ============ */
 .dashboard-main {
   flex: 1;
+  min-width: 0; /* flex item default (auto) sizes to content and blows out the viewport at phone widths */
   margin-left: 260px;
   transition: margin-left 0.3s ease;
   display: flex;
@@ -204,22 +205,6 @@
   align-items: center;
   gap: 16px;
 }
-
-.topbar-search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--paper-light);
-  border: 2px solid var(--ink);
-  clip-path: var(--cut-2);
-  padding: 10px 16px;
-  color: var(--ink-soft);
-}
-.topbar-search input {
-  border: none; background: none; outline: none;
-  font-family: var(--body); font-size: 16px; width: 180px; color: var(--ink);
-}
-.topbar-search input::placeholder { color: var(--ink-faint); font-style: italic; }
 
 .topbar-btn {
   background: var(--paper-light);
@@ -386,7 +371,6 @@
   .sidebar.open { transform: translateX(0); }
   .dashboard-main { margin-left: 0 !important; }
   .mobile-menu { display: block; }
-  .topbar-search { display: none; }
   .year-dropdown { display: none; }
   .user-info { display: none; }
   .breadcrumb { display: none; }
