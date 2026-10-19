@@ -264,7 +264,7 @@ def draw_face_result(frame, bbox, name, score, det_score):
 
 
 def draw_hud(frame, fps, face_count, recognized_count):
-    """Draw heads-up display with stats."""
+    """Draw heads-up display with live stats (no desktop key hints)."""
     h, w = frame.shape[:2]
     
     # Header bar
@@ -275,11 +275,9 @@ def draw_hud(frame, fps, face_count, recognized_count):
                 f"Recognized: {recognized_count}")
     cv2.putText(frame, hud_text, (10, 28),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS["info"], 1)
-    
-    # Controls hint
-    cv2.putText(frame, "Press 'q' to quit | 'd' toggle debug", 
-                (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, 
-                COLORS["info"], 1)
+    # No key hints here: this frame is JPEG-encoded for the browser stream,
+    # where the desktop-only 'q'/'d' keys do nothing. The console banner and
+    # the debug window's waitKey loop still document/handle those keys.
 
 
 # ── Main Recognition Loop ────────────────────────────────────────────────────

@@ -47,6 +47,49 @@ if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
   console.warn('[Supabase] DISABLED — missing SUPABASE_URL or SUPABASE_SECRET_KEY env. Detections will be in-memory only.');
 }
 
+// ── App Settings (cached) ────────────────────────────────────────────────────
+// Single editable row (id=1) managed by the Admin Panel (migration 0005). Read
+// through the service-role client and cached for 60s so the per-detection
+// late check and AI spawns don't hammer the DB. Any failure (Supabase off,
+// table missing, row not seeded) fails safe to the defaults the migration
+// seeds.
+const SETTINGS_DEFAULTS = Object.freeze({
+  school_name: 'PRISM-AI Primary School',
+  late_cutoff: '08:00',
+  det_size: 320,
+  match_threshold: 0.40,
+});
+const SETTINGS_TTL_MS = 60 * 1000;
+const settingsCache = { values: { ...SETTINGS_DEFAULTS }, fetchedAt: 0 };
+
+async function getAppSettings() {
+  if (!supabase || Date.now() - settingsCache.fetchedAt < SETTINGS_TTL_MS) {
+    return settingsCache.values;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('school_name, late_cutoff, det_size, match_threshold')
+      .eq('id', 1)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) {
+      settingsCache.values = {
+        school_name: data.school_name ?? SETTINGS_DEFAULTS.school_name,
+        late_cutoff: data.late_cutoff ?? SETTINGS_DEFAULTS.late_cutoff,
+        det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
+        match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+      };
+    }
+  } catch (e) {
+    console.warn('[settings] app_settings read failed — keeping defaults:', e.message);
+  }
+  // Bump the timestamp even on failure or a missing row: retry at most once
+  // per TTL, not once per detection batch.
+  settingsCache.fetchedAt = Date.now();
+  return settingsCache.values;
+}
+
 // ── Date Helpers ─────────────────────────────────────────────────────────────
 
 // YYYY-MM-DD in LOCAL time (toISOString would give the UTC date — wrong before 8 AM MYT)
@@ -60,11 +103,10 @@ function localDateStr(d) {
 // ── In-Memory Data Store ─────────────────────────────────────────────────────
 // This stores all live data from the AI. In production, use a database.
 
+// attendanceToday is the only live list left: the Dashboard's panels are
+// Supabase-backed and Camera.jsx reads just this one (P6 dead-data sweep).
 let liveData = {
-  students: [],           // Enrolled students from AI
   attendanceToday: [],    // Today's attendance records
-  recentActivity: [],     // Recent check-in activity
-  notifications: [],      // Alerts and notifications
   lastUpdate: null,       // Timestamp of last AI update
   aiStatus: 'offline',    // 'online' or 'offline'
 };
@@ -80,15 +122,12 @@ let currentDay = localDateStr(new Date());
 // Request-driven daily reset — called from the AI POST handler and from
 // /api/health (the dashboard polls health every 5s, so this fires within
 // seconds of midnight even when the camera is off). Deliberately leaves
-// liveData.students (the enrolled list persists across days) and
-// aiStatus/lastUpdate (they describe the AI link, not the day) untouched.
+// aiStatus/lastUpdate untouched — they describe the AI link, not the day.
 function resetIfNewDay() {
   const today = localDateStr(new Date());
   if (today === currentDay) return;
   presentToday.clear();
   liveData.attendanceToday = [];
-  liveData.recentActivity = [];
-  liveData.notifications = [];
   currentDay = today;
   console.log(`[RESET] New day ${today} — cleared in-memory attendance`);
 }
@@ -215,6 +254,7 @@ app.get('/api/health', (req, res) => {
     aiStatus: liveData.aiStatus,
     lastUpdate: liveData.lastUpdate,
     studentsTracked: liveData.attendanceToday.length,
+    uptimeSeconds: Math.floor(process.uptime()),
     supabaseEnabled: Boolean(supabase),
   });
 });
@@ -224,18 +264,8 @@ app.get('/api/attendance', (req, res) => {
   res.json(liveData);
 });
 
-// GET: Fetch attendance summary counts
-app.get('/api/attendance/summary', (req, res) => {
-  const present = liveData.attendanceToday.filter(a => a.status === 'present').length;
-  const late = liveData.attendanceToday.filter(a => a.status === 'late').length;
-  const absent = liveData.attendanceToday.filter(a => a.status === 'absent').length;
-  const total = liveData.students.length;
-
-  res.json({ total, present, absent, late });
-});
-
 // POST: Receive attendance data from Python AI
-app.post('/api/attendance', (req, res) => {
+app.post('/api/attendance', async (req, res) => {
   // Roll the day over first — otherwise a detection just after midnight would
   // be dropped as a duplicate of yesterday's check-in.
   resetIfNewDay();
@@ -245,6 +275,13 @@ app.post('/api/attendance', (req, res) => {
   if (!detections || !Array.isArray(detections)) {
     return res.status(400).json({ error: 'Invalid payload. Expected "detections" array.' });
   }
+
+  // Late cutoff from the Admin Panel's settings row (cached, fail-safe).
+  const settings = await getAppSettings();
+  const [cutH, cutM] = String(settings.late_cutoff || SETTINGS_DEFAULTS.late_cutoff)
+    .split(':').map(Number);
+  const lateHour = Number.isFinite(cutH) ? cutH : 8;
+  const lateMinute = Number.isFinite(cutM) ? cutM : 0;
 
   liveData.aiStatus = 'online';
   liveData.lastUpdate = timestamp || new Date().toISOString();
@@ -261,66 +298,33 @@ app.post('/api/attendance', (req, res) => {
     if (presentToday.has(studentKey)) continue;
     presentToday.add(studentKey);
 
-    // Determine status based on time
+    // Determine status based on time vs. the configured late cutoff. Strict
+    // minute compare keeps the old hardcoded 08:00 rule's behaviour exactly.
     const now = new Date();
     const hour = now.getHours();
     const minute = now.getMinutes();
-    const isLate = (hour > 8) || (hour === 8 && minute > 0);
+    const isLate = (hour > lateHour) || (hour === lateHour && minute > lateMinute);
     const status = isLate ? 'late' : 'present';
 
     const timeIn = now.toLocaleTimeString('en-US', {
       hour: '2-digit', minute: '2-digit', hour12: true
     });
 
-    // Add to attendance
+    // Year/class start null on purpose: the AI payload's student_year is
+    // hardcoded to 1 Python-side, so it is never trusted. The async DB
+    // resolution below patches the row with the real students.year_num +
+    // class_sections.name as soon as it lands (Camera renders empty until
+    // then, which is honest).
     liveData.attendanceToday.push({
       studentId: liveData.attendanceToday.length + 1,
       name: det.student_name,
-      year: det.student_year || 1,
-      class: det.student_class || 'Bestari',
+      year: null,
+      class: null,
       status: status,
       timeIn: timeIn,
       timeOut: '-',
       similarity: det.similarity_score,
     });
-
-    // Add to recent activity
-    liveData.recentActivity.unshift({
-      id: liveData.recentActivity.length + 1,
-      user: 'System',
-      action: `${det.student_name} checked in via face recognition (${(det.similarity_score * 100).toFixed(1)}% match)`,
-      timestamp: timeIn,
-      type: 'success',
-    });
-
-    // Add notification
-    liveData.notifications.unshift({
-      id: liveData.notifications.length + 1,
-      type: status === 'late' ? 'warning' : 'success',
-      message: status === 'late'
-        ? `${det.student_name} arrived late at ${timeIn}`
-        : `${det.student_name} checked in at ${timeIn}`,
-      time: timeIn,
-      read: false,
-    });
-
-    // Add to students list if not already there
-    const exists = liveData.students.find(s => s.name === det.student_name);
-    if (!exists) {
-      liveData.students.push({
-        id: liveData.students.length + 1,
-        name: det.student_name,
-        year: det.student_year || 1,
-        class: det.student_class || 'Bestari',
-        age: 7,
-        gender: 'M',
-        parent: '',
-        parentEmail: '',
-        parentPhone: '',
-        faceRegistered: true,
-        attendanceRate: 100,
-      });
-    }
 
     console.log(`[✓] ${det.student_name} → ${status.toUpperCase()} at ${timeIn} (similarity: ${det.similarity_score})`);
 
@@ -355,10 +359,12 @@ app.post('/api/attendance', (req, res) => {
           continue;
         }
 
-        // 2) Look up the student by full_name (case-insensitive)
+        // 2) Look up the student by full_name (case-insensitive), together
+        //    with the REAL year + class section — the DB row is the source of
+        //    truth for both (the AI payload hardcodes student_year to 1).
         const { data: student, error: lookupErr } = await supabase
           .from('students')
-          .select('id')
+          .select('id, year_num, class_section:class_sections(name, year_num)')
           .ilike('full_name', bareName)
           .maybeSingle();
 
@@ -370,6 +376,23 @@ app.post('/api/attendance', (req, res) => {
           console.warn(`[Supabase] No student match for "${bareName}" — skipping`);
           continue;
         }
+
+        // 2b) Patch the in-memory row the Camera renders with the real
+        //     year + class name (it was pushed with nulls above). Match on
+        //     the raw detection name — that is what the row was created with.
+        const memRow = liveData.attendanceToday.find((r) => r.name === det.student_name);
+        if (memRow) {
+          memRow.year = student.year_num ?? null;
+          memRow.class = student.class_section?.name || null;
+        }
+
+        // 2c) Honest notes label: 'Year N <ClassName>' from the resolved
+        //     section, falling back to the POSTed classroom_id, then 'camera'
+        //     (the old notes claimed the hardcoded CLASS_1A style id was the
+        //     detection source even when it was not a real section).
+        const realClassLabel = student.class_section?.name
+          ? `Year ${student.class_section.year_num} ${student.class_section.name}`
+          : (classroom_id || 'camera');
 
         // 3) Build date + arrival time — both in LOCAL time. toISOString()
         //    is UTC, which would file pre-8AM MYT detections under yesterday.
@@ -386,7 +409,7 @@ app.post('/api/attendance', (req, res) => {
             arrival_time: arrivalTime,
             marked_by: null, // AI-driven, no human authenticator
             marked_at: now.toISOString(),
-            notes: `AI detection from ${classroom_id || 'camera'}`,
+            notes: `AI detection from ${realClassLabel}`,
           }, { onConflict: 'student_id,date' });
 
         if (upsertErr) {
@@ -442,40 +465,6 @@ app.post('/api/attendance', (req, res) => {
       }
     }
   })();
-});
-
-// POST: Register/enroll a new student (from enrollment script)
-app.post('/api/students', (req, res) => {
-  const { name, year, className, parent, parentEmail, parentPhone } = req.body;
-
-  liveData.students.push({
-    id: liveData.students.length + 1,
-    name: name,
-    year: year || 1,
-    class: className || 'Bestari',
-    age: 7,
-    gender: 'M',
-    parent: parent || '',
-    parentEmail: parentEmail || '',
-    parentPhone: parentPhone || '',
-    faceRegistered: true,
-    attendanceRate: 0,
-  });
-
-  res.json({ success: true, message: `Student ${name} enrolled successfully` });
-});
-
-// POST: Reset today's attendance (for new day)
-app.post('/api/attendance/reset', (req, res) => {
-  liveData.attendanceToday = [];
-  liveData.recentActivity = [];
-  liveData.notifications = [];
-  presentToday.clear();
-  // Sync the rollover marker so resetIfNewDay() doesn't clear a second time
-  // on the next health poll after a manual reset.
-  currentDay = localDateStr(new Date());
-  console.log('[RESET] Attendance cleared for new day');
-  res.json({ success: true, message: 'Attendance reset for new day' });
 });
 
 // ── Admin: User Management ───────────────────────────────────────────────────
@@ -812,7 +801,7 @@ app.delete('/api/ai/enrolled/:name', requireAdmin, (req, res) => {
 });
 
 // POST /api/ai/start — spawn the Python face-recognition service.
-app.post('/api/ai/start', requireAdminOrTeacher, (req, res) => {
+app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
   if (aiProcess && aiProcess.exitCode === null) {
     return res.status(409).json({
       error: 'AI service already running',
@@ -832,7 +821,17 @@ app.post('/api/ai/start', requireAdminOrTeacher, (req, res) => {
       });
     }
 
-    const child = spawn(pythonExe, ['-u', script, '--camera', '0'], {
+    // Detection size + match threshold come from the Admin Panel's settings
+    // row (cached, fail-safe defaults) — the admin tunes them without code.
+    const settings = await getAppSettings();
+    console.log(`[AI] start: det_size=${settings.det_size} threshold=${settings.match_threshold}`);
+
+    const child = spawn(pythonExe, [
+      '-u', script,
+      '--camera', '0',
+      '--det-size', String(settings.det_size),
+      '--threshold', String(settings.match_threshold),
+    ], {
       cwd: aiDir,
       windowsHide: false, // let the OpenCV window be visible
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -987,9 +986,7 @@ app.listen(PORT, () => {
   console.log('  Endpoints:');
   console.log('    GET  /api/health            → Server status');
   console.log('    GET  /api/attendance         → All live data');
-  console.log('    GET  /api/attendance/summary → Counts only');
   console.log('    POST /api/attendance         → AI sends data');
-  console.log('    POST /api/attendance/reset   → Clear for new day');
   console.log('    POST   /api/admin/users      → Invite user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
