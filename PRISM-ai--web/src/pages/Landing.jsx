@@ -16,7 +16,7 @@ const featureColor = ['r', 'b', 'g', 'y', 'o', 'p'];
 
 const steps = [
   { num: '1', title: 'Camera Captures', desc: 'Live camera at entrance detects and captures student faces automatically as they arrive.' },
-  { num: '2', title: 'AI Recognizes', desc: 'PyTorch-powered deep learning model identifies each student with 95%+ accuracy in milliseconds.' },
+  { num: '2', title: 'AI Recognizes', desc: 'PyTorch-powered deep learning model matches each student by their facial signature in milliseconds.' },
   { num: '3', title: 'Attendance Logged', desc: 'Check-in time and status are recorded instantly in the database with zero manual input.' },
   { num: '4', title: 'Parents Notified', desc: 'Automated push notification sent to parents confirming their child\'s safe arrival at school.' },
 ];
@@ -24,11 +24,11 @@ const steps = [
 const stepColor = ['r', 'b', 'g', 'y'];
 
 const faqs = [
-  { q: 'How accurate is the face recognition?', a: 'Our AI model achieves over 95% accuracy and continuously improves as more data is collected. The model is optimized using PyTorch for fast inference.' },
+  { q: 'How accurate is the face recognition?', a: 'Our AI model matches each student by their facial signature and keeps improving as more data is collected. The model is optimized using PyTorch for fast inference.' },
   { q: 'What happens if a face is not recognized?', a: 'The system alerts the teacher immediately via the dashboard and logs the event. Manual check-in is always available as a backup option.' },
   { q: 'Can parents view attendance history?', a: 'Yes! Parents have a dedicated portal with a calendar view, attendance history, notifications, and direct contact with their child\'s teacher.' },
   { q: 'Is the system safe for children?', a: 'Absolutely. We use non-invasive cameras, and all facial data is encrypted and stored securely in Supabase with strict access controls.' },
-  { q: 'What if the internet goes down?', a: 'The system has offline capability and will sync attendance data automatically once the connection is restored.' },
+  { q: 'What if the internet goes down?', a: 'No internet, no problem: the camera machine recognizes students locally and attendance syncs to the cloud automatically.' },
   { q: 'How many students can the system handle?', a: 'PRISM-AI is designed to handle hundreds of students across multiple classes. The face recognition runs efficiently on modern hardware.' },
 ];
 
@@ -99,6 +99,7 @@ export default function Landing() {
               <div className="mini-stat s-red"><strong>2</strong><span>Absent</span></div>
               <div className="mini-stat s-orange"><strong>3</strong><span>Late</span></div>
             </div>
+            <p className="hero-sample-note">Sample illustration</p>
           </aside>
         </div>
       </section>
@@ -204,10 +205,9 @@ export default function Landing() {
             <Link to="/biometric-consent" className="pencil-link">Biometric Consent</Link>
           </div>
           <div className="footer-col">
-            <h4>Contact</h4>
+            <h4>About</h4>
             <p>Kuala Lumpur, Malaysia</p>
-            <p>info@prismai.edu</p>
-            <p>+60 12-345 6789</p>
+            <p>A final-year project by UniKL MIIT students.</p>
           </div>
         </div>
       </footer>
