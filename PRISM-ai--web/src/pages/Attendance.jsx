@@ -70,11 +70,16 @@ export default function Attendance() {
 
   // Picker mode renders one branch; marking mode renders another. Render both
   // branches from this single component so all hook calls stay top-level.
+  const { profile } = useAuth();
+  const isTeacher = profile?.role === 'teacher';
+
   if (!className) {
-    const fallbackYear = yearCtx.selectedYear || dbYears[0]?.year_num || null;
+    const targetYear = isTeacher
+      ? (yearCtx.selectedYear || undefined)
+      : (yearCtx.selectedYear || dbYears[0]?.year_num || null);
 
     // Years not resolvable yet: show the picker skeleton while they load...
-    if (fallbackYear == null && yearsLoading) {
+    if (!isTeacher && targetYear == null && yearsLoading) {
       return (
         <div className="attendance-page">
           <div className="page-header attendance-header">
@@ -101,7 +106,7 @@ export default function Attendance() {
     }
 
     // ...and an honest empty state if the years never arrive.
-    if (fallbackYear == null) {
+    if (!isTeacher && targetYear == null) {
       return (
         <div className="attendance-page">
           <div className="page-header attendance-header">
@@ -126,7 +131,7 @@ export default function Attendance() {
 
     return (
       <PickerView
-        selectedYear={fallbackYear}
+        selectedYear={targetYear}
         dateString={dateString}
         dateISO={dateISO}
       />
@@ -182,6 +187,7 @@ function PickerView({ selectedYear, dateString, dateISO }) {
       return {
         id: sec.id,
         name: sec.name,
+        yearNum: sec.year_num,
         teacher: sec.homeroom_teacher?.full_name || 'Unknown',
         color: sec.color || classColors[sec.name],
         wordColor: classWordColor[sec.name] || 'k',
@@ -200,7 +206,13 @@ function PickerView({ selectedYear, dateString, dateISO }) {
             <span className="word g">Take</span>{' '}
             <span className="word k">Attendance</span>
           </h1>
-          <p className="page-subtitle">{isTeacher ? 'Your Assigned Class' : `Year ${selectedYear}`} &middot; {dateString}</p>
+          <p className="page-subtitle">
+            {isTeacher
+              ? selectedYear
+                ? `Your Assigned Classes (Year ${selectedYear})`
+                : `Your Assigned Classes (${sectionStats.length})`
+              : (selectedYear ? `Year ${selectedYear}` : 'All Years')} &middot; {dateString}
+          </p>
         </div>
         <div className="attendance-header-icon">
           <ClipboardCheck size={32} />
@@ -238,15 +250,17 @@ function PickerView({ selectedYear, dateString, dateISO }) {
           {sectionStats.map((cls, i) => (
             <Link
               key={cls.id}
-              to={`/dashboard/attendance/${selectedYear}/${cls.name}`}
+              to={`/dashboard/attendance/${cls.yearNum || selectedYear}/${cls.name}`}
               className={`class-picker-card reveal reveal-${i + 1}`}
               style={{ '--cls-color': cls.color }}
             >
-              <span className={`tape ${['tl', 'tr', 'bl', 'br', 'tl'][i]}`} />
+              <span className={`tape ${['tl', 'tr', 'bl', 'br', 'tl'][i % 5]}`} />
               <div className="picker-card-accent" />
               <div className="picker-card-body">
                 <h2 className="picker-class-name">
-                  <span className={`word ${cls.wordColor}`}>{cls.name}</span>
+                  <span className={`word ${cls.wordColor}`}>
+                    {!selectedYear ? `Year ${cls.yearNum} ` : ''}{cls.name}
+                  </span>
                 </h2>
                 <p className="picker-teacher">{cls.teacher}</p>
                 <div className="picker-stats-row">

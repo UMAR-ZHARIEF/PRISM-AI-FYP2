@@ -72,7 +72,11 @@ export default function Students() {
   // Sync filterYear when global selectedYear changes or when teacher assigned year is resolved
   useEffect(() => {
     if (isTeacher && teacherYears.length > 0) {
-      setFilterYear(String(teacherYears[0]));
+      if (selectedYear && teacherYears.includes(selectedYear)) {
+        setFilterYear(String(selectedYear));
+      } else {
+        setFilterYear('all');
+      }
     } else {
       setFilterYear(selectedYear ? String(selectedYear) : 'all');
     }
@@ -323,7 +327,9 @@ export default function Students() {
             <span className="word k">Student</span>{' '}
             <span className="word y">Management</span>
             {isTeacher && teacherClassName ? (
-              <span className="year-badge">Class: {teacherClassName}</span>
+              <span className="year-badge">
+                {teacherClassSections.length > 1 ? `Classes (${teacherClassSections.length}): ${teacherClassName}` : `Class: ${teacherClassName}`}
+              </span>
             ) : selectedYear ? (
               <span className="year-badge">Year {selectedYear}</span>
             ) : (
@@ -371,7 +377,7 @@ export default function Students() {
             {(!isTeacher || teacherClassSections.length > 1) && (
               <select className="search-input filter-class" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
                 <option value="all">{isTeacher ? 'All My Classes' : 'All Classes'}</option>
-                {filterClassSections.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                {filterClassSections.map(c => <option key={c.id} value={c.name}>{!selectedYear && c.year_num ? `Y${c.year_num} ` : ''}{c.name}</option>)}
               </select>
             )}
             {!isTeacher && (

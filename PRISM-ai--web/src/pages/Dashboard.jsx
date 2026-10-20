@@ -528,7 +528,7 @@ export default function Dashboard() {
             <div className="scope-toggle" role="region" aria-label="Assigned Class">
               <span className="tape tl" />
               <span className="scope-pill is-active" style={{ cursor: 'default' }}>
-                Class: {assignedClassLabel}
+                {myClasses.length > 1 ? `Classes (${myClasses.length}): ${assignedClassLabel}` : `Class: ${assignedClassLabel}`}
               </span>
             </div>
           )}
