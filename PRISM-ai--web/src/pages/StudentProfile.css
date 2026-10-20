@@ -443,6 +443,50 @@
   align-self: flex-end;
 }
 
+/* Note header: author label + inline edit/delete actions */
+.sprofile-note-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sprofile-note-author {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--ink);
+}
+.sprofile-note-actions {
+  display: flex;
+  gap: 8px;
+}
+.sprofile-note-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 2px solid var(--ink);
+  background: var(--paper-light);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink);
+  cursor: pointer;
+  clip-path: var(--cut-pill);
+}
+.sprofile-note-action:hover { background: var(--paper); }
+.sprofile-note-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.sprofile-note-action-danger {
+  color: var(--red);
+  border-color: var(--red);
+}
+.sprofile-note-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* Empty notes */
 .sprofile-notes-empty {
   text-align: center;

@@ -1,6 +1,6 @@
 import './ProtectedRoute.css';
 import { useEffect, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './Toast';
 import LegalGate from './LegalGate';
@@ -20,6 +20,7 @@ export default function ProtectedRoute({ children, requireRole }) {
     acknowledgeSessionExpiringSoon,
   } = useAuth();
   const addToast = useToast();
+  const location = useLocation();
 
   // Once we've decided to bounce the user out, flip this so the render
   // returns <Navigate />. We delay 2s after the toast appears.
@@ -28,6 +29,9 @@ export default function ProtectedRoute({ children, requireRole }) {
   // is still set in context.
   const expiredHandledRef = useRef(false);
   const expiringSoonHandledRef = useRef(false);
+  // Guard so the wrong-role toast fires once per denial instead of on every
+  // re-render of the denied route.
+  const roleDeniedRef = useRef(false);
 
   // Reset the "already handled" guards if the user signs back in — otherwise
   // a future expiry in the same browser session would be silently swallowed.
@@ -73,12 +77,32 @@ export default function ProtectedRoute({ children, requireRole }) {
     acknowledgeSessionExpiringSoon,
   ]);
 
+  // Signed in but the route needs a different role: warn before the bounce
+  // so the redirect to /login isn't silent.
+  useEffect(() => {
+    if (loading || !session || !requireRole) return;
+    const allowed = Array.isArray(requireRole) ? requireRole : [requireRole];
+    const denied = !profile?.role || !allowed.includes(profile.role);
+    if (!denied) {
+      roleDeniedRef.current = false;
+      return;
+    }
+    if (roleDeniedRef.current) return;
+    roleDeniedRef.current = true;
+    if (addToast) {
+      addToast("You don't have access to that page.", 'error', 4000);
+    }
+  }, [session, profile, loading, requireRole, addToast]);
+
   if (loading) {
     return <div className="protected-route-loading">Loading…</div>;
   }
 
   // Session just expired — show a brief overlay before redirecting so the
-  // user understands why they're being moved.
+  // user understands why they're being moved. The ref mirrors a decision
+  // made in the expiry effect; reading it here avoids an extra state flip
+  // (and re-render) during the short overlay window.
+  // eslint-disable-next-line react-hooks/refs -- pre-existing overlay check
   if (!session && (sessionExpired || (expiredHandledRef.current && !redirectAfterExpiry))) {
     return (
       <div className="protected-route-loading" role="status" aria-live="polite">
@@ -94,7 +118,9 @@ export default function ProtectedRoute({ children, requireRole }) {
   if (requireRole) {
     const allowed = Array.isArray(requireRole) ? requireRole : [requireRole];
     if (!profile?.role || !allowed.includes(profile.role)) {
-      return <Navigate to="/login" replace />;
+      // Hand Login the attempted location so a role that is allowed there
+      // can be sent straight back after signing in.
+      return <Navigate to="/login" replace state={{ from: location }} />;
     }
   }
 

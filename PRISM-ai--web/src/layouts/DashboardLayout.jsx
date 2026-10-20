@@ -12,6 +12,12 @@ import './DashboardLayout.css';
 export const YearContext = createContext();
 export const useYear = () => useContext(YearContext);
 
+// Shared view scope ("My Classes" vs "All School"). Lives at the layout level
+// so the teacher's choice survives navigation between Dashboard, Reports and
+// Compare Classes. Defaults: 'mine' for teachers, 'all' for admins.
+export const ScopeContext = createContext();
+export const useScope = () => useContext(ScopeContext);
+
 const sidebarSections = [
   {
     label: 'Main',
@@ -38,6 +44,16 @@ const sidebarSections = [
   },
 ];
 
+// Sidebar highlight rule: exact match for the Dashboard root, prefix match for
+// everything else. Class Detail pages (/dashboard/class/...) are a prefix of
+// no sidebar path, so they highlight the closest related section, Students.
+function isSidebarLinkActive(link, pathname) {
+  if (pathname.startsWith('/dashboard/class')) {
+    return link.path === '/dashboard/students';
+  }
+  return link.path === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(link.path);
+}
+
 export default function DashboardLayout() {
   // Start collapsed on phones so the sidebar never covers the page on first load.
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
@@ -54,6 +70,14 @@ export default function DashboardLayout() {
   const { user, profile, signOut } = useAuth();
 
   const role = profile?.role;
+
+  // Shared view scope for the pages below (see ScopeContext above). The user's
+  // explicit pick wins once made; until then the scope derives from the role:
+  // teachers default to 'mine', admins (and any other role) to 'all'. Deriving
+  // (instead of a defaulting effect) means the right scope applies the moment
+  // the async profile resolves.
+  const [scopePick, setScope] = useState(null);
+  const scope = scopePick ?? (role === 'teacher' ? 'mine' : 'all');
 
   const displayName = profile?.full_name || user?.email || 'Staff';
   const avatarInitials = useMemo(() => {
@@ -126,7 +150,7 @@ export default function DashboardLayout() {
                   <Link
                     key={link.path}
                     to={link.path}
-                    className={`sidebar-link ${(link.path === '/dashboard' ? location.pathname === '/dashboard' : location.pathname.startsWith(link.path)) ? 'active' : ''}`}
+                    className={`sidebar-link ${isSidebarLinkActive(link, location.pathname) ? 'active' : ''}`}
                   >
                     <link.icon size={20} />
                     {sidebarOpen && <span>{link.label}</span>}
@@ -224,7 +248,9 @@ export default function DashboardLayout() {
 
         <main className="dashboard-content">
           <YearContext.Provider value={{ selectedYear, setSelectedYear }}>
-            <Outlet />
+            <ScopeContext.Provider value={{ scope, setScope }}>
+              <Outlet />
+            </ScopeContext.Provider>
           </YearContext.Provider>
         </main>
       </div>

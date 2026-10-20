@@ -1,16 +1,17 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck, X } from 'lucide-react';
+import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck, X, CalendarDays } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear } from '../layouts/DashboardLayout';
+import { useYear, ScopeContext } from '../layouts/DashboardLayout';
 import Pagination from '../components/Pagination';
 import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skeleton';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
 import useNotifications from '../hooks/useNotifications';
+import useSchoolEvents from '../hooks/useSchoolEvents';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import './Dashboard.css';
@@ -117,6 +118,17 @@ export default function Dashboard() {
   // never blocks the page skeleton below.
   const { notifications, unreadCount, loading: notifLoading } = useNotifications();
 
+  // Upcoming school events (school_events table): today through the next 30
+  // days, trimmed to the next few for the compact card beside Recent Activity.
+  // Loads independently, like the notifications above.
+  const eventsToDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return isoDate(d);
+  }, []);
+  const { events: schoolEvents, loading: eventsLoading } = useSchoolEvents({ fromDate: today, toDate: eventsToDate });
+  const upcomingEvents = useMemo(() => schoolEvents.slice(0, 5), [schoolEvents]);
+
   // Realtime: when any attendance_records row changes (AI camera insert, manual
   // mark, edit, delete), pull a fresh copy through the hook so the dashboard
   // updates without waiting for a poll. This is data-layer only; the AI
@@ -164,8 +176,12 @@ export default function Dashboard() {
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
-  // Default scope: teachers with a homeroom see "mine"; everyone else gets "all".
-  const [viewScope, setViewScope] = useState(() => (isTeacher ? 'mine' : 'all'));
+  // Shared view scope from the layout (ScopeContext): the "My Classes" vs
+  // "All School" choice now survives navigation between pages. Safe fallback
+  // mirrors the year context pattern above; falls back to all-school.
+  const scopeCtx = useContext(ScopeContext) || {};
+  const viewScope = scopeCtx.scope || 'all';
+  const setViewScope = useMemo(() => scopeCtx.setScope || (() => {}), [scopeCtx.setScope]);
 
   // If the teacher loads in before classSections resolve, snap to "all" once
   // we discover they have no homeroom (and keep them there).
@@ -173,7 +189,7 @@ export default function Dashboard() {
     if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
       setViewScope('all');
     }
-  }, [isTeacher, myClassSectionIds]);
+  }, [isTeacher, myClassSectionIds, setViewScope]);
 
   // Whether we should actually narrow the client-side data right now.
   const scopeToMine = viewScope === 'mine' && hasHomeroom;
@@ -866,7 +882,7 @@ export default function Dashboard() {
         <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
       </div>
 
-      {/* ACTIVITY + NOTIFICATIONS */}
+      {/* ACTIVITY + NOTIFICATIONS + SCHOOL EVENTS */}
       <div className="dashboard-grid">
         <div className="card tilt-l">
           <span className="tape tr" />
@@ -908,6 +924,33 @@ export default function Dashboard() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="card tilt-l">
+          <span className="tape bl" />
+          <div className="card-header">
+            <h2><CalendarDays size={20} /> School Events</h2>
+          </div>
+          <div className="activity-timeline">
+            {eventsLoading ? (
+              <div className="empty-state">Loading events...</div>
+            ) : upcomingEvents.length === 0 ? (
+              <div className="empty-state">No upcoming events on the school calendar.</div>
+            ) : upcomingEvents.map(ev => {
+              const when = ev.event_date
+                ? new Date(ev.event_date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                : '';
+              return (
+                <div key={ev.id} className="timeline-item">
+                  <div className="timeline-dot dot-info" />
+                  <div className="timeline-content">
+                    <p>{ev.title}</p>
+                    <small className="mono">{when}</small>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

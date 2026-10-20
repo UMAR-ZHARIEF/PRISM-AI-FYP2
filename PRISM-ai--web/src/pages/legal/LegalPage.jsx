@@ -60,7 +60,9 @@ export default function LegalPage({ kind }) {
       <article className="legal-card">
         <ReactMarkdown
           components={{
-            a: ({ href, children, ...props }) => {
+            a: (linkProps) => {
+              // node is react-markdown's AST element; never spread it onto DOM.
+              const { node: _node, href, children, ...props } = linkProps;
               if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
                 return (
                   <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
@@ -68,8 +70,13 @@ export default function LegalPage({ kind }) {
                   </a>
                 );
               }
+              // No target at all: render inert text instead of a dead
+              // <Link to="#"> so it can't navigate anywhere.
+              if (!href) {
+                return <span {...props}>{children}</span>;
+              }
               return (
-                <Link to={href || '#'} {...props}>
+                <Link to={href} {...props}>
                   {children}
                 </Link>
               );
