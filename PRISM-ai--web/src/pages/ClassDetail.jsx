@@ -5,6 +5,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
+import { attendanceRate } from '../lib/attendanceRate';
 import { useAuth } from '../contexts/AuthContext';
 import { SkeletonCard, SkeletonChart } from '../components/Skeleton';
 import './ClassDetail.css';
@@ -132,21 +133,12 @@ export default function ClassDetail() {
       if (date === todayISO) today.set(sid, status);
     }
 
+    // Shared utility: rate = (present + late) / total. Null means the student
+    // has no records; the card then renders '—' instead of a fake 0%.
     const rates = new Map();
     for (const [sid, recs] of byStudent.entries()) {
-      const counted = recs.filter(r => {
-        const s = String(r.status || '').toLowerCase();
-        return s === 'present' || s === 'absent' || s === 'late';
-      });
-      if (counted.length === 0) {
-        rates.set(sid, 0);
-        continue;
-      }
-      const presentish = counted.filter(r => {
-        const s = String(r.status || '').toLowerCase();
-        return s === 'present' || s === 'late';
-      }).length;
-      rates.set(sid, Math.round((presentish / counted.length) * 100));
+      const { rate } = attendanceRate(recs);
+      rates.set(sid, rate != null ? Math.round(rate) : null);
     }
 
     const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -305,7 +297,8 @@ export default function ClassDetail() {
               const tapeSpots = ['tl', 'tr', 'br', 'bl'];
               const tapeSpot = tapeSpots[index % tapeSpots.length];
               const initials = s.name.split(' ').map(n => n[0]).join('').slice(0, 2);
-              const rate = ratesByStudent.get(s.id) ?? 0;
+              const rate = ratesByStudent.get(s.id);
+              const hasRate = rate != null;
 
               return (
                 <Link
@@ -338,12 +331,12 @@ export default function ClassDetail() {
                           <div
                             className="classdetail-rate-fill"
                             style={{
-                              width: `${rate}%`,
-                              background: rate >= 90 ? 'var(--green)' : rate >= 80 ? 'var(--yellow)' : 'var(--red)',
+                              width: `${hasRate ? rate : 0}%`,
+                              background: !hasRate ? 'transparent' : rate >= 90 ? 'var(--green)' : rate >= 80 ? 'var(--yellow)' : 'var(--red)',
                             }}
                           />
                         </div>
-                        <span className="classdetail-rate-value mono">{rate}%</span>
+                        <span className="classdetail-rate-value mono">{hasRate ? `${rate}%` : '—'}</span>
                       </div>
                     </div>
                     {s.parent ? (
@@ -365,7 +358,7 @@ export default function ClassDetail() {
           <span className="tape tl" />
           <div className="chart-head">
             <h2>Weekly Attendance</h2>
-            <span className="classdetail-chart-subtitle accent">School-wide Weekly Trend</span>
+            <span className="classdetail-chart-subtitle accent">Weekly Attendance Trend</span>
           </div>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={weekly}>

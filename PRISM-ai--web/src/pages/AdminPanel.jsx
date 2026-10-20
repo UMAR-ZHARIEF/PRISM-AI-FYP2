@@ -691,7 +691,9 @@ export default function AdminPanel() {
     { label: 'AI Accuracy', value: latestAccuracyLabel, icon: Cpu, variant: 's-orange', tape: 'br' },
   ];
 
-  const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', assistant: 'badge-assistant', parent: 'badge-teacher' };
+  // parent has no dedicated badge style; badge-info (blue, index.css) keeps it
+  // distinct from teacher's badge-teacher green without new CSS.
+  const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', assistant: 'badge-assistant', parent: 'badge-info' };
   const avatarColors = ['r', 'y', 'g', 'o', 'k'];
 
   // --- formatters ---
@@ -1291,7 +1293,10 @@ export default function AdminPanel() {
                             <span className={`badge ${faceStatus[s.id] ? 'badge-face-reg' : 'badge-face-unreg'}`}>
                               {faceStatus[s.id] ? <><Check size={12} /> Registered</> : <><X size={12} /> Not Registered</>}
                             </span>
-                            {faceStatus[s.id] ? (
+                            {/* Belt-and-braces: the route guard already keeps
+                                non-admins off this page; hide the enrollment
+                                mutation buttons too in case it is relaxed. */}
+                            {isAdmin && (faceStatus[s.id] ? (
                               <button className="btn btn-outline btn-face-remove" onClick={() => handleRemoveFace(s)}>
                                 <UserX size={14} /> Remove
                               </button>
@@ -1304,7 +1309,7 @@ export default function AdminPanel() {
                               >
                                 <Camera size={14} /> Register Face
                               </button>
-                            )}
+                            ))}
                           </div>
                         </div>
                       );

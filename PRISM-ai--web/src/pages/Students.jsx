@@ -11,6 +11,7 @@ import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
 import useEnrolledFaces from '../hooks/useEnrolledFaces';
 import { supabase } from '../lib/supabase';
+import { attendanceRate } from '../lib/attendanceRate';
 import { SkeletonCard } from '../components/Skeleton';
 import './Students.css';
 
@@ -66,6 +67,84 @@ export default function Students() {
   const hookYear = filterYear === 'all' ? undefined : Number(filterYear);
   const { students: dbStudents, loading, error, refresh } = useStudents({ year: hookYear });
 
+  // Parent contacts for the currently scoped students, keyed by student_id.
+  // Single batched query (same join StudentProfile uses); primary parent wins.
+  const [parentsByStudent, setParentsByStudent] = useState(new Map());
+
+  // Attendance rate per student over the last 30 days, keyed by student_id.
+  const [ratesByStudent, setRatesByStudent] = useState(new Map());
+
+  useEffect(function fetchParents() {
+    const ids = (dbStudents || []).map(row => row.id);
+    if (ids.length === 0) {
+      setParentsByStudent(new Map());
+      return undefined;
+    }
+
+    let cancelled = false;
+    supabase
+      .from('parent_students')
+      .select('student_id, parent:profiles(full_name, phone)')
+      .in('student_id', ids)
+      .order('is_primary', { ascending: false })
+      .order('parent_id')
+      .then(function handleResult({ data, error: queryError }) {
+        if (cancelled) return;
+        if (queryError) {
+          console.error('Students: failed to load parent contacts', queryError);
+          setParentsByStudent(new Map());
+          return;
+        }
+        const map = new Map();
+        for (const link of data || []) {
+          if (!map.has(link.student_id)) map.set(link.student_id, link.parent || null);
+        }
+        setParentsByStudent(map);
+      });
+
+    return function cleanup() { cancelled = true; };
+  }, [dbStudents]);
+
+  useEffect(function fetchAttendanceRates() {
+    const ids = (dbStudents || []).map(row => row.id);
+    if (ids.length === 0) {
+      setRatesByStudent(new Map());
+      return undefined;
+    }
+
+    let cancelled = false;
+    const since = new Date();
+    since.setDate(since.getDate() - 30);
+    const sinceISO = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, '0')}-${String(since.getDate()).padStart(2, '0')}`;
+
+    supabase
+      .from('attendance_records')
+      .select('student_id, status')
+      .in('student_id', ids)
+      .gte('date', sinceISO)
+      .then(function handleResult({ data, error: queryError }) {
+        if (cancelled) return;
+        if (queryError) {
+          console.error('Students: failed to load attendance rates', queryError);
+          setRatesByStudent(new Map());
+          return;
+        }
+        const rowsByStudent = new Map();
+        for (const record of data || []) {
+          const list = rowsByStudent.get(record.student_id) || [];
+          list.push(record);
+          rowsByStudent.set(record.student_id, list);
+        }
+        const map = new Map();
+        for (const [studentId, rows] of rowsByStudent) {
+          map.set(studentId, attendanceRate(rows));
+        }
+        setRatesByStudent(map);
+      });
+
+    return function cleanup() { cancelled = true; };
+  }, [dbStudents]);
+
   // Lookups for the form (years to pick from, class sections filtered by year)
   const { years: yearOptions } = useYears();
   const formYearNumber = formYear === '' ? undefined : Number(formYear);
@@ -79,26 +158,42 @@ export default function Students() {
   const { enrolledNames } = useEnrolledFaces();
 
   // Normalize DB rows into the legacy UI shape so the rest of this page can render unchanged.
-  // attendanceRate is intentionally null until per-student attendance queries are wired up.
-  const students = useMemo(() => (dbStudents || []).map(row => ({
-    id: row.id,
-    studentNumber: row.student_number || '',
-    name: row.full_name || '',
-    year: row.year_num,
-    class: row.class_section?.name || '',
-    classId: row.class_section_id,
-    classColor: row.class_section?.color || classColors[row.class_section?.name] || null,
-    gender: (row.gender || '').toUpperCase().startsWith('F') ? 'F' : 'M',
-    rawGender: row.gender || 'male',
-    dob: row.dob || null,
-    age: null,
-    photoUrl: row.photo_url || null,
-    attendanceRate: null,
-    faceRegistered: enrolledNames.has((row.full_name || '').toLowerCase().trim()),
-    parent: '',
-    parentEmail: '',
-    parentPhone: '',
-  })), [dbStudents, enrolledNames]);
+  // Parent contacts and attendance rates come from the batched lookups above; profiles has no
+  // email column, so no parentEmail is surfaced.
+  const students = useMemo(() => (dbStudents || []).map(row => {
+    // Derive age from dob (same pattern as StudentProfile).
+    let age = null;
+    if (row.dob) {
+      const dob = new Date(row.dob);
+      if (!Number.isNaN(dob.getTime())) {
+        const ref = new Date();
+        age = ref.getFullYear() - dob.getFullYear();
+        const m = ref.getMonth() - dob.getMonth();
+        if (m < 0 || (m === 0 && ref.getDate() < dob.getDate())) age--;
+      }
+    }
+    const parent = parentsByStudent.get(row.id) || null;
+    const rateStats = ratesByStudent.get(row.id) || null;
+    return {
+      id: row.id,
+      studentNumber: row.student_number || '',
+      name: row.full_name || '',
+      year: row.year_num,
+      class: row.class_section?.name || '',
+      classId: row.class_section_id,
+      classColor: row.class_section?.color || classColors[row.class_section?.name] || null,
+      gender: (row.gender || '').toUpperCase().startsWith('F') ? 'F' : 'M',
+      rawGender: row.gender || 'male',
+      dob: row.dob || null,
+      age,
+      photoUrl: row.photo_url || null,
+      attendanceRate: rateStats ? rateStats.rate : null,
+      attendanceStats: rateStats,
+      faceRegistered: enrolledNames.has((row.full_name || '').toLowerCase().trim()),
+      parent: parent?.full_name || '',
+      parentPhone: parent?.phone || '',
+    };
+  }), [dbStudents, enrolledNames, parentsByStudent, ratesByStudent]);
 
   const filtered = students.filter(s => {
     const matchYear = filterYear === 'all' || s.year === Number(filterYear);
@@ -522,11 +617,11 @@ export default function Students() {
                 <p>Attendance Rate</p>
               </div>
               <div className="detail-stat">
-                <h4>{typeof selectedStudent.attendanceRate === 'number' ? Math.round(selectedStudent.attendanceRate * 0.22) : '—'}</h4>
+                <h4>{selectedStudent.attendanceStats ? selectedStudent.attendanceStats.present : '—'}</h4>
                 <p>Days Present</p>
               </div>
               <div className="detail-stat">
-                <h4>{typeof selectedStudent.attendanceRate === 'number' ? 22 - Math.round(selectedStudent.attendanceRate * 0.22) : '—'}</h4>
+                <h4>{selectedStudent.attendanceStats ? selectedStudent.attendanceStats.absent : '—'}</h4>
                 <p>Days Absent</p>
               </div>
               <div className="detail-stat">
@@ -538,7 +633,6 @@ export default function Students() {
               <h3>Parent Information</h3>
               <div className="detail-info-grid">
                 <div><label>Parent Name</label><p>{selectedStudent.parent || '—'}</p></div>
-                <div><label>Email</label><p>{selectedStudent.parentEmail || '—'}</p></div>
                 <div><label>Phone</label><p>{selectedStudent.parentPhone || '—'}</p></div>
               </div>
             </div>
