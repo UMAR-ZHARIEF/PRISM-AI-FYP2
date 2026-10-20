@@ -146,7 +146,9 @@
   align-items: baseline;
   gap: 12px;
   margin-bottom: 18px;
-  padding-bottom: 12px;
+  /* top/right padding keeps headings clear of the cut-2 diagonal that
+     slopes into the panel's top-right corner (worse on tall panels) */
+  padding: 8px 24px 12px 0;
   border-bottom: 2px dashed var(--ink);
 }
 .dashboard-page .card-header h2 {
@@ -240,6 +242,9 @@
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 4px;
+  /* right padding insets the .class-rate badge away from the cut-3
+     diagonal slicing the card's top-right corner */
+  padding-right: 14px;
 }
 .class-card-header strong {
   font-family: var(--display);
@@ -272,6 +277,9 @@
 
 .class-progress {
   height: 8px;
+  min-height: 8px;
+  margin-right: 12px;
+  /* opaque paper-deep track stays visible as a bar even when fill is 0% */
   background: var(--paper-deep);
   clip-path: var(--cut-pill);
   overflow: hidden;

@@ -82,7 +82,9 @@
 /* === GRID VIEW — paper polaroids ========================= */
 .students-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* responsive tracks: fixed column counts let card min-content widen
+     1fr tracks past the viewport (page overflow at desktop) */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 28px 24px;
   padding: 12px 6px 6px;
 }
@@ -500,11 +502,9 @@
 }
 
 /* === RESPONSIVE ========================================== */
-@media (max-width: 1180px) {
-  .students-grid { grid-template-columns: repeat(3, 1fr); }
-}
+/* students-grid needs no fixed counts: auto-fill minmax(240px, 1fr)
+   adapts on its own; only the phone single-column case is kept. */
 @media (max-width: 900px) {
-  .students-grid { grid-template-columns: repeat(2, 1fr); gap: 24px 18px; }
   .detail-stats { grid-template-columns: repeat(2, 1fr); }
   .detail-info-grid { grid-template-columns: 1fr 1fr; }
 }
