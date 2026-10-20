@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Users, UserCheck, UserX, Clock, ClipboardCheck, Mail, Info } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { supabase } from '../lib/supabase';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
@@ -64,23 +65,52 @@ export default function ClassDetail() {
     () => (classSections || []).find(cs => cs.name === className && cs.year_num === yearNum),
     [classSections, className, yearNum]
   );
-  const classSectionId = section?.id;
-  const teacher = section?.homeroom_teacher || null;
 
   // Teacher scoping: if a teacher is viewing a class outside their homeroom(s),
   // surface a small informational note. Admins (and teachers viewing their own
   // homeroom) never see it.
   const { profile } = useAuth();
   const isTeacher = profile?.role === 'teacher';
-  const teacherHomeroomIds = useMemo(() => {
-    if (!isTeacher || !profile?.id) return [];
-    return (classSections || [])
-      .filter(s => s.homeroom_teacher_id === profile.id)
-      .map(s => s.id);
-  }, [classSections, isTeacher, profile]);
-  const teacherHasHomeroom = teacherHomeroomIds.length > 0;
-  const isMyHomeroom = !!classSectionId && teacherHomeroomIds.includes(classSectionId);
-  const showOutsideHomeroomNote = isTeacher && teacherHasHomeroom && !isMyHomeroom && !!classSectionId;
+
+  // Distinguish "genuinely not found" from "not yours": when the loaded
+  // sections miss the URL, re-check ALL class_sections with a separate query.
+  // A class that exists but is not this teacher's renders read-only instead
+  // of a false "Class Not Found".
+  const sectionMissing = !sectionsLoading && !sectionsError && !section;
+  const checkKey = sectionMissing && isTeacher && yearIsNumeric && className
+    ? `${yearNum}/${className}`
+    : null;
+  const [unscoped, setUnscoped] = useState({ key: null, checking: false, section: null });
+  useEffect(() => {
+    if (checkKey == null) return undefined;
+    let cancelled = false;
+    supabase
+      .from('class_sections')
+      .select('*, homeroom_teacher:profiles(*)')
+      .eq('year_num', yearNum)
+      .eq('name', className)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setUnscoped({ key: checkKey, checking: false, section: data || null });
+      });
+    return () => { cancelled = true; };
+  }, [checkKey, yearNum, className]);
+  // Only the result for the URL currently being resolved counts; anything
+  // else is a stale entry from a previous navigation.
+  const unscopedActive = unscoped.key != null && unscoped.key === checkKey ? unscoped : null;
+  const unscopedChecking = checkKey != null && (unscopedActive == null || unscopedActive.checking);
+
+  // Fallback row from the unscoped re-check, used when the loaded sections
+  // missed the URL but the class genuinely exists (it is just not ours).
+  const notYoursSection = unscopedChecking ? null : unscopedActive?.section ?? null;
+  const resolvedSection = section || notYoursSection;
+  const classSectionId = resolvedSection?.id;
+  const teacher = resolvedSection?.homeroom_teacher || null;
+
+  // Outside the teacher's homeroom (any year): read-only view. Hides the
+  // Take Attendance shortcut together with the scope note below.
+  const isOutsideHomeroom = isTeacher && !!resolvedSection && resolvedSection.homeroom_teacher_id !== profile?.id;
+  const showOutsideHomeroomNote = isOutsideHomeroom;
 
   const { students: dbStudents, loading: studentsLoading, error: studentsError } =
     useStudents({ classSectionId });
@@ -161,9 +191,19 @@ export default function ClassDetail() {
 
   const wordColor = WORD_COLOR_MAP[className] || 'k';
 
-  // Not-found state — only after sections have loaded and no matching section
-  // exists (a bad year yields no match either, so it lands here too).
-  const sectionMissing = !sectionsLoading && !sectionsError && !section;
+  // Not-found state — only after sections have loaded and, for teachers, the
+  // unscoped existence re-check has settled without a row either (a bad year
+  // yields no match in either query, so it lands here too).
+  if (sectionMissing && unscopedChecking) {
+    return (
+      <div className="classdetail-page">
+        <div className="card classdetail-empty">
+          <span className="tape tl" />
+          <SkeletonCard />
+        </div>
+      </div>
+    );
+  }
   if (sectionMissing) {
     return (
       <div className="classdetail-page">
@@ -234,7 +274,11 @@ export default function ClassDetail() {
         <div className="classdetail-scope-note" role="note">
           <span className="tape tl" />
           <Info size={18} />
-          <p>You are viewing a class outside your homeroom. Showing read-only stats.</p>
+          <p>
+            {notYoursSection
+              ? `You don't teach Year ${yearNum} ${className}. This class belongs to another teacher. Showing read-only stats.`
+              : 'You are viewing a class outside your homeroom. Showing read-only stats.'}
+          </p>
         </div>
       )}
 
@@ -251,11 +295,16 @@ export default function ClassDetail() {
             </div>
           )}
         </div>
-        <div className="page-header-actions">
-          <Link to={`/dashboard/attendance/${yearNum}/${className}`} className="btn btn-green">
-            <ClipboardCheck size={16} /> Take Attendance
-          </Link>
-        </div>
+        {/* Outside the teacher's homeroom this page is read-only: the full
+            marking flow stays out of reach (attendance picker remains the
+            deliberate all-classes entry point). */}
+        {!isOutsideHomeroom && (
+          <div className="page-header-actions">
+            <Link to={`/dashboard/attendance/${yearNum}/${className}`} className="btn btn-green">
+              <ClipboardCheck size={16} /> Take Attendance
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* STAT CARDS */}

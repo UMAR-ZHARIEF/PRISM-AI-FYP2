@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { RefreshCw, Video, VideoOff, AlertTriangle, ChevronDown, Play, Square, Loader2 } from 'lucide-react';
+import { RefreshCw, Video, VideoOff, AlertTriangle, Play, Square, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import './Camera.css';
 
@@ -257,7 +257,7 @@ export default function Camera() {
               <div className="live-cam-overlay">
                 <VideoOff size={56} />
                 <p>AI service is not running</p>
-                <small>Click <strong>Start AI</strong> on the right to launch the Python face-recognition service. The annotated feed will appear here once it's live.</small>
+                <small>Click <strong>Start AI</strong> to launch the Python face-recognition service. The annotated feed will appear here once it's live.</small>
               </div>
             )}
 
@@ -358,21 +358,6 @@ export default function Camera() {
             </div>
           )}
 
-          {!proc.running && !aiOnline && (
-            <details className="live-cam-hint">
-              <summary>
-                <ChevronDown size={16} />
-                Manual start (if the button doesn't work)
-              </summary>
-              <ol>
-                <li>Open a terminal in the project root.</li>
-                <li><code>cd ai-service/edge</code></li>
-                <li><code>./venv/Scripts/python.exe -u face_recognition.py --camera 0</code></li>
-                <li>The Python window will show your webcam with face boxes.</li>
-                <li>This page will update once Python starts sending detections.</li>
-              </ol>
-            </details>
-          )}
         </div>
       </div>
 

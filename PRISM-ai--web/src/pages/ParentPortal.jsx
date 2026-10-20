@@ -586,7 +586,7 @@ export default function ParentPortal() {
                     <li key={n.id} className="pp-notif-item">
                       <span className={`pp-notif-strip ${notifDotClass(body)}`} />
                       <div className="pp-notif-body">
-                        <p>{body}</p>
+                        <p><strong>{n.title}</strong> — {body}</p>
                         <small>{dateStr}{timeStr ? ` at ${timeStr}` : ''}</small>
                       </div>
                     </li>

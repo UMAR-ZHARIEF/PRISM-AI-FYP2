@@ -15,6 +15,15 @@ import { attendanceRate } from '../lib/attendanceRate';
 import { SkeletonCard } from '../components/Skeleton';
 import './Students.css';
 
+// students.gender is nullable (migration 0001, no NOT NULL): only real M/F
+// values get a label; null/anything else renders as '—' (same contract as
+// StudentProfile's gender card).
+function genderLabel(genderInitial) {
+  if (genderInitial === 'M') return 'Male';
+  if (genderInitial === 'F') return 'Female';
+  return '—';
+}
+
 export default function Students() {
   const toast = useToast();
   const { profile } = useAuth();
@@ -155,7 +164,12 @@ export default function Students() {
   const { classSections: filterClassSections } = useClassSections({ year: filterYearNumber });
 
   // Real face-enrollment status from the AI bridge (shared hook, polls every 30s).
-  const { enrolledNames } = useEnrolledFaces();
+  // loading/error tell us whether the set is authoritative: while the Express
+  // bridge is down (error) or the first fetch is still in flight (loading), a
+  // missing name does NOT mean "not registered", so badges show an unknown
+  // state instead of a false negative.
+  const { enrolledNames, loading: facesLoading, error: facesError } = useEnrolledFaces();
+  const facesKnown = !facesLoading && !facesError;
 
   // Normalize DB rows into the legacy UI shape so the rest of this page can render unchanged.
   // Parent contacts and attendance rates come from the batched lookups above; profiles has no
@@ -174,6 +188,10 @@ export default function Students() {
     }
     const parent = parentsByStudent.get(row.id) || null;
     const rateStats = ratesByStudent.get(row.id) || null;
+    // gender is nullable in students (migration 0001) — pass the DB value
+    // through instead of guessing: only M* → 'M', F* → 'F', null stays null
+    // and renders as '—' via genderLabel.
+    const genderInitial = (row.gender || '').trim().toUpperCase();
     return {
       id: row.id,
       studentNumber: row.student_number || '',
@@ -182,8 +200,8 @@ export default function Students() {
       class: row.class_section?.name || '',
       classId: row.class_section_id,
       classColor: row.class_section?.color || classColors[row.class_section?.name] || null,
-      gender: (row.gender || '').toUpperCase().startsWith('F') ? 'F' : 'M',
-      rawGender: row.gender || 'male',
+      gender: genderInitial.startsWith('M') ? 'M' : genderInitial.startsWith('F') ? 'F' : null,
+      rawGender: row.gender || null,
       dob: row.dob || null,
       age,
       photoUrl: row.photo_url || null,
@@ -498,10 +516,14 @@ export default function Students() {
                   <div className={`student-avatar-lg avatar ${avatarColor}`}>{initials}</div>
                 )}
                 <h3 className="student-name"><Link to={`/dashboard/students/${s.id}`} className="pencil-link">{s.name}</Link></h3>
-                <p className="student-meta mono">Year {s.year} &middot; {s.class} &middot; Age {s.age ?? '—'} &middot; {s.gender === 'M' ? 'Male' : 'Female'}</p>
+                <p className="student-meta mono">Year {s.year} &middot; {s.class} &middot; Age {s.age ?? '—'} &middot; {genderLabel(s.gender)}</p>
                 <div className="student-pill-row">
                   {s.faceRegistered ? (
                     <span className="badge badge-info"><CheckCircle size={12} /> Face Registered</span>
+                  ) : !facesKnown ? (
+                    // Bridge unreachable or first fetch in flight — "not in the
+                    // set" is not evidence of "not registered".
+                    <span className="badge badge-yellow">Face Unknown</span>
                   ) : (
                     <span className="badge badge-absent"><XCircle size={12} /> Not Registered</span>
                   )}
@@ -560,10 +582,10 @@ export default function Students() {
                     <td><span className="badge badge-info" style={{ fontSize: '0.75rem' }}>Year {s.year}</span></td>
                     <td><span className="class-badge" style={{ borderColor: classColors[s.class], color: classColors[s.class] }}>{s.class}</span></td>
                     <td>{s.age ?? '—'}</td>
-                    <td>{s.gender === 'M' ? 'Male' : 'Female'}</td>
+                    <td>{genderLabel(s.gender)}</td>
                     <td>{s.parent || '—'}</td>
                     <td>{s.parentPhone || '—'}</td>
-                    <td>{s.faceRegistered ? <CheckCircle size={16} color="var(--success)" /> : <XCircle size={16} color="var(--danger)" />}</td>
+                    <td>{s.faceRegistered ? <CheckCircle size={16} color="var(--success)" /> : facesKnown ? <XCircle size={16} color="var(--danger)" /> : '—'}</td>
                     <td>
                       <div className="table-attendance">
                         <div className="mini-progress"><div className="mini-fill" style={{ width: hasRate ? `${s.attendanceRate}%` : '0%' }} /></div>
@@ -607,7 +629,7 @@ export default function Students() {
               <div>
                 <h2 className="detail-name">{selectedStudent.name}</h2>
                 <p className="detail-subtitle">
-                  Year {selectedStudent.year} &bull; {selectedStudent.class} &bull; Age {selectedStudent.age ?? '—'} &bull; {selectedStudent.gender === 'M' ? 'Male' : 'Female'}
+                  Year {selectedStudent.year} &bull; {selectedStudent.class} &bull; Age {selectedStudent.age ?? '—'} &bull; {genderLabel(selectedStudent.gender)}
                 </p>
               </div>
             </div>
@@ -625,7 +647,7 @@ export default function Students() {
                 <p>Days Absent</p>
               </div>
               <div className="detail-stat">
-                <h4>{selectedStudent.faceRegistered ? 'Yes' : 'No'}</h4>
+                <h4>{selectedStudent.faceRegistered ? 'Yes' : facesKnown ? 'No' : '—'}</h4>
                 <p>Face Registered</p>
               </div>
             </div>
