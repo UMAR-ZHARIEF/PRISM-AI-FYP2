@@ -540,7 +540,7 @@ export default function Dashboard() {
           <button className="btn btn-outline" onClick={handleMarkAllPresent} disabled={bulkBusy}>
             <UserCheck size={16} /> {bulkBusy ? `Marking ${bulkProgress.done}/${bulkProgress.total}...` : 'Mark All Present'}
           </button>
-          <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Check-In</button>
+          <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Attendance</button>
         </div>
       </div>
 
@@ -570,7 +570,7 @@ export default function Dashboard() {
         <div className="card tilt-l">
           <span className="tape tr" />
           <div className="card-header">
-            <h2>Live Camera Feed</h2>
+            <h2>Take Attendance (Camera)</h2>
             <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}><span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Offline'}</span>
           </div>
           <div className="camera-feed">

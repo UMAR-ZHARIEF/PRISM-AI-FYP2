@@ -85,7 +85,7 @@ export default function Attendance() {
           <div className="page-header attendance-header">
             <div>
               <h1>
-                <span className="word g">Take</span>{' '}
+                <span className="word b">Manual</span>{' '}
                 <span className="word k">Attendance</span>
               </h1>
               <p className="page-subtitle">{dateString}</p>
@@ -112,7 +112,7 @@ export default function Attendance() {
           <div className="page-header attendance-header">
             <div>
               <h1>
-                <span className="word g">Take</span>{' '}
+                <span className="word b">Manual</span>{' '}
                 <span className="word k">Attendance</span>
               </h1>
               <p className="page-subtitle">{dateString}</p>
@@ -203,7 +203,7 @@ function PickerView({ selectedYear, dateString, dateISO }) {
       <div className="page-header attendance-header">
         <div>
           <h1>
-            <span className="word g">Take</span>{' '}
+            <span className="word b">Manual</span>{' '}
             <span className="word k">Attendance</span>
           </h1>
           <p className="page-subtitle">
@@ -502,7 +502,7 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
               <span className="dash-sep">&mdash;</span>{' '}
               <span className={`word ${wordColor}`}>{className}</span>
             </h1>
-            <p className="page-subtitle">Year {yearNum} &middot; {dateString}</p>
+            <p className="page-subtitle">Manual Attendance &middot; Year {yearNum} &middot; {dateString}</p>
           </div>
         </div>
         <div className="marking-header-right">
