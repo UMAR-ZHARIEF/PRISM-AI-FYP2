@@ -220,6 +220,53 @@ async function requireAdminOrTeacher(req, res, next) {
   }
 }
 
+// Same pattern but allows any staff role: 'admin', 'teacher' or 'assistant'.
+// Used for the read-only live-feed endpoints (GET /api/attendance, GET
+// /api/ai/process, GET /api/ai/enrolled) that every signed-in staff member
+// needs on the Dashboard / Camera pages. Parents stay blocked.
+async function requireStaff(req, res, next) {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'Missing token' });
+    if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+    const { data: userData, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !userData?.user) return res.status(401).json({ error: 'Invalid token' });
+
+    const { data: profile, error: pErr } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+    if (pErr || !profile) return res.status(403).json({ error: 'No profile' });
+    if (!['admin', 'teacher', 'assistant'].includes(profile.role)) {
+      return res.status(403).json({ error: 'Staff only' });
+    }
+
+    req.actor = { id: profile.id, role: profile.role };
+    next();
+  } catch (e) {
+    console.error('requireStaff failed:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// Machine-to-machine guard for POST /api/attendance (the AI bridge from
+// face_recognition.py). That call carries no user JWT, so it is protected by
+// a shared secret instead: set AI_BRIDGE_KEY in server/.env AND in the Python
+// process's environment (same value — see server/.env.example), and the
+// sender must pass it as the X-API-Key header. Requests without the header,
+// with a wrong value, or while AI_BRIDGE_KEY is unset are rejected with 401.
+function requireBridgeKey(req, res, next) {
+  const expected = process.env.AI_BRIDGE_KEY || '';
+  const provided = req.get('X-API-Key') || '';
+  if (!expected || provided !== expected) {
+    return res.status(401).json({ error: 'Invalid or missing API key' });
+  }
+  next();
+}
+
 // Fire-and-forget audit log writer. Never throws; logs failures only.
 function logAudit(actorId, action, targetId, metadata) {
   if (!supabase) return;
@@ -259,13 +306,15 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// GET: Fetch all live data (for React dashboard polling)
-app.get('/api/attendance', (req, res) => {
+// GET: Fetch all live data (for React dashboard polling). Staff-only:
+// parents must not see the school-wide live feed.
+app.get('/api/attendance', requireStaff, (req, res) => {
   res.json(liveData);
 });
 
-// POST: Receive attendance data from Python AI
-app.post('/api/attendance', async (req, res) => {
+// POST: Receive attendance data from Python AI — guarded by the shared
+// AI_BRIDGE_KEY secret (X-API-Key header), not a user JWT.
+app.post('/api/attendance', requireBridgeKey, async (req, res) => {
   // Roll the day over first — otherwise a detection just after midnight would
   // be dropped as a duplicate of yesterday's check-in.
   resetIfNewDay();
@@ -729,10 +778,10 @@ app.get('/api/admin/users/list', requireAdmin, async (req, res) => {
 // process supervising a Python child?" — distinct from /api/health which only
 // reports whether Python has POSTed detections recently.
 
-// GET /api/ai/process — current process supervision state. Public so the
-// page can render Start/Stop button state without an admin login round-trip;
-// the mutating endpoints below are gated.
-app.get('/api/ai/process', (req, res) => {
+// GET /api/ai/process — current process supervision state. Staff-only: the
+// Camera page sends the signed-in user's JWT; the mutating endpoints below
+// are gated more tightly still.
+app.get('/api/ai/process', requireStaff, (req, res) => {
   const running = !!(aiProcess && aiProcess.exitCode === null);
   res.json({
     running,
@@ -746,8 +795,9 @@ app.get('/api/ai/process', (req, res) => {
 
 // GET /api/ai/enrolled — list face-enrollment status (read from enrolled_students.json)
 // Returns: { enrolled: [{ name, class, enrolled_at }, ...] }
-// No auth required — the names are already visible elsewhere in the app.
-app.get('/api/ai/enrolled', (req, res) => {
+// Staff-only (admin/teacher/assistant): biometric enrollment status should
+// not be world-readable now that the frontend hooks send the JWT anyway.
+app.get('/api/ai/enrolled', requireStaff, (req, res) => {
   try {
     const { aiDir } = aiPaths();
     const dbPath = path.join(aiDir, 'enrolled_students.json');
@@ -992,9 +1042,9 @@ app.listen(PORT, () => {
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
   console.log('    GET    /api/admin/users/list → List users + emails (admin)');
   console.log('    GET    /api/ai/process       → AI child process state');
-  console.log('    GET    /api/ai/enrolled      → Face-enrollment list (public)');
-  console.log('    POST   /api/ai/start         → Start Python AI (admin)');
-  console.log('    POST   /api/ai/stop          → Stop Python AI  (admin)');
+  console.log('    GET    /api/ai/enrolled      → Face-enrollment list (staff)');
+  console.log('    POST   /api/ai/start         → Start Python AI (admin/teacher)');
+  console.log('    POST   /api/ai/stop          → Stop Python AI  (admin/teacher)');
   console.log('    POST   /api/ai/enroll        → Enroll a face   (admin)');
   console.log('═══════════════════════════════════════════════════');
   console.log('');

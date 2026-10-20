@@ -40,22 +40,28 @@ export default function Camera() {
     }
   };
 
-  const { session } = useAuth();
+  const { session, profile } = useAuth();
 
   // --- AI status + detections polling --------------------------------------
+  // GET /api/health stays public, but /api/attendance and /api/ai/process are
+  // staff-only now, so every poll carries the signed-in user's JWT.
+  const authHeaders = useCallback(() => (
+    session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+  ), [session]);
+
   const fetchAi = useCallback(async () => {
     try {
-      const r = await fetch('/api/health');
+      const r = await fetch('/api/health', { headers: authHeaders() });
       const d = r.ok ? await r.json() : null;
       setAi({ status: d?.aiStatus || 'offline', tracked: d?.studentsTracked || 0, lastUpdate: d?.lastUpdate || null });
     } catch {
       setAi({ status: 'offline', tracked: 0, lastUpdate: null });
     }
-  }, []);
+  }, [authHeaders]);
 
   const fetchDetections = useCallback(async () => {
     try {
-      const r = await fetch('/api/attendance');
+      const r = await fetch('/api/attendance', { headers: authHeaders() });
       if (!r.ok) return;
       const d = await r.json();
       const list = Array.isArray(d?.attendanceToday) ? d.attendanceToday : [];
@@ -63,19 +69,19 @@ export default function Camera() {
     } catch {
       // Express bridge offline — keep prior list, just don't update.
     }
-  }, []);
+  }, [authHeaders]);
 
   // Poll the supervised child process status alongside health/detections.
   const fetchProc = useCallback(async () => {
     try {
-      const r = await fetch('/api/ai/process');
+      const r = await fetch('/api/ai/process', { headers: authHeaders() });
       if (!r.ok) return;
       const d = await r.json();
       setProc({ running: !!d.running, pid: d.pid ?? null, startedAt: d.startedAt ?? null, lastError: d.lastError ?? null });
     } catch {
       // Express down — leave state as-is.
     }
-  }, []);
+  }, [authHeaders]);
 
   useEffect(() => {
     fetchAi();
@@ -317,7 +323,9 @@ export default function Camera() {
           </div>
 
           <div className="live-cam-ai-controls">
-            {proc.running ? (
+            {/* Assistants cannot start/stop the AI (server answers 403 for
+                their role), so don't render a control that always fails. */}
+            {profile?.role !== 'assistant' && (proc.running ? (
               <button
                 type="button"
                 className="btn btn-danger live-cam-ai-btn"
@@ -337,7 +345,7 @@ export default function Camera() {
                 {procBusy ? <Loader2 size={16} className="live-cam-spin" /> : <Play size={16} />}
                 {procBusy ? 'Starting…' : 'Start AI'}
               </button>
-            )}
+            ))}
             {proc.pid && (
               <span className="live-cam-ai-pid mono">PID {proc.pid}</span>
             )}

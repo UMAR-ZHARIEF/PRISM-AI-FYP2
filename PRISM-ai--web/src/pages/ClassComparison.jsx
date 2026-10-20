@@ -11,6 +11,7 @@ import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
 import useStudents from '../hooks/useStudents';
 import useAttendance from '../hooks/useAttendance';
+import { attendanceRate } from '../lib/attendanceRate';
 import { SkeletonChart, SkeletonTable } from '../components/Skeleton';
 import './ClassComparison.css';
 
@@ -162,14 +163,13 @@ export default function ClassComparison() {
     return age;
   };
 
-  /* ── Attendance rate bar data (last 30 days) ── */
+  /* ── Attendance rate bar data (last 30 days). Shared utility counts late
+     as attended; a null rate (no records) just renders no bar. ── */
   const attendanceRateData = useMemo(() => {
     return activeClasses.map(cls => {
       const recs = recordsBySection.get(cls.id) || [];
-      const rate = recs.length > 0
-        ? Math.round((recs.filter(r => r.status === 'present').length / recs.length) * 1000) / 10
-        : 0;
-      return { name: cls.name, rate };
+      const { rate } = attendanceRate(recs);
+      return { name: cls.name, rate: rate != null ? Math.round(rate) : null };
     });
   }, [activeClasses, recordsBySection]);
 
@@ -211,9 +211,8 @@ export default function ClassComparison() {
       const present = todayRecs.filter(r => r.status === 'present').length;
       const absent = todayRecs.filter(r => r.status === 'absent').length;
       const late = todayRecs.filter(r => r.status === 'late').length;
-      const avgRate = allRecs.length > 0
-        ? Math.round((allRecs.filter(r => r.status === 'present').length / allRecs.length) * 1000) / 10
-        : 0;
+      // Shared utility formula ((present + late) / total); null = no records.
+      const { rate: avgRate } = attendanceRate(allRecs);
       const ages = classStudents.map(s => ageFromDob(s.dob)).filter(a => a != null);
       const avgAge = ages.length > 0
         ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length * 10) / 10
@@ -272,7 +271,7 @@ export default function ClassComparison() {
         <p className="comparison-tooltip-label">{label}</p>
         {payload.map((p, i) => (
           <p key={i} className="comparison-tooltip-value" style={{ color: p.color || p.fill }}>
-            {p.name}: <strong className="mono">{p.value}{p.dataKey === 'rate' ? '%' : ''}</strong>
+            {p.name}: <strong className="mono">{p.value != null ? `${p.value}${p.dataKey === 'rate' ? '%' : ''}` : '—'}</strong>
           </p>
         ))}
       </div>
@@ -588,7 +587,9 @@ export default function ClassComparison() {
                 </thead>
                 <tbody>
                   {sortedSummary.map((row) => {
-                    const rateColor = row.rate >= 95 ? 'var(--green)'
+                    const hasRate = row.rate != null;
+                    const rateColor = !hasRate ? 'var(--ink)'
+                      : row.rate >= 95 ? 'var(--green)'
                       : row.rate >= 85 ? 'var(--blue)'
                       : row.rate >= 75 ? 'var(--yellow)'
                       : 'var(--red)';
@@ -614,10 +615,10 @@ export default function ClassComparison() {
                             <div className="comparison-table-progress">
                               <div
                                 className="comparison-table-progress-fill"
-                                style={{ width: `${row.rate}%`, background: rateColor }}
+                                style={{ width: `${hasRate ? row.rate : 0}%`, background: rateColor }}
                               />
                             </div>
-                            <span className="mono">{row.rate}%</span>
+                            <span className="mono">{hasRate ? `${row.rate}%` : '—'}</span>
                           </div>
                         </td>
                         <td className="mono">{row.avgAge}</td>

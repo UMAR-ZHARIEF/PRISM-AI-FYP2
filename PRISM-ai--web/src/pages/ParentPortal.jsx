@@ -7,6 +7,7 @@ import useAttendance from '../hooks/useAttendance';
 import useNotifications from '../hooks/useNotifications';
 import useSchoolEvents from '../hooks/useSchoolEvents';
 import { supabase } from '../lib/supabase';
+import { attendanceRate } from '../lib/attendanceRate';
 import './ParentPortal.css';
 
 // App "today" anchor — the real current date.
@@ -178,22 +179,22 @@ export default function ParentPortal() {
   }, [attendanceRecords]);
 
   // Weekly stats — last 7 calendar days (relative to APP_TODAY) using DB records.
+  // attendanceRate = shared utility ((present + late) / total), so a late mark
+  // still counts as attended, consistent with every other page; 0% until records exist.
   const weeklyStats = useMemo(() => {
     const weekAgo = new Date(APP_TODAY);
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoStr = toISODate(weekAgo);
     const todayStr = toISODate(APP_TODAY);
+    const weekRecords = (attendanceRecords || []).filter((r) => r.date >= weekAgoStr && r.date <= todayStr);
     let present = 0, absent = 0, late = 0;
-    (attendanceRecords || []).forEach((r) => {
-      if (r.date >= weekAgoStr && r.date <= todayStr) {
-        if (r.status === 'present') present++;
-        else if (r.status === 'absent') absent++;
-        else if (r.status === 'late') late++;
-      }
+    weekRecords.forEach((r) => {
+      if (r.status === 'present') present++;
+      else if (r.status === 'absent') absent++;
+      else if (r.status === 'late') late++;
     });
-    const total = present + late + absent;
-    const onTimeRate = total > 0 ? Math.round((present / total) * 100) : 0;
-    return { present, absent, late, onTimeRate };
+    const { rate } = attendanceRate(weekRecords);
+    return { present, absent, late, attendanceRate: rate != null ? Math.round(rate) : 0 };
   }, [attendanceRecords]);
 
   // Calendar grid
@@ -469,8 +470,8 @@ export default function ParentPortal() {
           </div>
           <div className="stat-card s-blue pp-stat pp-stat-4">
             <div className="stat-info">
-              <h3>{weeklyStats.onTimeRate}<span className="pp-pct">%</span></h3>
-              <p>On-Time Rate</p>
+              <h3>{weeklyStats.attendanceRate}<span className="pp-pct">%</span></h3>
+              <p>Attendance Rate</p>
             </div>
           </div>
         </section>
