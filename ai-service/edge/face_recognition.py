@@ -145,16 +145,20 @@ def load_enrolled_students():
     if not DB_PATH.exists():
         print(f"[WARN] No enrolled students found at {DB_PATH}")
         print(f"[WARN] Run enroll_student.py first to register students.")
-        return [], []
+        return [], [], []
     
     with open(DB_PATH, "r", encoding="utf-8") as f:
         db = json.load(f)
     
     names = []
     embeddings = []
+    uuids = []
     
     for student in db.get("students", []):
         names.append(f"{student['name']} ({student['class']})")
+        # Supabase UUID, may be absent in pre-UUID enrollment records —
+        # stored as None and sent as null (server falls back to name match).
+        uuids.append(student.get("student_uuid"))
         emb = np.array(student["embedding"], dtype=np.float32)
         # Ensure normalized
         norm = np.linalg.norm(emb)
@@ -166,7 +170,7 @@ def load_enrolled_students():
     for i, name in enumerate(names):
         print(f"  [{i+1}] {name}")
     
-    return names, embeddings
+    return names, embeddings, uuids
 
 
 # ── Matching ──────────────────────────────────────────────────────────────────
@@ -176,7 +180,8 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
 
 
-def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4):
+def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4,
+               enrolled_uuids=None):
     """
     Match a detected face embedding against enrolled students.
     
@@ -185,12 +190,15 @@ def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4):
         enrolled_names: List of student names
         enrolled_embeddings: List of 512-d enrolled embeddings
         threshold: Minimum cosine similarity for a match (0.0 to 1.0)
+        enrolled_uuids: Optional list of Supabase UUIDs, index-aligned with
+            enrolled_names/enrolled_embeddings (None entries for old records)
     
     Returns:
-        tuple: (name, similarity_score) or (UNKNOWN_LABEL, best_score)
+        tuple: (name, similarity_score, student_uuid) — student_uuid is None
+        for unknown faces or enrollments without a UUID
     """
     if len(enrolled_embeddings) == 0:
-        return UNKNOWN_LABEL, 0.0
+        return UNKNOWN_LABEL, 0.0, None
     
     # Normalize input embedding
     norm = np.linalg.norm(embedding)
@@ -205,9 +213,13 @@ def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4):
     best_score = similarities[best_idx]
     
     if best_score >= threshold:
-        return enrolled_names[best_idx], best_score
+        # Same similarity logic as before — the UUID is only metadata carried
+        # alongside the winning match (None for old enrollment records).
+        student_uuid = (enrolled_uuids[best_idx]
+                        if enrolled_uuids is not None else None)
+        return enrolled_names[best_idx], best_score, student_uuid
     else:
-        return UNKNOWN_LABEL, best_score
+        return UNKNOWN_LABEL, best_score, None
 
 
 # ── Dashboard Communication ───────────────────────────────────────────────────
@@ -297,7 +309,7 @@ def run_recognition(args):
     app = init_face_app(det_size=(args.det_size, args.det_size))
     
     # Load enrolled students
-    enrolled_names, enrolled_embeddings = load_enrolled_students()
+    enrolled_names, enrolled_embeddings, enrolled_uuids = load_enrolled_students()
     
     # Open camera
     camera_source = args.camera
@@ -364,9 +376,9 @@ def run_recognition(args):
                     continue
                 
                 # Match against enrolled students
-                name, sim_score = match_face(
+                name, sim_score, student_uuid = match_face(
                     embedding, enrolled_names, enrolled_embeddings,
-                    threshold=args.threshold
+                    threshold=args.threshold, enrolled_uuids=enrolled_uuids
                 )
                 
                 if name != UNKNOWN_LABEL:
@@ -374,6 +386,7 @@ def run_recognition(args):
                 
                 results.append({
                     "name": name,
+                    "student_uuid": student_uuid,
                     "similarity": sim_score,
                     "det_score": det_score,
                     "bbox": bbox,
@@ -425,6 +438,10 @@ def run_recognition(args):
                             "student_name": student_name,
                             "student_class": student_class,
                             "student_year": 1,
+                            # Exact-match attendance: Supabase UUID from the
+                            # enrollment record (null → server falls back to
+                            # name matching for old data).
+                            "student_uuid": r.get("student_uuid"),
                             "similarity_score": round(float(r["similarity"]), 4),
                             "status": "Present"
                         })
@@ -463,7 +480,7 @@ def run_recognition(args):
                 elif key == ord('r'):
                     # Reload enrolled students (hot-reload)
                     print("[INFO] Reloading enrolled students...")
-                    enrolled_names, enrolled_embeddings = load_enrolled_students()
+                    enrolled_names, enrolled_embeddings, enrolled_uuids = load_enrolled_students()
             else:
                 # Even without debug window, check for keyboard interrupt
                 # Add a minimal waitKey for non-debug mode
