@@ -260,7 +260,7 @@ export default function ClassDetail() {
         </div>
         <div className="page-header-actions">
           <Link to={`/dashboard/attendance/${yearNum}/${className}`} className="btn btn-green">
-            <ClipboardCheck size={16} /> Take Attendance
+            <ClipboardCheck size={16} /> Manual Attendance
           </Link>
         </div>
       </div>

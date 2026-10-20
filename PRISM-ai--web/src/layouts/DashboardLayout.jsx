@@ -18,7 +18,7 @@ const sidebarSections = [
     label: 'Main',
     links: [
       { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { path: '/dashboard/camera', label: 'Live Camera', icon: Video },
+      { path: '/dashboard/camera', label: 'Take Attendance', icon: Video },
     ]
   },
   {
@@ -26,7 +26,7 @@ const sidebarSections = [
     links: [
       { path: '/dashboard/students', label: 'Students', icon: Users },
       { path: '/dashboard/reports', label: 'Reports', icon: FileBarChart },
-      { path: '/dashboard/attendance', label: 'Take Attendance', icon: ClipboardCheck },
+      { path: '/dashboard/attendance', label: 'Manual Attendance', icon: ClipboardCheck },
       { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3, adminOnly: true },
     ]
   },
@@ -107,9 +107,9 @@ export default function DashboardLayout() {
     if (path.includes('students')) return 'Students';
     if (path.includes('reports')) return 'Reports';
     if (path.includes('admin')) return 'Admin Panel';
-    if (path.includes('camera')) return 'Live Camera';
+    if (path.includes('camera')) return 'Take Attendance';
     if (path.includes('class/')) return 'Class Detail';
-    if (path.includes('attendance')) return 'Attendance';
+    if (path.includes('attendance')) return 'Manual Attendance';
     if (path.includes('comparison')) return 'Compare Classes';
     return 'Dashboard';
   };
