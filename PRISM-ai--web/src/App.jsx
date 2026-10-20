@@ -30,7 +30,7 @@ export default function App() {
         <Route path="/biometric-consent" element={<LegalPage kind="biometric" />} />
         <Route path="/parent" element={<ProtectedRoute requireRole="parent"><ParentPortal /></ProtectedRoute>} />
         <Route path="/parent/consent/:studentId" element={<ProtectedRoute requireRole="parent"><ParentConsent /></ProtectedRoute>} />
-        <Route path="/dashboard" element={<ProtectedRoute requireRole={['admin', 'teacher', 'assistant']}><DashboardLayout /></ProtectedRoute>}>
+        <Route path="/dashboard" element={<ProtectedRoute requireRole={['admin', 'teacher']}><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="students" element={<Students />} />
           <Route path="students/:studentId" element={<StudentProfile />} />
