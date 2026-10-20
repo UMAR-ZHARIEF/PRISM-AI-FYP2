@@ -18,7 +18,7 @@ try { require('dotenv').config(); } catch (_) { /* dotenv not installed — igno
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -155,7 +155,101 @@ function aiPaths() {
     ? path.join(aiDir, 'venv', 'Scripts', 'python.exe')
     : path.join(aiDir, 'venv', 'bin', 'python');
   const script = path.join(aiDir, 'face_recognition.py');
-  return { aiDir, pythonExe, script };
+  const pidPath = path.join(aiDir, 'ai.pid');
+  return { aiDir, pythonExe, script, pidPath };
+}
+
+// Port the Python child's MJPEG live-stream server listens on (face_recognition.py
+// --stream-port default). If something still holds this port after a server
+// restart, an orphaned Python process survived its parent Express process.
+const AI_PORT = 5174;
+
+// Read/clear the ai.pid file written by /api/ai/start. Both swallow errors:
+// a missing or unreadable pid file just means "no PID recorded".
+function readAiPid() {
+  try {
+    const raw = fs.readFileSync(aiPaths().pidPath, 'utf-8').trim();
+    const pid = parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearAiPid() {
+  try {
+    fs.unlinkSync(aiPaths().pidPath);
+  } catch (_) { /* already gone — fine */ }
+}
+
+// Existence probe only: signal 0 is dropped, it never terminates the target.
+// Throws ESRCH when the process is gone; EPERM means it exists but is owned
+// by someone else — still "alive" for our purposes.
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+// Find the PID of whatever process has a LOCAL TCP socket on `port` (i.e. is
+// listening or connected on it). Windows: netstat -ano piped through findstr;
+// non-Windows: lsof. Callback receives the numeric PID or null. Parse the
+// LOCAL-address column so an ESTABLISHED row whose REMOTE port happens to be
+// 5174 is not misread as "the port is taken".
+function findPortPid(port, cb) {
+  const cmd = os.platform() === 'win32'
+    ? `netstat -ano -p tcp | findstr :${port}`
+    : `lsof -ti tcp:${port} -sTCP:LISTEN`;
+  exec(cmd, { windowsHide: true }, (err, stdout) => {
+    if (err && !stdout) return cb(null); // findstr exits 1 on no match
+    for (const line of String(stdout).split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length < 2) continue;
+      const localAddr = cols[1] || '';
+      if (!localAddr.endsWith(`:${port}`)) continue;
+      const pid = parseInt(cols[cols.length - 1], 10);
+      if (Number.isInteger(pid) && pid > 0) return cb(pid);
+    }
+    cb(null);
+  });
+}
+
+// Startup reconciliation (#15 zombie cleanup): if this Express process dies
+// while Python is running, ai.pid survives with a live PID and the orphaned
+// Python keeps holding the camera + stream port. On boot: a stale PID (its
+// process is gone) is just cleared; a PID that is alive AND the stream port
+// is occupied is treated as our leftover and terminated, so a fresh
+// /api/ai/start gets a clean camera. The old child cannot be re-adopted (we
+// have no ChildProcess handle for it), so ai.pid is cleared either way — this
+// server instance is not its supervisor.
+function reconcileAiPid() {
+  const pid = readAiPid();
+  if (!pid) return; // normal case — nothing recorded
+
+  if (!isPidAlive(pid)) {
+    console.log(`[AI] Startup: ai.pid holds dead PID ${pid} — clearing stale file`);
+    clearAiPid();
+    return;
+  }
+
+  console.log(`[AI] Startup: ai.pid holds live PID ${pid} — checking port ${AI_PORT}...`);
+  findPortPid(AI_PORT, (portPid) => {
+    if (portPid) {
+      console.log(`[AI] Startup: port ${AI_PORT} is occupied (PID ${portPid}) — PID ${pid} looks like an orphaned AI child; killing it`);
+      try {
+        process.kill(pid, 'SIGTERM');
+        console.log(`[AI] Startup: orphaned AI PID ${pid} terminated`);
+      } catch (e) {
+        console.warn(`[AI] Startup: could not kill orphaned PID ${pid}:`, e.message);
+      }
+    } else {
+      console.log(`[AI] Startup: PID ${pid} is alive but port ${AI_PORT} is free — leaving it alone; clearing ai.pid`);
+    }
+    clearAiPid();
+  });
 }
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
@@ -372,6 +466,7 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
       timeIn: timeIn,
       timeOut: '-',
       similarity: det.similarity_score,
+      studentUuid: det.student_uuid || null, // set by UUID-based enrollments (#18)
     });
 
     console.log(`[✓] ${det.student_name} → ${status.toUpperCase()} at ${timeIn} (similarity: ${det.similarity_score})`);
@@ -407,49 +502,75 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
           continue;
         }
 
-        // 2) Look up the student by full_name (case-insensitive), together
-        //    with the REAL year + class section — the DB row is the source of
-        //    truth for both (the AI payload hardcodes student_year to 1).
-        const { data: matches, error: lookupErr } = await supabase
-          .from('students')
-          .select('id, year_num, class_section:class_sections(name, year_num)')
-          .ilike('full_name', bareName);
+        let student = null;
 
-        if (lookupErr) {
-          console.warn(`[Supabase] Lookup error for "${bareName}":`, lookupErr.message);
-          continue;
-        }
-        if (!matches || matches.length === 0) {
-          console.warn(`[Supabase] No student match for "${bareName}" — skipping`);
-          continue;
-        }
-
-        let student = matches[0];
-        if (matches.length > 1) {
-          // 2a) Same-name disambiguation: the Python payload's student_class
-          //     is the enrolled class name, so use it to pick among namesakes.
-          //     Still ambiguous (same name AND same class, or no class info)
-          //     → warn and skip: guessing would mark the wrong child present.
-          const detClass = (det.student_class || '').trim().toLowerCase();
-          const byClass = detClass
-            ? matches.filter((m) => (m.class_section?.name || '').trim().toLowerCase() === detClass)
-            : [];
-          if (byClass.length === 1) {
-            student = byClass[0];
-            console.log(`[Supabase] "${bareName}" matched ${matches.length} students — resolved by class "${det.student_class}"`);
+        // 2) UUID-first resolution (#18): new enrollments carry the students.id
+        //    straight through the camera payload, which is exact even when
+        //    several students share a name. Only fall back to name matching
+        //    when the UUID is missing (old enrollments) or doesn't resolve.
+        const detUuid = String(det.student_uuid || '').trim();
+        if (detUuid) {
+          const { data: byUuid, error: uuidErr } = await supabase
+            .from('students')
+            .select('id, year_num, class_section:class_sections(name, year_num)')
+            .eq('id', detUuid)
+            .maybeSingle();
+          if (uuidErr) {
+            console.warn(`[Supabase] UUID lookup error for ${detUuid}:`, uuidErr.message);
+          } else if (byUuid) {
+            student = byUuid;
+            console.log(`[Supabase] "${bareName}" resolved by student_uuid → ${student.id}`);
           } else {
-            console.warn(
-              `[Supabase] Ambiguous name "${bareName}": ${matches.length} students share it` +
-              (detClass
-                ? ` and ${byClass.length} match class "${det.student_class}"`
-                : ' and the payload carries no class info') +
-              ' — skipping detection'
-            );
-            continue;
+            console.warn(`[Supabase] student_uuid ${detUuid} not found — falling back to name lookup for "${bareName}"`);
           }
         }
 
-        // 2b) Patch the in-memory row the Camera renders with the real
+        // 3) Name-based fallback: look up the student by full_name
+        //    (case-insensitive), together with the REAL year + class section —
+        //    the DB row is the source of truth for both (the AI payload
+        //    hardcodes student_year to 1).
+        if (!student) {
+          const { data: matches, error: lookupErr } = await supabase
+            .from('students')
+            .select('id, year_num, class_section:class_sections(name, year_num)')
+            .ilike('full_name', bareName);
+
+          if (lookupErr) {
+            console.warn(`[Supabase] Lookup error for "${bareName}":`, lookupErr.message);
+            continue;
+          }
+          if (!matches || matches.length === 0) {
+            console.warn(`[Supabase] No student match for "${bareName}" — skipping`);
+            continue;
+          }
+
+          student = matches[0];
+          if (matches.length > 1) {
+            // 3a) Same-name disambiguation: the Python payload's student_class
+            //     is the enrolled class name, so use it to pick among namesakes.
+            //     Still ambiguous (same name AND same class, or no class info)
+            //     → warn and skip: guessing would mark the wrong child present.
+            const detClass = (det.student_class || '').trim().toLowerCase();
+            const byClass = detClass
+              ? matches.filter((m) => (m.class_section?.name || '').trim().toLowerCase() === detClass)
+              : [];
+            if (byClass.length === 1) {
+              student = byClass[0];
+              console.log(`[Supabase] "${bareName}" matched ${matches.length} students — resolved by class "${det.student_class}"`);
+            } else {
+              console.warn(
+                `[Supabase] Ambiguous name "${bareName}": ${matches.length} students share it` +
+                (detClass
+                  ? ` and ${byClass.length} match class "${det.student_class}"`
+                  : ' and the payload carries no class info') +
+                ' — skipping detection'
+              );
+              continue;
+            }
+          }
+        }
+
+        // 4) Patch the in-memory row the Camera renders with the real
         //     year + class name (it was pushed with nulls above). Match on
         //     the raw detection name — that is what the row was created with.
         const memRow = liveData.attendanceToday.find((r) => r.name === det.student_name);
@@ -458,7 +579,7 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
           memRow.class = student.class_section?.name || null;
         }
 
-        // 2c) Honest notes label: 'Year N <ClassName>' from the resolved
+        // 5) Honest notes label: 'Year N <ClassName>' from the resolved
         //     section, falling back to the POSTed classroom_id, then 'camera'
         //     (the old notes claimed the hardcoded CLASS_1A style id was the
         //     detection source even when it was not a real section).
@@ -466,12 +587,12 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
           ? `Year ${student.class_section.year_num} ${student.class_section.name}`
           : (classroom_id || 'camera');
 
-        // 3) Build date + arrival time — both in LOCAL time. toISOString()
+        // 6) Build date + arrival time — both in LOCAL time. toISOString()
         //    is UTC, which would file pre-8AM MYT detections under yesterday.
         const isoDate = localDateStr(now);                         // YYYY-MM-DD (local)
         const arrivalTime = now.toTimeString().slice(0, 8);        // HH:MM:SS
 
-        // 4) Upsert into attendance_records (unique on student_id,date)
+        // 7) Upsert into attendance_records (unique on student_id,date)
         const { error: upsertErr } = await supabase
           .from('attendance_records')
           .upsert({
@@ -804,15 +925,32 @@ app.get('/api/admin/users/list', requireAdmin, async (req, res) => {
 // GET /api/ai/process — current process supervision state. Staff-only: the
 // Camera page sends the signed-in user's JWT; the mutating endpoints below
 // are gated more tightly still.
+// If our own child is gone but port 5174 is still occupied, Python survived a
+// server restart (orphan) — report running:true with an explanatory note so
+// the UI can offer the force-kill endpoint instead of a dead "Start" button.
 app.get('/api/ai/process', requireStaff, (req, res) => {
   const running = !!(aiProcess && aiProcess.exitCode === null);
-  res.json({
-    running,
-    pid: running ? aiProcess.pid : null,
+  const baseState = {
     startedAt: aiStartedAt,
     lastExitCode: aiLastExitCode,
     lastExitAt: aiLastExitAt,
     lastError: aiLastError,
+  };
+  if (running) {
+    return res.json({ running, orphan: false, pid: aiProcess.pid, ...baseState });
+  }
+  // No supervised child — is an orphan holding the AI stream port?
+  findPortPid(AI_PORT, (portPid) => {
+    if (portPid) {
+      return res.json({
+        running: true,
+        orphan: true,
+        pid: portPid,
+        ...baseState,
+        note: `Port ${AI_PORT} is held by PID ${portPid} from a previous server run (orphaned AI process). Use DELETE /api/ai/process to kill it.`,
+      });
+    }
+    return res.json({ running: false, orphan: false, pid: null, ...baseState });
   });
 });
 
@@ -923,6 +1061,14 @@ app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
     aiLastExitAt = null;
     aiLastError = null;
 
+    // Persist the child PID so the NEXT server run can recognize (and reap)
+    // this Python process if this Express process dies first (#15 zombies).
+    try {
+      fs.writeFileSync(aiPaths().pidPath, String(child.pid), 'utf-8');
+    } catch (e) {
+      console.warn('[AI] Could not write ai.pid:', e.message);
+    }
+
     child.stdout.on('data', (chunk) => {
       const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
       lines.forEach((l) => {
@@ -943,6 +1089,7 @@ app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
       aiLastExitAt = new Date().toISOString();
       if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
       if (aiProcess === child) aiProcess = null;
+      clearAiPid(); // child is gone — the recorded PID is stale now
     });
     child.on('error', (err) => {
       console.error('[AI] Spawn error:', err);
@@ -965,14 +1112,38 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
   const pid = aiProcess.pid;
   try {
     // On Windows, SIGTERM is mapped to a terminate; this typically works.
-    // For really stuck cases the admin can fall back to killing manually.
+    // For really stuck cases the admin can fall back to the force-kill below.
     aiProcess.kill();
+    clearAiPid(); // the exit handler removes it too — belt and braces
     logAudit(req.actor.id, 'ai.stop', null, { pid });
     return res.json({ success: true, pid });
   } catch (e) {
     console.error('[AI stop] failed:', e);
     return res.status(500).json({ error: e.message || 'Failed to stop AI service' });
   }
+});
+
+// DELETE /api/ai/process — force-kill whatever holds the AI stream port (#15).
+// Admin-only. This is the zombie sweeper: after a server restart the orphaned
+// Python child (from the dead server run) is not our aiProcess anymore, so
+// /api/ai/stop can't reach it. We find its PID via netstat on the stream port
+// and SIGTERM it directly. Our own child's exit handler cleans up its state
+// when it is the one being killed.
+app.delete('/api/ai/process', requireAdmin, (req, res) => {
+  findPortPid(AI_PORT, (portPid) => {
+    if (!portPid) {
+      return res.status(404).json({ error: `No process found listening on port ${AI_PORT}` });
+    }
+    try {
+      process.kill(portPid, 'SIGTERM');
+      console.log(`[AI] Force-killed PID ${portPid} holding port ${AI_PORT} (by admin ${req.actor.id})`);
+      logAudit(req.actor.id, 'ai.force_kill', null, { pid: portPid, port: AI_PORT });
+      return res.json({ success: true, killed: portPid });
+    } catch (e) {
+      console.error(`[AI force-kill] failed for PID ${portPid}:`, e);
+      return res.status(500).json({ error: e.message || `Failed to kill PID ${portPid}` });
+    }
+  });
 });
 
 // POST /api/ai/enroll — spawn the Python enrollment script for a specific student.
@@ -1006,6 +1177,10 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
     '-u', script,
     '--name', student.full_name,
     '--class', student.class_section?.name || 'Unknown',
+    // UUID bridge (#18): enroll_student.py stores this as student_uuid next to
+    // the embedding, so detections can resolve students by id — unambiguous
+    // even for namesakes — instead of falling back to name matching.
+    '--student-id', String(student.id),
     '--camera', '0',
     // The admin picked this student deliberately, so a re-enrollment replaces
     // the stored embedding in place instead of tripping the duplicate guard
@@ -1050,6 +1225,7 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
 });
 
 // ── Start Server ─────────────────────────────────────────────────────────────
+reconcileAiPid(); // reclaim any AI child orphaned by a previous server run (#15)
 app.listen(PORT, () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════');
@@ -1065,6 +1241,7 @@ app.listen(PORT, () => {
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
   console.log('    GET    /api/admin/users/list → List users + emails (admin)');
   console.log('    GET    /api/ai/process       → AI child process state');
+  console.log('    DELETE /api/ai/process       → Force-kill orphan AI (admin)');
   console.log('    GET    /api/ai/enrolled      → Face-enrollment list (staff)');
   console.log('    POST   /api/ai/start         → Start Python AI (admin/teacher)');
   console.log('    POST   /api/ai/stop          → Stop Python AI  (admin/teacher)');
