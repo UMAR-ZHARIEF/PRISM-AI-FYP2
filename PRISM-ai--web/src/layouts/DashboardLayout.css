@@ -200,6 +200,25 @@
   border-color: var(--blue);
 }
 
+/* Teacher assigned class badge in topbar */
+.teacher-assigned-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--paper-light);
+  border: 2px solid var(--ink);
+  padding: 6px 14px;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.teacher-badge-pill {
+  font-family: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--blue);
+  letter-spacing: 0.01em;
+}
+
 .topbar-right {
   display: flex;
   align-items: center;

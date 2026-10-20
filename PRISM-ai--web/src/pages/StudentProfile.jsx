@@ -43,6 +43,7 @@ export default function StudentProfile() {
   const { profile } = useAuth();
   const toast = useToast();
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
 
   // ── Real parent contacts (parent_students -> profiles) ──
   // The shared useStudent hook is intentionally untouched (ParentPortal and
@@ -340,8 +341,27 @@ export default function StudentProfile() {
     );
   }
 
-  // Not found
+  // Not found or unauthorized
   if (!student) {
+    if (isTeacher) {
+      return (
+        <div className="sprofile-page">
+          <Link to="/dashboard/students" className="pencil-link sprofile-back">
+            <ArrowLeft size={18} /> Back to Students
+          </Link>
+          <div className="card sprofile-notfound">
+            <span className="tape tl" />
+            <UserX size={48} />
+            <h3>Student Access Restricted</h3>
+            <p>You do not have permission to view this student profile. Teachers can only access students enrolled in their assigned class.</p>
+            <Link to="/dashboard/students" className="btn btn-primary">
+              <ArrowLeft size={16} /> Back to My Students
+            </Link>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="sprofile-page">
         <Link to="/dashboard/students" className="pencil-link sprofile-back">

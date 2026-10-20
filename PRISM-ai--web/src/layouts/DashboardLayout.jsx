@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
+import useClassSections from '../hooks/useClassSections';
 import useNotifications from '../hooks/useNotifications';
 import './DashboardLayout.css';
 
@@ -21,12 +22,12 @@ const sidebarSections = [
     ]
   },
   {
-    label: 'Management',
+    label: 'Academic',
     links: [
       { path: '/dashboard/students', label: 'Students', icon: Users },
       { path: '/dashboard/reports', label: 'Reports', icon: FileBarChart },
       { path: '/dashboard/attendance', label: 'Take Attendance', icon: ClipboardCheck },
-      { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3 },
+      { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3, adminOnly: true },
     ]
   },
   {
@@ -49,10 +50,29 @@ export default function DashboardLayout() {
   const userRef = useRef(null);
 
   const { years, loading: yearsLoading } = useYears();
+  const { classSections: mySections } = useClassSections();
   const { notifications, unreadCount, markAllRead } = useNotifications();
   const { user, profile, signOut } = useAuth();
 
   const role = profile?.role;
+  const isTeacher = role === 'teacher';
+
+  const teacherClassSections = useMemo(() => {
+    if (!isTeacher) return [];
+    return (mySections || []).filter(s => s.homeroom_teacher_id === profile?.id);
+  }, [isTeacher, mySections, profile?.id]);
+
+  const teacherYears = useMemo(() => {
+    return Array.from(new Set(teacherClassSections.map(s => s.year_num)));
+  }, [teacherClassSections]);
+
+  useEffect(() => {
+    if (isTeacher && teacherYears.length > 0) {
+      if (!selectedYear || !teacherYears.includes(selectedYear)) {
+        setSelectedYear(teacherYears[0]);
+      }
+    }
+  }, [isTeacher, teacherYears, selectedYear]);
 
   const displayName = profile?.full_name || user?.email || 'Staff';
   const avatarInitials = useMemo(() => {
@@ -117,16 +137,19 @@ export default function DashboardLayout() {
             return (
               <div key={section.label} className="sidebar-section">
                 {sidebarOpen && <span className="sidebar-section-label">{section.label}</span>}
-                {section.links.map(link => (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    className={`sidebar-link ${(link.path === '/dashboard' ? location.pathname === '/dashboard' : location.pathname.startsWith(link.path)) ? 'active' : ''}`}
-                  >
-                    <link.icon size={20} />
-                    {sidebarOpen && <span>{link.label}</span>}
-                  </Link>
-                ))}
+                {section.links.map(link => {
+                  if (link.adminOnly && role !== 'admin' && role !== 'assistant') return null;
+                  return (
+                    <Link
+                      key={link.path}
+                      to={link.path}
+                      className={`sidebar-link ${(link.path === '/dashboard' ? location.pathname === '/dashboard' : location.pathname.startsWith(link.path)) ? 'active' : ''}`}
+                    >
+                      <link.icon size={20} />
+                      {sidebarOpen && <span>{link.label}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             );
           })}
@@ -151,17 +174,27 @@ export default function DashboardLayout() {
               <span>/</span>
               <span className="breadcrumb-current">{getPageTitle()}</span>
             </div>
-            <select
-              className="year-dropdown"
-              value={selectedYear ?? ''}
-              onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
-              disabled={yearsLoading && years.length === 0}
-            >
-              <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
-              {years.map(y => (
-                <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
-              ))}
-            </select>
+            {isTeacher ? (
+              <div className="teacher-assigned-badge" title="Your assigned class">
+                <span className="teacher-badge-pill">
+                  {teacherClassSections.length > 0
+                    ? teacherClassSections.map(s => `Year ${s.year_num} ${s.name}`).join(', ')
+                    : 'Class: Assigned'}
+                </span>
+              </div>
+            ) : (
+              <select
+                className="year-dropdown"
+                value={selectedYear ?? ''}
+                onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                disabled={yearsLoading && years.length === 0}
+              >
+                <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
+                {years.map(y => (
+                  <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="topbar-right">
