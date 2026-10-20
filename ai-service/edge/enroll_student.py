@@ -67,7 +67,7 @@ def save_database(db):
         json.dump(db, f, indent=2, ensure_ascii=False)
 
 
-def add_student(db, name, class_name, embedding):
+def add_student(db, name, class_name, embedding, student_uuid=None):
     """Add a new student to the database."""
     # max()+1, not len()+1: once entries can be deleted (admin remove-face),
     # len()+1 would reissue an id that is still in use.
@@ -78,6 +78,9 @@ def add_student(db, name, class_name, embedding):
         "id": student_id,
         "name": name,
         "class": class_name,
+        # Supabase UUID (None for local-only enrollments). Recognition sends
+        # this alongside the match so attendance lands on the exact student.
+        "student_uuid": student_uuid,
         "embedding": embedding.tolist(),  # Convert numpy array to list for JSON
         "enrolled_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
@@ -244,6 +247,8 @@ def main():
     parser.add_argument("--overwrite", action="store_true",
                         help="Replace the stored embedding if the student is "
                              "already enrolled (non-interactive)")
+    parser.add_argument("--student-id", type=str, default=None,
+                        help='Student UUID from Supabase (optional — enables exact-match attendance)')
 
     args = parser.parse_args()
 
@@ -283,11 +288,16 @@ def main():
         existing["embedding"] = embedding.tolist()
         existing["class"] = args.class_name
         existing["enrolled_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        # Link/update the Supabase UUID only when one was provided, so a
+        # plain --overwrite re-capture never erases an existing link.
+        if args.student_id:
+            existing["student_uuid"] = args.student_id
         save_database(db)
         student_id = existing["id"]
         print(f"\n[OK] Replaced stored embedding for '{args.name}'")
     else:
-        student_id = add_student(db, args.name, args.class_name, embedding)
+        student_id = add_student(db, args.name, args.class_name, embedding,
+                                 student_uuid=args.student_id)
     
     print(f"\n{'='*60}")
     print(f"  ENROLLMENT COMPLETE")
