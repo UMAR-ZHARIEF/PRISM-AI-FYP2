@@ -179,6 +179,16 @@ export default function Dashboard() {
   // Whether we should actually narrow the client-side data right now.
   const scopeToMine = viewScope === 'mine' && hasHomeroom;
 
+  // Class sections narrowed to the teacher's homerooms while "My Classes" is
+  // active; pass-through otherwise. Drives the class-breakdown panel AND the
+  // Today's Attendance class filter, so the dropdown never offers classes
+  // outside the current view scope.
+  const scopedSections = useMemo(() => (
+    scopeToMine
+      ? classSections.filter(s => myClassSectionIds.includes(s.id))
+      : classSections
+  ), [classSections, myClassSectionIds, scopeToMine]);
+
   // Scoped students + records. When not scoping, these are pass-throughs.
   const scopedStudents = useMemo(() => {
     if (!scopeToMine) return dbStudents;
@@ -226,11 +236,9 @@ export default function Dashboard() {
       if (!id) continue;
       totalsBySection.set(id, (totalsBySection.get(id) || 0) + 1);
     }
-    // Limit the rendered sections to the teacher's homerooms when scoped.
-    const sectionsToShow = scopeToMine
-      ? classSections.filter(s => myClassSectionIds.includes(s.id))
-      : classSections;
-    return sectionsToShow.map(section => {
+    // Rendered sections follow the current view scope (teacher's homerooms
+    // while "My Classes" is active).
+    return scopedSections.map(section => {
       const counts = byClass.get(section.id) || { present: 0, absent: 0, late: 0 };
       const totalForSection = totalsBySection.get(section.id) || (counts.present + counts.absent + counts.late);
       return {
@@ -243,7 +251,7 @@ export default function Dashboard() {
         total: totalForSection,
       };
     });
-  }, [todayRecords, scopedStudents, classSections, scopeToMine, myClassSectionIds]);
+  }, [todayRecords, scopedStudents, scopedSections]);
 
   // Weekly chart data: last 7 days, present/absent/late counts per day.
   const weeklyAttendance = useMemo(() => {
@@ -290,7 +298,7 @@ export default function Dashboard() {
       const where = r.student?.year_num
         ? ` (Year ${r.student.year_num}${cls ? ` ${cls}` : ''})`
         : (cls ? ` (${cls})` : '');
-      const time = r.arrival_time || (r.marked_at ? new Date(r.marked_at).toTimeString().slice(0, 8) : '');
+      const time = (r.arrival_time || '').slice(0, 5) || (r.marked_at ? new Date(r.marked_at).toTimeString().slice(0, 5) : '');
       const isAI = !r.marked_by;
       return {
         id: r.id || r.student_id,
@@ -315,23 +323,25 @@ export default function Dashboard() {
     class: r.student?.class_section?.name || '',
     year: r.student?.year_num,
     status: r.status,
-    timeIn: r.arrival_time || '',
-    timeOut: r.time_out || '',
+    // HH:MM (24h) everywhere — Postgres returns time columns as HH:MM:SS.
+    timeIn: (r.arrival_time || '').slice(0, 5),
+    timeOut: (r.time_out || '').slice(0, 5),
     record: r,
   })), [todayRecords]);
 
   // Class filter options come from the real class_sections table (P7),
-  // deduped by name — the same names the table's class chips and classColors use.
+  // narrowed to the current view scope (see scopedSections) and deduped by
+  // name — the same names the table's class chips and classColors use.
   const classFilterOptions = useMemo(() => {
     const seen = new Set();
     const names = [];
-    for (const s of classSections) {
+    for (const s of scopedSections) {
       if (!s.name || seen.has(s.name)) continue;
       seen.add(s.name);
       names.push(s.name);
     }
     return names;
-  }, [classSections]);
+  }, [scopedSections]);
 
   const filtered = todayRows.filter(a => {
     const matchSearch = a.name.toLowerCase().includes(search.toLowerCase());
@@ -352,6 +362,15 @@ export default function Dashboard() {
   useEffect(() => {
     setPage(1);
   }, [search, filterClass]);
+
+  // If the active class filter falls outside the visible options (scope
+  // switched to "mine" and the class isn't one of the teacher's homerooms),
+  // fall back to All Classes so the select never holds a phantom value.
+  useEffect(() => {
+    if (filterClass !== 'all' && !classFilterOptions.includes(filterClass)) {
+      setFilterClass('all');
+    }
+  }, [classFilterOptions, filterClass]);
 
   const handleSort = (col) => {
     if (sortCol === col) {

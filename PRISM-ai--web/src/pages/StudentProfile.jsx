@@ -533,7 +533,7 @@ export default function StudentProfile() {
           <div className="sprofile-att-timein">
             <Clock size={16} className="sprofile-timein-icon" />
             <span className="sprofile-timein-label">Time In</span>
-            <span className="sprofile-timein-value">{todayTimeIn}</span>
+            <span className="sprofile-timein-value">{todayTimeIn.slice(0, 5)}</span>
           </div>
         )}
 
