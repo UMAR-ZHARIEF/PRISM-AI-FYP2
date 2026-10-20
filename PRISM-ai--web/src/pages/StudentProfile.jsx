@@ -39,9 +39,9 @@ export default function StudentProfile() {
 
   const { student, loading: studentLoading, error: studentError } = useStudent(studentId);
   const { records: attendanceRecords, loading: attendanceLoading, refresh: refreshAttendance } = useAttendance({ studentId });
-  const { notes, addNote, loading: notesLoading } = useTeacherNotes(studentId);
+  const { notes, addNote, refresh: refreshNotes, loading: notesLoading } = useTeacherNotes(studentId);
   const { enrolledNames } = useEnrolledFaces();
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const toast = useToast();
   const isAdmin = profile?.role === 'admin';
 
@@ -135,6 +135,14 @@ export default function StudentProfile() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
 
+  // Inline note edit/delete state. Mirrors the RLS: authors edit their own
+  // note (teacher_notes_update_own); admins delete any note
+  // (teacher_notes_delete_admin), authors delete their own.
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editNoteText, setEditNoteText] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [deletingNote, setDeletingNote] = useState(false);
+
   // Attendance edit modal state (admin only)
   const [editOpen, setEditOpen] = useState(false);
   const [editStatus, setEditStatus] = useState('present');
@@ -203,6 +211,50 @@ export default function StudentProfile() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       handleAddNote();
     }
+  };
+
+  // ---------- Teacher-note inline edit/delete handlers ----------
+  const startEditNote = (note) => {
+    setEditingNoteId(note.id);
+    setEditNoteText(note.body || '');
+  };
+
+  const cancelEditNote = () => {
+    setEditingNoteId(null);
+    setEditNoteText('');
+  };
+
+  const handleSaveNoteEdit = async (note) => {
+    const newBody = editNoteText.trim();
+    if (!newBody || savingNote) return;
+    setSavingNote(true);
+    const { error: updateErr } = await supabase
+      .from('teacher_notes')
+      .update({ body: newBody })
+      .eq('id', note.id);
+    setSavingNote(false);
+    if (updateErr) {
+      if (toast) toast('Could not update note.', 'error');
+      return;
+    }
+    cancelEditNote();
+    if (refreshNotes) refreshNotes();
+  };
+
+  const handleDeleteNote = async (note) => {
+    if (deletingNote) return;
+    if (!window.confirm('Delete this note? This cannot be undone.')) return;
+    setDeletingNote(true);
+    const { error: deleteErr } = await supabase
+      .from('teacher_notes')
+      .delete()
+      .eq('id', note.id);
+    setDeletingNote(false);
+    if (deleteErr) {
+      if (toast) toast('Could not delete note.', 'error');
+      return;
+    }
+    if (refreshNotes) refreshNotes();
   };
 
   // ---------- Admin attendance-edit handlers ----------
@@ -537,8 +589,9 @@ export default function StudentProfile() {
           </div>
         )}
 
-        {/* Admin-only: edit today's attendance record */}
-        {isAdmin && todayRecord && (
+        {/* Edit today's attendance record — all staff. RLS scopes teachers
+            to their own students (migration 0006) and denies the rest. */}
+        {todayRecord && (
           <button
             type="button"
             className="sprofile-att-edit-btn"
@@ -603,9 +656,74 @@ export default function StudentProfile() {
             <div className="sprofile-notes-list">
               {notes.map((note) => {
                 const ts = note.created_at ? Date.parse(note.created_at) : null;
+                const isAuthor = note.teacher_id === user?.id;
+                const canDelete = isAdmin || isAuthor;
+                const isEditing = editingNoteId === note.id;
                 return (
                   <div key={note.id} className="sprofile-note-item">
-                    <p className="sprofile-note-text">{note.body}</p>
+                    <div className="sprofile-note-head">
+                      <span className="sprofile-note-author">
+                        {note.teacher?.full_name || 'Staff'}
+                      </span>
+                      {(isAuthor || canDelete) && (
+                        <div className="sprofile-note-actions">
+                          {isAuthor && !isEditing && (
+                            <button
+                              type="button"
+                              className="sprofile-note-action"
+                              onClick={() => startEditNote(note)}
+                              disabled={savingNote || deletingNote}
+                              title="Edit this note"
+                            >
+                              <Edit2 size={12} /> Edit
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              className="sprofile-note-action sprofile-note-action-danger"
+                              onClick={() => handleDeleteNote(note)}
+                              disabled={savingNote || deletingNote}
+                              title="Delete this note"
+                            >
+                              <Trash2 size={12} /> Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {isEditing ? (
+                      <div className="sprofile-note-edit">
+                        <textarea
+                          className="sprofile-note-textarea"
+                          value={editNoteText}
+                          onChange={(e) => setEditNoteText(e.target.value)}
+                          rows={3}
+                          disabled={savingNote}
+                          autoFocus
+                        />
+                        <div className="sprofile-note-form-footer">
+                          <button
+                            type="button"
+                            className="btn btn-outline sprofile-note-btn"
+                            onClick={cancelEditNote}
+                            disabled={savingNote}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-green sprofile-note-btn"
+                            onClick={() => handleSaveNoteEdit(note)}
+                            disabled={!editNoteText.trim() || savingNote}
+                          >
+                            {savingNote ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="sprofile-note-text">{note.body}</p>
+                    )}
                     <span className="sprofile-note-time">
                       {ts ? timeAgo(ts) : ''}
                     </span>

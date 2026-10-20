@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Bell, Calendar, Clock, CheckCircle, XCircle, AlertCircle, LogOut, Mail, ChevronLeft, ChevronRight, Megaphone, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Bell, Calendar, Clock, CheckCircle, XCircle, AlertCircle, LogOut, Phone, ChevronLeft, ChevronRight, Megaphone, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useStudent from '../hooks/useStudent';
 import useAttendance from '../hooks/useAttendance';
@@ -21,6 +21,17 @@ function toISODate(d) {
   return `${y}-${m}-${day}`;
 }
 
+// Parse a date-only 'YYYY-MM-DD' string as a local-time Date. new Date(string)
+// treats date-only strings as UTC midnight, which shifts the calendar day in
+// timezones behind UTC; building the Date from its parts never shifts.
+function parseISODate(s) {
+  if (!s) return null;
+  const parts = s.split('-').map((p) => parseInt(p, 10));
+  if (parts.length !== 3 || parts.some((p) => Number.isNaN(p))) return null;
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 // Format a 'HH:MM:SS' or 'HH:MM' SQL time to '07:45 AM' style.
 function formatTime(t) {
   if (!t) return '-';
@@ -38,8 +49,8 @@ function formatTime(t) {
 // Age in whole years from an ISO dob string (YYYY-MM-DD). Returns null if unknown.
 function ageFromDob(dob) {
   if (!dob) return null;
-  const d = new Date(dob);
-  if (Number.isNaN(d.getTime())) return null;
+  const d = parseISODate(dob);
+  if (!d) return null;
   let age = APP_TODAY.getFullYear() - d.getFullYear();
   const m = APP_TODAY.getMonth() - d.getMonth();
   if (m < 0 || (m === 0 && APP_TODAY.getDate() < d.getDate())) age -= 1;
@@ -140,7 +151,7 @@ export default function ParentPortal() {
     let cancelled = false;
     supabase
       .from('biometric_consents')
-      .select('granted, revoked_at, created_at')
+      .select('granted, revoked_at, granted_at, student_id')
       .eq('student_id', childId)
       .is('revoked_at', null)
       .order('created_at', { ascending: false })
@@ -163,7 +174,9 @@ export default function ParentPortal() {
 
   // ── Calendar state (preserved from original) ──
   const [calMonth, setCalMonth] = useState(APP_TODAY.getMonth());
-  const calYear = APP_TODAY.getFullYear();
+  const [calYear, setCalYear] = useState(APP_TODAY.getFullYear());
+  // Furthest back the calendar can go — two years of history is plenty.
+  const MIN_CAL_YEAR = APP_TODAY.getFullYear() - 2;
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
   // Build a UI-shaped attendance history from DB records.
@@ -201,10 +214,23 @@ export default function ParentPortal() {
   const firstDay = new Date(calYear, calMonth, 1).getDay();
   const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
 
+  // Step one month in the given direction (-1 / +1). Crossing a year boundary
+  // wraps the month and moves calYear with it; years before MIN_CAL_YEAR stop.
+  const shiftCalMonth = (delta) => {
+    let m = calMonth + delta;
+    let y = calYear;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    if (y < MIN_CAL_YEAR) return;
+    setCalMonth(m);
+    setCalYear(y);
+  };
+
   const attendanceMap = useMemo(() => {
     const map = {};
     attendanceHistory.forEach((r) => {
-      const d = new Date(r.date);
+      const d = parseISODate(r.date);
+      if (!d) return;
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       map[key] = r.status;
     });
@@ -296,13 +322,11 @@ export default function ParentPortal() {
     (activeChildRow && activeChildRow.student && activeChildRow.student.class_section &&
       activeChildRow.student.class_section.homeroom_teacher) || null;
   const teacherName = (homeroomTeacher && homeroomTeacher.full_name) || '';
-  const teacherEmail = (homeroomTeacher && homeroomTeacher.email) || '';
+  // Profiles carry no email column — phone is the only direct contact channel.
+  const teacherPhone = (homeroomTeacher && homeroomTeacher.phone) || '';
   const teacherInitials = teacherName
     ? teacherName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
     : '';
-  const mailSubject = student && student.year_num != null && childClassName
-    ? `Regarding ${childName} (Year ${student.year_num} ${childClassName})`
-    : `Regarding ${childName}`;
 
   // Today's record drives the banner. With no record for today yet we show an
   // honest neutral state instead of pretending the child is present; the real
@@ -486,11 +510,11 @@ export default function ParentPortal() {
             </header>
 
             <div className="pp-cal-nav">
-              <button className="pp-cal-arrow" onClick={() => setCalMonth(m => Math.max(0, m - 1))} aria-label="previous month">
+              <button className="pp-cal-arrow" onClick={() => shiftCalMonth(-1)} aria-label="previous month">
                 <ChevronLeft size={18} />
               </button>
               <strong className="pp-cal-month">{monthNames[calMonth]} {calYear}</strong>
-              <button className="pp-cal-arrow" onClick={() => setCalMonth(m => Math.min(11, m + 1))} aria-label="next month">
+              <button className="pp-cal-arrow" onClick={() => shiftCalMonth(1)} aria-label="next month">
                 <ChevronRight size={18} />
               </button>
             </div>
@@ -534,12 +558,14 @@ export default function ParentPortal() {
               <p className="pp-empty-hint">No attendance records yet.</p>
             ) : (
               <ol className="pp-history-list">
-                {attendanceHistory.slice(0, 14).map((record, i) => (
-                  <li key={i} className={`pp-history-item pp-history-${record.status}`}>
-                    <div className="pp-history-date">
-                      <strong>{new Date(record.date).toLocaleDateString('en-MY', { weekday: 'short' })}</strong>
-                      <span>{new Date(record.date).toLocaleDateString('en-MY', { day: 'numeric', month: 'short' })}</span>
-                    </div>
+                {attendanceHistory.slice(0, 14).map((record, i) => {
+                  const recordDate = parseISODate(record.date);
+                  return (
+                    <li key={i} className={`pp-history-item pp-history-${record.status}`}>
+                      <div className="pp-history-date">
+                        <strong>{recordDate ? recordDate.toLocaleDateString('en-MY', { weekday: 'short' }) : '—'}</strong>
+                        <span>{recordDate ? recordDate.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' }) : ''}</span>
+                      </div>
                     <div className="pp-history-mid">
                       <span className={`badge badge-${record.status}`}>
                         {statusWord[record.status]}
@@ -553,7 +579,8 @@ export default function ParentPortal() {
                       )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ol>
             )}
           </div>
@@ -600,7 +627,7 @@ export default function ParentPortal() {
             <div className="card pp-contact-card">
               <span className="tape tr" />
               <header className="pp-card-head">
-                <h2><Mail size={18} /> Contact Teacher</h2>
+                <h2><Phone size={18} /> Contact Teacher</h2>
               </header>
 
               {teacherName ? (
@@ -613,15 +640,10 @@ export default function ParentPortal() {
                     </div>
                   </div>
 
-                  {teacherEmail ? (
-                    <a
-                      className="btn btn-primary pp-contact-btn"
-                      href={`mailto:${teacherEmail}?subject=${encodeURIComponent(mailSubject)}`}
-                    >
-                      <Mail size={16} /> Send Message
-                    </a>
+                  {teacherPhone ? (
+                    <p className="pp-teacher-email"><Phone size={12} /> {teacherPhone}</p>
                   ) : (
-                    <p className="pp-empty-hint">No email on file for this teacher.</p>
+                    <p className="pp-empty-hint">Contact the school office.</p>
                   )}
                 </>
               ) : (
@@ -646,17 +668,20 @@ export default function ParentPortal() {
                 <p className="pp-empty-hint">No upcoming announcements.</p>
               ) : (
                 <ul className="pp-announce-list">
-                  {events.map(a => (
-                    <li key={a.id} className="pp-announce-item">
-                      <span className="pp-announce-date">
-                        {new Date(a.event_date).toLocaleDateString('en-MY', { day: 'numeric', month: 'short' })}
-                      </span>
-                      <div className="pp-announce-body">
-                        <strong>{a.title}</strong>
-                        {a.description && <p>{a.description}</p>}
-                      </div>
-                    </li>
-                  ))}
+                  {events.map((a) => {
+                    const eventDate = parseISODate(a.event_date);
+                    return (
+                      <li key={a.id} className="pp-announce-item">
+                        <span className="pp-announce-date">
+                          {eventDate ? eventDate.toLocaleDateString('en-MY', { day: 'numeric', month: 'short' }) : ''}
+                        </span>
+                        <div className="pp-announce-body">
+                          <strong>{a.title}</strong>
+                          {a.description && <p>{a.description}</p>}
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
