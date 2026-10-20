@@ -67,10 +67,8 @@ export default function DashboardLayout() {
   }, [teacherClassSections]);
 
   useEffect(() => {
-    if (isTeacher && teacherYears.length > 0) {
-      if (!selectedYear || !teacherYears.includes(selectedYear)) {
-        setSelectedYear(teacherYears[0]);
-      }
+    if (isTeacher && selectedYear !== null && teacherYears.length > 0 && !teacherYears.includes(selectedYear)) {
+      setSelectedYear(null);
     }
   }, [isTeacher, teacherYears, selectedYear]);
 
@@ -175,13 +173,34 @@ export default function DashboardLayout() {
               <span className="breadcrumb-current">{getPageTitle()}</span>
             </div>
             {isTeacher ? (
-              <div className="teacher-assigned-badge" title="Your assigned class">
-                <span className="teacher-badge-pill">
-                  {teacherClassSections.length > 0
-                    ? teacherClassSections.map(s => `Year ${s.year_num} ${s.name}`).join(', ')
-                    : 'Class: Assigned'}
-                </span>
-              </div>
+              teacherClassSections.length <= 1 ? (
+                <div className="teacher-assigned-badge" title="Your assigned class">
+                  <span className="teacher-badge-pill">
+                    {teacherClassSections.length === 1
+                      ? `Year ${teacherClassSections[0].year_num} ${teacherClassSections[0].name}`
+                      : 'Class: Assigned'}
+                  </span>
+                </div>
+              ) : (
+                <select
+                  className="year-dropdown"
+                  value={selectedYear ?? ''}
+                  onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                >
+                  <option value="">All My Classes ({teacherClassSections.length})</option>
+                  {teacherYears.map(yn => {
+                    const classesInYear = teacherClassSections
+                      .filter(s => s.year_num === yn)
+                      .map(s => s.name)
+                      .join(', ');
+                    return (
+                      <option key={yn} value={yn}>
+                        Year {yn} ({classesInYear})
+                      </option>
+                    );
+                  })}
+                </select>
+              )
             ) : (
               <select
                 className="year-dropdown"

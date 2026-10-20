@@ -454,14 +454,14 @@ export default function Reports() {
           </h1>
           <p className="reports-subtitle">
             {isTeacher && hasHomeroom
-              ? `Assigned Class: ${assignedClassLabel}`
+              ? (myClasses.length > 1 ? `Assigned Classes (${myClasses.length}): ${assignedClassLabel}` : `Assigned Class: ${assignedClassLabel}`)
               : (isTeacher ? 'No class assigned — please contact admin' : 'Showing all classes')}
           </p>
           {isTeacher && hasHomeroom && (
             <div className="scope-toggle no-print" role="region" aria-label="Assigned Class">
               <span className="tape tl" />
               <span className="scope-pill is-active" style={{ cursor: 'default' }}>
-                Class: {assignedClassLabel}
+                {myClasses.length > 1 ? `Classes (${myClasses.length}): ${assignedClassLabel}` : `Class: ${assignedClassLabel}`}
               </span>
             </div>
           )}
