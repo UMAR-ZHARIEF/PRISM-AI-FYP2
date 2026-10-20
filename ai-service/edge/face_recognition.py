@@ -213,6 +213,11 @@ def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4):
 # ── Dashboard Communication ───────────────────────────────────────────────────
 
 API_URL = "http://localhost:3001/api/attendance"
+# The Express bridge rejects POST /api/attendance unless it carries the shared
+# secret as the X-API-Key header. SET AI_BRIDGE_KEY in the environment BEFORE
+# running this script (same value as server/.env — see server/.env.example);
+# if it is missing or wrong, the server answers 401 and no detections land.
+AI_BRIDGE_KEY = os.environ.get('AI_BRIDGE_KEY', '')
 SEND_INTERVAL = 10  # Send data every 10 seconds
 
 def send_to_dashboard(recognized_list):
@@ -223,7 +228,10 @@ def send_to_dashboard(recognized_list):
         "detections": recognized_list
     }
     try:
-        response = requests.post(API_URL, json=payload, timeout=5)
+        response = requests.post(
+            API_URL, json=payload, timeout=5,
+            headers={'X-API-Key': AI_BRIDGE_KEY}
+        )
         if response.status_code == 200:
             data = response.json()
             print(f"[DASHBOARD] Sent {len(recognized_list)} student(s) -> "

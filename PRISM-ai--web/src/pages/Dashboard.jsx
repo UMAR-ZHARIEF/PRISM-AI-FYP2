@@ -425,6 +425,10 @@ export default function Dashboard() {
       todayRecords.map(r => [r.student_id, r.arrival_time ?? null])
     );
 
+    // Intentional: everyone is stamped 'present' regardless of arrival time —
+    // that is the button's contract. Late status is only derived on the AI
+    // camera path (checked against app_settings.late_cutoff); per-row fixes
+    // go through the Edit modal instead.
     const rows = roster.map(s => ({
       student_id: s.id,
       date: today,
@@ -436,7 +440,10 @@ export default function Dashboard() {
     }));
 
     // Chunked upsert so one oversized payload can't fail the whole batch.
+    // savedIds tracks exactly which students were persisted, so notifications
+    // below only go out for real successes.
     const CHUNK = 50;
+    const savedIds = [];
     let ok = 0;
     let failed = 0;
     for (let i = 0; i < rows.length; i += CHUNK) {
@@ -449,6 +456,7 @@ export default function Dashboard() {
         console.error('Mark All Present: chunk failed', upsertError);
       } else {
         ok += chunk.length;
+        chunk.forEach(r => savedIds.push(r.student_id));
       }
       setBulkProgress({ done: Math.min(i + CHUNK, rows.length), total: rows.length });
     }
@@ -461,6 +469,54 @@ export default function Dashboard() {
       metadata: { count: ok, classFilter: filterClass },
     });
     if (auditError) console.warn('Mark All Present: audit log insert failed:', auditError.message);
+
+    // Fire-and-forget notification fanout: one row per recipient per saved
+    // student (homeroom teacher + every linked parent). Single batched pass —
+    // one parent_students lookup for the whole roster, then one insert —
+    // mirroring the per-recipient pattern in useMarkAttendance. Failures are
+    // logged, never surfaced to the caller. homeroom_teacher_id rides in on
+    // useStudents' class_section embed.
+    if (savedIds.length > 0) {
+      (async () => {
+        try {
+          const { data: links, error: linkError } = await supabase
+            .from('parent_students')
+            .select('student_id, parent_id')
+            .in('student_id', savedIds);
+          if (linkError) throw linkError;
+
+          const parentsByStudent = new Map();
+          (links || []).forEach((l) => {
+            if (!l.parent_id) return;
+            if (!parentsByStudent.has(l.student_id)) parentsByStudent.set(l.student_id, []);
+            parentsByStudent.get(l.student_id).push(l.parent_id);
+          });
+
+          const actorName = profile?.full_name || user?.email || 'Staff';
+          const rosterById = new Map(roster.map(s => [s.id, s]));
+          const notifRows = [];
+          for (const sid of savedIds) {
+            const s = rosterById.get(sid);
+            if (!s) continue;
+            const recipients = new Set();
+            if (s.class_section?.homeroom_teacher_id) recipients.add(s.class_section.homeroom_teacher_id);
+            (parentsByStudent.get(sid) || []).forEach((pid) => recipients.add(pid));
+            recipients.forEach((rid) => notifRows.push({
+              recipient_id: rid,
+              scope: 'user',
+              type: 'attendance',
+              title: `${s.full_name} marked present`,
+              body: `Marked all present (bulk) by ${actorName} on ${today}.`,
+            }));
+          }
+          if (notifRows.length === 0) return;
+          const { error: nErr } = await supabase.from('notifications').insert(notifRows);
+          if (nErr) console.warn('[Mark All Present notification fanout] insert failed:', nErr.message);
+        } catch (e) {
+          console.warn('[Mark All Present notification fanout] failed:', e);
+        }
+      })();
+    }
 
     setBulkBusy(false);
     setBulkProgress({ done: 0, total: 0 });
@@ -493,6 +549,7 @@ export default function Dashboard() {
   const handleSaveEdit = async () => {
     if (!editRecord || editSaving) return;
     setEditSaving(true);
+    const prevStatus = editRecord.status;
     const payload = {
       status: editStatus,
       marked_by: user ? user.id : null,
@@ -513,6 +570,57 @@ export default function Dashboard() {
       toast('Could not save that change — please try again', 'error');
       return;
     }
+
+    // Audit trail row for this edit (same shape as the bulk action's audit
+    // above; audit_logs INSERT is open to any authenticated user).
+    const { error: auditError } = await supabase.from('audit_logs').insert({
+      actor_id: user ? user.id : null,
+      action: 'attendance.edit',
+      metadata: {
+        student: editRecord.student?.full_name || 'Unknown student',
+        status: editStatus,
+        time_out: editTimeOut || null,
+      },
+    });
+    if (auditError) console.warn('Edit attendance: audit log insert failed:', auditError.message);
+
+    // Notify the student's homeroom teacher + linked parents only when the
+    // status actually changed — a checkout-time-only edit is not fanout-worthy.
+    // Same fire-and-forget fanout pattern as useMarkAttendance.
+    if (editStatus !== prevStatus) {
+      (async () => {
+        try {
+          const { data: ctx } = await supabase
+            .from('students')
+            .select('full_name, class_section:class_sections(homeroom_teacher_id), parent_links:parent_students(parent_id)')
+            .eq('id', editRecord.student_id)
+            .maybeSingle();
+          if (!ctx) return;
+
+          const recipients = new Set();
+          if (ctx.class_section?.homeroom_teacher_id) {
+            recipients.add(ctx.class_section.homeroom_teacher_id);
+          }
+          (ctx.parent_links || []).forEach((l) => {
+            if (l.parent_id) recipients.add(l.parent_id);
+          });
+          if (recipients.size === 0) return;
+
+          const notifRows = Array.from(recipients).map((rid) => ({
+            recipient_id: rid,
+            scope: 'user',
+            type: 'attendance',
+            title: `${ctx.full_name} attendance updated`,
+            body: `Status changed from ${prevStatus} to ${editStatus} on ${editRecord.date}.`,
+          }));
+          const { error: nErr } = await supabase.from('notifications').insert(notifRows);
+          if (nErr) console.warn('[Edit attendance notification fanout] insert failed:', nErr.message);
+        } catch (e) {
+          console.warn('[Edit attendance notification fanout] failed:', e);
+        }
+      })();
+    }
+
     toast('Attendance updated', 'success');
     setEditRecord(null);
     setEditStatus('present');

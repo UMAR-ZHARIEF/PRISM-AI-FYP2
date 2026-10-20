@@ -34,7 +34,7 @@ export default function App() {
           <Route path="students" element={<Students />} />
           <Route path="students/:studentId" element={<StudentProfile />} />
           <Route path="reports" element={<Reports />} />
-          <Route path="admin" element={<AdminPanel />} />
+          <Route path="admin" element={<ProtectedRoute requireRole="admin"><AdminPanel /></ProtectedRoute>} />
           <Route path="camera" element={<Camera />} />
           <Route path="class/:year/:className" element={<ClassDetail />} />
           <Route path="attendance" element={<Attendance />} />

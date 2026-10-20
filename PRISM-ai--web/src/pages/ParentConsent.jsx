@@ -16,7 +16,7 @@ export default function ParentConsent() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { addToast } = useToast();
+  const toast = useToast();
 
   const lang = params.get('lang') === 'bm' ? 'bm' : 'en';
   const content = lang === 'bm' ? biometricBm : biometricEn;
@@ -104,7 +104,7 @@ export default function ParentConsent() {
       return;
     }
 
-    addToast(
+    toast(
       decision === 'yes'
         ? lang === 'bm'
           ? 'Persetujuan biometrik direkodkan. Terima kasih.'
