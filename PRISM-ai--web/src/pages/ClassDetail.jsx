@@ -220,7 +220,10 @@ export default function ClassDetail() {
   ];
 
   const getStudentStatus = (studentId) => {
-    return todayByStudent.get(studentId) || 'absent';
+    // No record today = unmarked, not absent: return null so the badge
+    // renders a neutral "Not marked" state instead of a red Absent badge
+    // (stat cards count 0 absent for these students).
+    return todayByStudent.get(studentId) ?? null;
   };
 
   // Initial loading skeleton — render while we resolve the section and
@@ -319,9 +322,13 @@ export default function ClassDetail() {
                         {s.age != null ? `Age ${s.age} · ` : ''}{s.gender === 'M' ? 'Male' : 'Female'}
                       </p>
                     </div>
-                    <span className={`badge badge-${status}`}>
-                      {status.charAt(0).toUpperCase() + status.slice(1)}
-                    </span>
+                    {status ? (
+                      <span className={`badge badge-${status}`}>
+                        {status.charAt(0).toUpperCase() + status.slice(1)}
+                      </span>
+                    ) : (
+                      <span className="badge badge-info">Not marked</span>
+                    )}
                   </div>
                   <div className="classdetail-student-bottom">
                     <div className="classdetail-rate-block">
