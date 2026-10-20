@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -7,6 +7,9 @@ import {
   recordTermsAndPrivacyAcceptance,
 } from '../lib/policyAcceptance';
 import './LegalGate.css';
+
+// Focusable elements inside the modal, used by the focus trap below.
+const FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])';
 
 // Wraps a tree that requires the user to have accepted the current
 // Terms and Privacy Policy versions. If they haven't (e.g., they were
@@ -76,6 +79,34 @@ export default function LegalGate({ children }) {
   // Verified result for the CURRENT user; null while checking, after a
   // session switch, or before the first check completes.
   const accepted = result.userId === userId ? result.state : null;
+  const overlayRef = useRef(null);
+
+  // Focus trap: pull focus into the dialog when it mounts (otherwise the
+  // first Tab lands on the page behind the overlay), then the overlay's
+  // onKeyDown cycles Tab between the first and last focusable element so
+  // keyboard users can't reach the guarded page underneath.
+  useEffect(function focusModalOnMount() {
+    const overlay = overlayRef.current;
+    if (!overlay) return undefined;
+    const focusable = overlay.querySelectorAll(FOCUSABLE_SELECTOR);
+    if (focusable.length > 0) focusable[0].focus();
+    return undefined;
+  }, [accepted]);
+
+  const trapTabFocus = (e) => {
+    if (e.key !== 'Tab') return;
+    const focusable = e.currentTarget.querySelectorAll(FOCUSABLE_SELECTOR);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   // No session → render children (other guards will deal with auth).
   // Still checking → render children (avoid layout flash). The gate will
@@ -85,7 +116,13 @@ export default function LegalGate({ children }) {
 
   if (accepted === 'error') {
     return (
-      <div className="legal-gate-overlay" role="alertdialog" aria-modal="true">
+      <div
+        className="legal-gate-overlay"
+        role="alertdialog"
+        aria-modal="true"
+        ref={overlayRef}
+        onKeyDown={trapTabFocus}
+      >
         <div className="legal-gate-modal">
           <span className="tape tl" />
           <span className="tape tr" />
@@ -124,7 +161,13 @@ export default function LegalGate({ children }) {
   return (
     <>
       {children}
-      <div className="legal-gate-overlay" role="dialog" aria-modal="true">
+      <div
+        className="legal-gate-overlay"
+        role="dialog"
+        aria-modal="true"
+        ref={overlayRef}
+        onKeyDown={trapTabFocus}
+      >
         <div className="legal-gate-modal">
           <span className="tape tl" />
           <span className="tape tr" />
