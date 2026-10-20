@@ -130,7 +130,7 @@
 .admin-tab.tab-r.active { background: var(--red); }
 .admin-tab.tab-b.active { background: var(--blue); }
 .admin-tab.tab-g.active { background: var(--green); }
-.admin-tab.tab-o.active { background: var(--orange); color: var(--paper-light); }
+.admin-tab.tab-o.active { background: var(--yellow); color: var(--ink); }
 .admin-tab.tab-k.active { background: var(--ink); color: var(--paper-light); }
 
 .admin-tab.active:hover {

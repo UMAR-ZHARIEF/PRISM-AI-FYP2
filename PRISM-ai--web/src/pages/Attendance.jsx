@@ -4,6 +4,7 @@ import { ArrowLeft, Check, X, Clock, ClipboardCheck, Users, ChevronRight } from 
 import { classColors } from '../data/mockData';
 import { YearContext } from '../layouts/DashboardLayout';
 import { useToast } from '../components/Toast';
+import { useAuth } from '../contexts/AuthContext';
 import { SkeletonCard } from '../components/Skeleton';
 import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
@@ -153,6 +154,36 @@ function PickerView({ selectedYear, dateString, dateISO }) {
   const { students: yearStudents, loading: studentsLoading } = useStudents({ year: selectedYear });
   const { records: todayRecords, loading: attendanceLoading } = useAttendance({ fromDate: dateISO, toDate: dateISO });
 
+  // View scope (My Classes vs All Classes): same pattern as the Dashboard —
+  // teachers default to their homeroom sections and can opt in to all;
+  // admins/assistants get no toggle and always see every class.
+  const { profile } = useAuth();
+  const isTeacher = profile?.role === 'teacher';
+
+  // null == no client-side filter (admin / non-teacher);
+  // [] == teacher with no homeroom assignment.
+  const myClassSectionIds = useMemo(() => {
+    if (!isTeacher || !profile?.id) return null;
+    return (classSections || [])
+      .filter(s => s.homeroom_teacher_id === profile.id)
+      .map(s => s.id);
+  }, [classSections, isTeacher, profile]);
+  const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
+
+  // Default scope: teachers with a homeroom see "mine"; everyone else "all".
+  // A teacher without a homeroom resolves to "all" by derivation, no effect
+  // needed to snap the toggle.
+  const [viewScope, setViewScope] = useState(() => (isTeacher ? 'mine' : 'all'));
+  const activeScope = viewScope === 'mine' && !hasHomeroom ? 'all' : viewScope;
+  const scopeToMine = activeScope === 'mine' && hasHomeroom;
+
+  // Sections currently listed, narrowed to the homeroom when scoped.
+  const visibleSections = useMemo(() => {
+    if (!scopeToMine) return classSections;
+    const allow = new Set(myClassSectionIds);
+    return (classSections || []).filter(s => allow.has(s.id));
+  }, [classSections, myClassSectionIds, scopeToMine]);
+
   const loading = sectionsLoading || studentsLoading || attendanceLoading;
 
   // Group students and today's marks by class_section_id so each card can show
@@ -172,7 +203,7 @@ function PickerView({ selectedYear, dateString, dateISO }) {
       if (r.student_id) markedStudentIds.add(r.student_id);
     });
 
-    return (classSections || []).map(sec => {
+    return (visibleSections || []).map(sec => {
       const sectionStudents = studentsBySection.get(sec.id) || [];
       const total = sectionStudents.length;
       const marked = sectionStudents.filter(s => markedStudentIds.has(s.id)).length;
@@ -187,7 +218,7 @@ function PickerView({ selectedYear, dateString, dateISO }) {
         allMarked: total > 0 && marked === total,
       };
     });
-  }, [classSections, yearStudents, todayRecords]);
+  }, [visibleSections, yearStudents, todayRecords]);
 
   return (
     <div className="attendance-page">
@@ -198,6 +229,32 @@ function PickerView({ selectedYear, dateString, dateISO }) {
             <span className="word k">Attendance</span>
           </h1>
           <p className="page-subtitle">Year {selectedYear} &middot; {dateString}</p>
+          {isTeacher && hasHomeroom && (
+            <div className="scope-toggle" role="tablist" aria-label="View scope">
+              <span className="tape tl" />
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeScope === 'mine'}
+                className={`scope-pill ${activeScope === 'mine' ? 'is-active' : ''}`}
+                onClick={() => setViewScope('mine')}
+              >
+                My Classes
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeScope === 'all'}
+                className={`scope-pill ${activeScope === 'all' ? 'is-active' : ''}`}
+                onClick={() => setViewScope('all')}
+              >
+                All Classes
+              </button>
+            </div>
+          )}
+          {isTeacher && !hasHomeroom && (
+            <p className="scope-note">You are not assigned a homeroom — showing all classes</p>
+          )}
         </div>
         <div className="attendance-header-icon">
           <ClipboardCheck size={32} />
