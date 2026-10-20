@@ -518,6 +518,10 @@ export default function AdminPanel() {
       toast('Pick a student first.', 'error');
       return;
     }
+    if (consentStatusFor(enrollStudentId) !== 'granted') {
+      toast('This student\u2019s parent has not granted biometric consent.', 'error');
+      return;
+    }
     if (!session?.access_token) {
       toast('You must be signed in as an admin to do that.', 'error');
       return;
@@ -693,7 +697,7 @@ export default function AdminPanel() {
 
   // parent has no dedicated badge style; badge-info (blue, index.css) keeps it
   // distinct from teacher's badge-teacher green without new CSS.
-  const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', assistant: 'badge-assistant', parent: 'badge-info' };
+  const roleBadge = { admin: 'badge-admin', teacher: 'badge-teacher', parent: 'badge-info' };
   const avatarColors = ['r', 'y', 'g', 'o', 'k'];
 
   // --- formatters ---
@@ -766,7 +770,6 @@ export default function AdminPanel() {
                   <option value="all">All Roles</option>
                   <option value="admin">Admin</option>
                   <option value="teacher">Teacher</option>
-                  <option value="assistant">Assistant</option>
                   <option value="parent">Parent</option>
                 </select>
               </div>
@@ -1145,6 +1148,7 @@ export default function AdminPanel() {
                       {studentList
                         .slice()
                         .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
+                        .filter(s => consentStatusFor(s.id) === 'granted')
                         .map(s => (
                           <option key={s.id} value={s.id}>
                             {s.full_name} (Year {s.year_num} &middot; {s.class_section?.name || '—'})
@@ -1364,7 +1368,6 @@ export default function AdminPanel() {
                 <select value={formRole} onChange={e => setFormRole(e.target.value)} disabled={formSubmitting}>
                   <option value="teacher">Teacher</option>
                   <option value="admin">Admin</option>
-                  <option value="assistant">Assistant</option>
                   <option value="parent">Parent</option>
                 </select>
               </div>
