@@ -1,8 +1,9 @@
 import { useState, useMemo, useContext } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Check, X, Clock, ClipboardCheck, Users, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Check, X, Clock, ClipboardCheck, Users, ChevronRight, UserX } from 'lucide-react';
 import { classColors } from '../data/mockData';
 import { YearContext } from '../layouts/DashboardLayout';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { SkeletonCard } from '../components/Skeleton';
 import useYears from '../hooks/useYears';
@@ -149,6 +150,8 @@ export default function Attendance() {
    PICKER VIEW — list all class sections for the current year
    ============================================================ */
 function PickerView({ selectedYear, dateString, dateISO }) {
+  const { profile } = useAuth();
+  const isTeacher = profile?.role === 'teacher';
   const { classSections, loading: sectionsLoading, error: sectionsError } = useClassSections({ year: selectedYear });
   const { students: yearStudents, loading: studentsLoading } = useStudents({ year: selectedYear });
   const { records: todayRecords, loading: attendanceLoading } = useAttendance({ fromDate: dateISO, toDate: dateISO });
@@ -197,7 +200,7 @@ function PickerView({ selectedYear, dateString, dateISO }) {
             <span className="word g">Take</span>{' '}
             <span className="word k">Attendance</span>
           </h1>
-          <p className="page-subtitle">Year {selectedYear} &middot; {dateString}</p>
+          <p className="page-subtitle">{isTeacher ? 'Your Assigned Class' : `Year ${selectedYear}`} &middot; {dateString}</p>
         </div>
         <div className="attendance-header-icon">
           <ClipboardCheck size={32} />
@@ -224,7 +227,9 @@ function PickerView({ selectedYear, dateString, dateISO }) {
       {!loading && !sectionsError && sectionStats.length === 0 && (
         <div className="card not-found-card">
           <span className="tape tl" />
-          <p className="not-found-message">No classes found for Year {selectedYear}.</p>
+          <p className="not-found-message">
+            {isTeacher ? 'No assigned class found for your account.' : `No classes found for Year ${selectedYear}.`}
+          </p>
         </div>
       )}
 
@@ -271,6 +276,9 @@ function PickerView({ selectedYear, dateString, dateISO }) {
    MARKING VIEW — mark attendance for one class section
    ============================================================ */
 function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
+  const { profile } = useAuth();
+  const isTeacher = profile?.role === 'teacher';
+
   // Resolve :year + :className -> class section row (we need its id).
   // Validated against the loaded sections, not static constants: while they
   // load the marking skeleton renders below, and only a real match passes.
@@ -361,6 +369,36 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
   }
 
   if (!sectionsLoading && !section) {
+    if (isTeacher) {
+      return (
+        <div className="attendance-page">
+          <div className="page-header attendance-header">
+            <div>
+              <Link to="/dashboard/attendance" className="back-link">
+                <ArrowLeft size={20} />
+              </Link>
+              <h1>
+                <span className="word r">Access</span>{' '}
+                <span className="word k">Restricted</span>
+              </h1>
+              <p className="page-subtitle">Year {yearNum || year} &middot; {className}</p>
+            </div>
+          </div>
+          <div className="card not-found-card">
+            <span className="tape tl" />
+            <UserX size={48} style={{ margin: '0 auto 12px', opacity: 0.6, display: 'block' }} />
+            <h3>Attendance Access Restricted</h3>
+            <p className="not-found-message">
+              You are not assigned to Year {yearNum || year} {className}. Teachers can only record and view attendance for their assigned class.
+            </p>
+            <Link to="/dashboard/attendance" className="btn btn-primary" style={{ marginTop: '16px' }}>
+              <ArrowLeft size={16} /> Back to My Class
+            </Link>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="attendance-page">
         <div className="page-header attendance-header">

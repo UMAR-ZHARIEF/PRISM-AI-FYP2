@@ -66,20 +66,8 @@ export default function ClassDetail() {
   const classSectionId = section?.id;
   const teacher = section?.homeroom_teacher || null;
 
-  // Teacher scoping: if a teacher is viewing a class outside their homeroom(s),
-  // surface a small informational note. Admins (and teachers viewing their own
-  // homeroom) never see it.
   const { profile } = useAuth();
   const isTeacher = profile?.role === 'teacher';
-  const teacherHomeroomIds = useMemo(() => {
-    if (!isTeacher || !profile?.id) return [];
-    return (classSections || [])
-      .filter(s => s.homeroom_teacher_id === profile.id)
-      .map(s => s.id);
-  }, [classSections, isTeacher, profile]);
-  const teacherHasHomeroom = teacherHomeroomIds.length > 0;
-  const isMyHomeroom = !!classSectionId && teacherHomeroomIds.includes(classSectionId);
-  const showOutsideHomeroomNote = isTeacher && teacherHasHomeroom && !isMyHomeroom && !!classSectionId;
 
   const { students: dbStudents, loading: studentsLoading, error: studentsError } =
     useStudents({ classSectionId });
@@ -173,6 +161,28 @@ export default function ClassDetail() {
   // exists (a bad year yields no match either, so it lands here too).
   const sectionMissing = !sectionsLoading && !sectionsError && !section;
   if (sectionMissing) {
+    if (isTeacher) {
+      return (
+        <div className="classdetail-page">
+          <div className="page-header classdetail-header">
+            <div>
+              <h1><span className="word r">Access</span> <span className="word k">Restricted</span></h1>
+              <p className="page-subtitle">Year {yearNum || year} &middot; {className}</p>
+            </div>
+          </div>
+          <div className="card classdetail-empty">
+            <span className="tape tl" />
+            <UserX size={48} />
+            <h3>Class Access Restricted</h3>
+            <p>You are not assigned to teach Year {yearNum || year} {className}. Teachers can only view and manage their assigned class.</p>
+            <Link to="/dashboard" className="btn btn-primary">
+              <ArrowLeft size={16} /> Back to Dashboard
+            </Link>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="classdetail-page">
         <div className="page-header classdetail-header">
@@ -234,14 +244,6 @@ export default function ClassDetail() {
         <ArrowLeft size={18} /> Back to Dashboard
       </Link>
 
-      {/* TEACHER-SCOPE NOTE: viewing a class outside their homeroom */}
-      {showOutsideHomeroomNote && (
-        <div className="classdetail-scope-note" role="note">
-          <span className="tape tl" />
-          <Info size={18} />
-          <p>You are viewing a class outside your homeroom. Showing read-only stats.</p>
-        </div>
-      )}
 
       {/* PAGE HEADER */}
       <div className="page-header classdetail-header">

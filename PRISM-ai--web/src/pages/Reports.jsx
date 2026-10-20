@@ -100,17 +100,13 @@ export default function Reports() {
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
-  const [viewScope, setViewScope] = useState(() => (isTeacher ? 'mine' : 'all'));
-
-  // If the teacher loads in before classSections resolve, snap to "all" once
-  // we discover they have no homeroom (and keep them there).
-  useEffect(() => {
-    if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
-      setViewScope('all');
-    }
-  }, [isTeacher, myClassSectionIds]);
-
-  const scopeToMine = viewScope === 'mine' && hasHomeroom;
+  // Strict teacher scoping: teachers can only view reports for their assigned class
+  const scopeToMine = isTeacher && hasHomeroom;
+  const myClasses = useMemo(() => {
+    if (!profile?.id) return [];
+    return classSections.filter(s => s.homeroom_teacher_id === profile.id);
+  }, [classSections, profile?.id]);
+  const assignedClassLabel = myClasses.map(c => `Year ${c.year_num} ${c.name}`).join(', ');
 
   // Scoped: teacher's homerooms only when scopeToMine; otherwise pass-through.
   const scopedRecords = useMemo(() => {
@@ -457,35 +453,20 @@ export default function Reports() {
             {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
           </h1>
           <p className="reports-subtitle">
-            {scopeToMine
-              ? 'Showing your homeroom classes'
-              : (isTeacher ? 'Showing all classes' : 'Showing all classes')}
+            {isTeacher && hasHomeroom
+              ? `Assigned Class: ${assignedClassLabel}`
+              : (isTeacher ? 'No class assigned — please contact admin' : 'Showing all classes')}
           </p>
           {isTeacher && hasHomeroom && (
-            <div className="scope-toggle no-print" role="tablist" aria-label="View scope">
+            <div className="scope-toggle no-print" role="region" aria-label="Assigned Class">
               <span className="tape tl" />
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewScope === 'mine'}
-                className={`scope-pill ${viewScope === 'mine' ? 'is-active' : ''}`}
-                onClick={() => setViewScope('mine')}
-              >
-                My Classes
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewScope === 'all'}
-                className={`scope-pill ${viewScope === 'all' ? 'is-active' : ''}`}
-                onClick={() => setViewScope('all')}
-              >
-                All School
-              </button>
+              <span className="scope-pill is-active" style={{ cursor: 'default' }}>
+                Class: {assignedClassLabel}
+              </span>
             </div>
           )}
           {isTeacher && !hasHomeroom && (
-            <p className="scope-note">You are not assigned a homeroom — showing all-school data</p>
+            <p className="scope-note">You are not assigned to any class in the database. Please contact an administrator.</p>
           )}
         </div>
         <div className="report-flex-gap-8 reports-actions no-print">
