@@ -14,6 +14,7 @@ import Attendance from './pages/Attendance';
 import StudentProfile from './pages/StudentProfile';
 import ClassComparison from './pages/ClassComparison';
 import Camera from './pages/Camera';
+import NotFound from './pages/NotFound';
 import LegalPage from './pages/legal/LegalPage';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 
@@ -41,6 +42,7 @@ export default function App() {
           <Route path="attendance/:year/:className" element={<Attendance />} />
           <Route path="comparison" element={<ClassComparison />} />
         </Route>
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
     </ToastProvider>

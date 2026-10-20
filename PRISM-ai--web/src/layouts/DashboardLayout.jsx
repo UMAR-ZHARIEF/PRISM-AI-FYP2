@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, createContext, useContext } from 
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
-  Camera, UserCog, ChevronDown, User, Video, ClipboardCheck, BarChart3
+  Camera, UserCog, ChevronDown, Video, ClipboardCheck, BarChart3
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
@@ -39,7 +39,8 @@ const sidebarSections = [
 ];
 
 export default function DashboardLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Start collapsed on phones so the sidebar never covers the page on first load.
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [selectedYear, setSelectedYear] = useState(null);
@@ -96,6 +97,10 @@ export default function DashboardLayout() {
     return 'Dashboard';
   };
 
+  // The year filter only feeds dashboard pages; admin and camera ignore it.
+  const showYearDropdown =
+    location.pathname !== '/dashboard/admin' && location.pathname !== '/dashboard/camera';
+
   return (
     <div className="dashboard-layout">
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
@@ -151,17 +156,19 @@ export default function DashboardLayout() {
               <span>/</span>
               <span className="breadcrumb-current">{getPageTitle()}</span>
             </div>
-            <select
-              className="year-dropdown"
-              value={selectedYear ?? ''}
-              onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
-              disabled={yearsLoading && years.length === 0}
-            >
-              <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
-              {years.map(y => (
-                <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
-              ))}
-            </select>
+            {showYearDropdown && (
+              <select
+                className="year-dropdown"
+                value={selectedYear ?? ''}
+                onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                disabled={yearsLoading && years.length === 0}
+              >
+                <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
+                {years.map(y => (
+                  <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="topbar-right">
@@ -187,9 +194,6 @@ export default function DashboardLayout() {
                       </div>
                     ))}
                   </div>
-                  <div className="dropdown-footer">
-                    <Link to="/dashboard">View all notifications</Link>
-                  </div>
                 </div>
               )}
             </div>
@@ -205,9 +209,6 @@ export default function DashboardLayout() {
               </button>
               {userMenuOpen && (
                 <div className="dropdown-panel user-panel">
-                  <Link to="/dashboard" className="dropdown-item" onClick={() => setUserMenuOpen(false)}>
-                    <User size={16} /> Profile
-                  </Link>
                   <Link to="/dashboard/admin" className="dropdown-item" onClick={() => setUserMenuOpen(false)}>
                     <Settings size={16} /> Settings
                   </Link>
