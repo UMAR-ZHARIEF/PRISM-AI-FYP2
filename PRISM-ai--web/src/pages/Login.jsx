@@ -26,7 +26,7 @@ export default function Login() {
     const r = profile.role;
     if (r === 'parent') {
       navigate('/parent', { replace: true });
-    } else if (r === 'admin' || r === 'teacher' || r === 'assistant') {
+    } else if (r === 'admin' || r === 'teacher') {
       navigate('/dashboard', { replace: true });
     } else {
       setErrorMessage('Your account is not assigned a role. Contact the school administrator.');

@@ -147,9 +147,8 @@ export default function Dashboard() {
   }, [weekRecords, selectedYear]);
 
   // ---------- View scope (My Classes vs All School) -----------------------
-  // Admins always see all-school data; teachers default to their homeroom(s)
-  // and can opt in to all-school via a toggle. Other roles (parent etc.)
-  // also fall back to all-school — they don't see this page in practice.
+  // Admins always see all-school data; teachers (the only other role) default
+  // to their homeroom(s) and can opt in to all-school via a toggle.
   const { profile, user } = useAuth();
   const role = profile?.role;
   const isTeacher = role === 'teacher';

@@ -156,7 +156,7 @@ function PickerView({ selectedYear, dateString, dateISO }) {
 
   // View scope (My Classes vs All Classes): same pattern as the Dashboard —
   // teachers default to their homeroom sections and can opt in to all;
-  // admins/assistants get no toggle and always see every class.
+  // admins get no toggle and always see every class.
   const { profile } = useAuth();
   const isTeacher = profile?.role === 'teacher';
 
