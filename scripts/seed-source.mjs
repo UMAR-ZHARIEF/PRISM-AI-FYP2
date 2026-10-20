@@ -158,7 +158,7 @@ export const students = [
   { id: 90, name: 'Fikri Afdhal',      year: 6, class: 'Pandai',  age: 12, gender: 'M', parent: 'Encik Afdhal',    parentEmail: 'afdhal@email.com',    parentPhone: '017-7755015', faceRegistered: true,  attendanceRate: 84 },
 ];
 
-// ── Users (teachers, admin, assistant) ───────────────────────
+// ── Users (teachers, admin) ──────────────────────────────────
 export const users = [
   // Homeroom teachers  --  one per year x class  (30 total)
   // Year 1 (keep originals)
@@ -212,9 +212,8 @@ export const users = [
   { id: 41, name: 'Cikgu Pavithra',  email: 'pavithra@prismai.edu',  role: 'subject', year: null, class: null, subject: 'pm',  years: [1, 2, 3], status: 'active' },
   { id: 42, name: 'Cikgu Rajesh',    email: 'rajesh@prismai.edu',    role: 'subject', year: null, class: null, subject: 'pm',  years: [4, 5, 6], status: 'active' },
 
-  // Admin + assistant
+  // Admin
   { id: 43, name: 'Admin Hafiz',     email: 'hafiz@prismai.edu',     role: 'admin',     year: null, class: null, subject: null, years: null, status: 'active' },
-  { id: 44, name: 'Kak Rina',        email: 'rina@prismai.edu',      role: 'assistant', year: null, class: null, subject: null, years: null, status: 'active' },
 ];
 
 

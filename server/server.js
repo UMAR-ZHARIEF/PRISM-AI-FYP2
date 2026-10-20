@@ -190,8 +190,7 @@ async function requireAdmin(req, res, next) {
 
 // Same as requireAdmin but allows role === 'admin' OR 'teacher'. Used for the
 // AI start/stop endpoints — teachers are the staff physically in classrooms
-// who actually need to turn the camera on/off. Parents and assistants stay
-// blocked.
+// who actually need to turn the camera on/off. Parents stay blocked.
 async function requireAdminOrTeacher(req, res, next) {
   try {
     const auth = req.headers.authorization || '';
@@ -220,7 +219,7 @@ async function requireAdminOrTeacher(req, res, next) {
   }
 }
 
-// Same pattern but allows any staff role: 'admin', 'teacher' or 'assistant'.
+// Same pattern but allows any staff role: 'admin' or 'teacher'.
 // Used for the read-only live-feed endpoints (GET /api/attendance, GET
 // /api/ai/process, GET /api/ai/enrolled) that every signed-in staff member
 // needs on the Dashboard / Camera pages. Parents stay blocked.
@@ -240,7 +239,7 @@ async function requireStaff(req, res, next) {
       .eq('id', userData.user.id)
       .maybeSingle();
     if (pErr || !profile) return res.status(403).json({ error: 'No profile' });
-    if (!['admin', 'teacher', 'assistant'].includes(profile.role)) {
+    if (!['admin', 'teacher'].includes(profile.role)) {
       return res.status(403).json({ error: 'Staff only' });
     }
 
@@ -286,7 +285,7 @@ function logAudit(actorId, action, targetId, metadata) {
     });
 }
 
-const VALID_ROLES = ['admin', 'teacher', 'parent', 'assistant'];
+const VALID_ROLES = ['admin', 'teacher', 'parent'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ── API ROUTES ───────────────────────────────────────────────────────────────
@@ -411,19 +410,43 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
         // 2) Look up the student by full_name (case-insensitive), together
         //    with the REAL year + class section — the DB row is the source of
         //    truth for both (the AI payload hardcodes student_year to 1).
-        const { data: student, error: lookupErr } = await supabase
+        const { data: matches, error: lookupErr } = await supabase
           .from('students')
           .select('id, year_num, class_section:class_sections(name, year_num)')
-          .ilike('full_name', bareName)
-          .maybeSingle();
+          .ilike('full_name', bareName);
 
         if (lookupErr) {
           console.warn(`[Supabase] Lookup error for "${bareName}":`, lookupErr.message);
           continue;
         }
-        if (!student) {
+        if (!matches || matches.length === 0) {
           console.warn(`[Supabase] No student match for "${bareName}" — skipping`);
           continue;
+        }
+
+        let student = matches[0];
+        if (matches.length > 1) {
+          // 2a) Same-name disambiguation: the Python payload's student_class
+          //     is the enrolled class name, so use it to pick among namesakes.
+          //     Still ambiguous (same name AND same class, or no class info)
+          //     → warn and skip: guessing would mark the wrong child present.
+          const detClass = (det.student_class || '').trim().toLowerCase();
+          const byClass = detClass
+            ? matches.filter((m) => (m.class_section?.name || '').trim().toLowerCase() === detClass)
+            : [];
+          if (byClass.length === 1) {
+            student = byClass[0];
+            console.log(`[Supabase] "${bareName}" matched ${matches.length} students — resolved by class "${det.student_class}"`);
+          } else {
+            console.warn(
+              `[Supabase] Ambiguous name "${bareName}": ${matches.length} students share it` +
+              (detClass
+                ? ` and ${byClass.length} match class "${det.student_class}"`
+                : ' and the payload carries no class info') +
+              ' — skipping detection'
+            );
+            continue;
+          }
         }
 
         // 2b) Patch the in-memory row the Camera renders with the real
@@ -795,7 +818,7 @@ app.get('/api/ai/process', requireStaff, (req, res) => {
 
 // GET /api/ai/enrolled — list face-enrollment status (read from enrolled_students.json)
 // Returns: { enrolled: [{ name, class, enrolled_at }, ...] }
-// Staff-only (admin/teacher/assistant): biometric enrollment status should
+// Staff-only (admin/teacher): biometric enrollment status should
 // not be world-readable now that the frontend hooks send the JWT anyway.
 app.get('/api/ai/enrolled', requireStaff, (req, res) => {
   try {

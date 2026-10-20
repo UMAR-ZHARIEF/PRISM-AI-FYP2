@@ -40,7 +40,7 @@ export default function Camera() {
     }
   };
 
-  const { session, profile } = useAuth();
+  const { session } = useAuth();
 
   // --- AI status + detections polling --------------------------------------
   // GET /api/health stays public, but /api/attendance and /api/ai/process are
@@ -323,9 +323,7 @@ export default function Camera() {
           </div>
 
           <div className="live-cam-ai-controls">
-            {/* Assistants cannot start/stop the AI (server answers 403 for
-                their role), so don't render a control that always fails. */}
-            {profile?.role !== 'assistant' && (proc.running ? (
+            {proc.running ? (
               <button
                 type="button"
                 className="btn btn-danger live-cam-ai-btn"
@@ -345,7 +343,7 @@ export default function Camera() {
                 {procBusy ? <Loader2 size={16} className="live-cam-spin" /> : <Play size={16} />}
                 {procBusy ? 'Starting…' : 'Start AI'}
               </button>
-            ))}
+            )}
             {proc.pid && (
               <span className="live-cam-ai-pid mono">PID {proc.pid}</span>
             )}
