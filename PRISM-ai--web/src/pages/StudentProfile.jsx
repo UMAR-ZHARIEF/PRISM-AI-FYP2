@@ -10,6 +10,7 @@ import AttendanceCalendar from '../components/AttendanceCalendar';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { supabase } from '../lib/supabase';
+import { attendanceRate as computeAttendanceRate } from '../lib/attendanceRate';
 import './StudentProfile.css';
 
 const WORD_COLOR_MAP = {
@@ -164,11 +165,12 @@ export default function StudentProfile() {
     })[0];
   }, [attendanceRecords]);
 
-  // Compute attendance rate from records: present / total
+  // Attendance rate via the shared utility: (present + late) / total,
+  // null with no records (renders '—').
   const attendanceRate = useMemo(() => {
     if (!attendanceRecords || attendanceRecords.length === 0) return null;
-    const present = attendanceRecords.filter(r => r.status === 'present').length;
-    return Math.round((present / attendanceRecords.length) * 100);
+    const { rate } = computeAttendanceRate(attendanceRecords);
+    return rate != null ? Math.round(rate) : null;
   }, [attendanceRecords]);
 
   // Derive age from dob if available

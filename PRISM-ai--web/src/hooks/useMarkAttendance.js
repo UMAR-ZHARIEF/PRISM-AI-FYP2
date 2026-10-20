@@ -50,6 +50,20 @@ function useMarkAttendance() {
             .select('full_name, class_section:class_sections(homeroom_teacher_id), parent_links:parent_students(parent_id)')
             .eq('id', studentId)
             .maybeSingle();
+
+          // Fire-and-forget audit trail row: one insert per manual mark, using
+          // the same ctx fetch as the fanout below. Kept inside this detached
+          // block so an audit failure never blocks the response or surfaces as
+          // an attendance error.
+          const { error: auditError } = await supabase.from('audit_logs').insert({
+            actor_id: user ? user.id : null,
+            action: 'attendance.mark',
+            metadata: { student: ctx?.full_name || 'Unknown student', status },
+          });
+          if (auditError) {
+            console.warn('[markAttendance audit] insert failed:', auditError.message);
+          }
+
           if (!ctx) return;
 
           const recipients = new Set();

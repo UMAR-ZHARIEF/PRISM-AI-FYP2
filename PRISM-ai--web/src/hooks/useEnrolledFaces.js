@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 // Real face-enrollment status from the Express bridge:
 // GET /api/ai/enrolled → { enrolled: [{ name, class, enrolled_at }] }.
@@ -23,7 +24,15 @@ function useEnrolledFaces() {
     let cancelled = false;
 
     function load() {
-      fetch('/api/ai/enrolled')
+      // GET /api/ai/enrolled is staff-only now — send the signed-in user's
+      // JWT so the server's requireStaff check passes.
+      supabase.auth.getSession()
+        .then(function resolveSession({ data }) {
+          const token = data?.session?.access_token || '';
+          return fetch('/api/ai/enrolled', {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+        })
         .then(function parseResponse(res) {
           if (!res.ok) throw new Error(`GET /api/ai/enrolled responded ${res.status}`);
           return res.json();

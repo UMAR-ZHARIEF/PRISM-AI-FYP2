@@ -11,6 +11,7 @@ import { useToast } from '../components/Toast';
 import { YearContext } from '../layouts/DashboardLayout';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
+import { attendanceRate } from '../lib/attendanceRate';
 import './Reports.css';
 
 // M palette: Present=green, Late=orange, Absent=red
@@ -125,20 +126,20 @@ export default function Reports() {
     return (yearStudents || []).filter(s => allow.has(s.class_section_id));
   }, [yearStudents, myClassSectionIds, scopeToMine]);
 
-  // Per-student attendance rate over the loaded range.
+  // Per-student attendance rate over the loaded range, via the shared utility
+  // ((present + late) / total). Students with no records stay out of the map.
   const ratesByStudent = useMemo(() => {
-    const tally = {};
+    const byStudent = {};
     scopedRecords.forEach(r => {
       const sid = r.student_id;
       if (!sid) return;
-      if (!tally[sid]) tally[sid] = { present: 0, total: 0 };
-      tally[sid].total += 1;
-      if (r.status === 'present' || r.status === 'late') tally[sid].present += 1;
+      if (!byStudent[sid]) byStudent[sid] = [];
+      byStudent[sid].push(r);
     });
     const out = {};
-    Object.keys(tally).forEach(sid => {
-      const t = tally[sid];
-      out[sid] = t.total > 0 ? Math.round((t.present / t.total) * 100) : 0;
+    Object.keys(byStudent).forEach(sid => {
+      const { rate } = attendanceRate(byStudent[sid]);
+      if (rate != null) out[sid] = Math.round(rate);
     });
     return out;
   }, [scopedRecords]);
@@ -151,7 +152,10 @@ export default function Reports() {
   const present = todayRecords.filter(r => r.status === 'present').length;
   const absent = todayRecords.filter(r => r.status === 'absent').length;
   const late = todayRecords.filter(r => r.status === 'late').length;
-  const totalRate = todayRecords.length > 0 ? Math.round((present / todayRecords.length) * 100) : 0;
+  // Attendance Rate stat: shared utility over the FULL selected range
+  // ((present + late) / total), not just today's records.
+  const { rate: rangeRate } = attendanceRate(scopedRecords);
+  const totalRate = rangeRate != null ? Math.round(rangeRate) : 0;
 
   const pieData = [
     { name: 'Present', value: present },
@@ -204,6 +208,16 @@ export default function Reports() {
     });
   }, [scopedRecords]);
 
+  // Monthly Trend Y-axis: fit the plotted rates with ±5 padding, clamped 0-100.
+  const monthlyDomain = useMemo(() => {
+    const rates = monthlyData.map(d => d.rate).filter(r => r != null);
+    if (rates.length === 0) return [0, 100];
+    return [
+      Math.max(0, Math.min(...rates) - 5),
+      Math.min(100, Math.max(...rates) + 5),
+    ];
+  }, [monthlyData]);
+
   // Class comparison: rate per class section for today's records.
   const classCompareData = useMemo(() => {
     const buckets = {};
@@ -213,14 +227,14 @@ export default function Reports() {
       const csid = stu?.class_section_id;
       const cname = (stu?.class_section?.name) || classNameById[csid];
       if (!cname) return;
-      if (!buckets[cname]) buckets[cname] = { present: 0, total: 0 };
-      buckets[cname].total += 1;
-      if (r.status === 'present') buckets[cname].present += 1;
+      if (!buckets[cname]) buckets[cname] = [];
+      buckets[cname].push(r);
     });
-    return Object.keys(buckets).map(name => ({
-      name,
-      rate: buckets[name].total > 0 ? Math.round((buckets[name].present / buckets[name].total) * 100) : 0,
-    }));
+    // Shared utility counts late as attended, matching every other page.
+    return Object.keys(buckets).map(name => {
+      const { rate } = attendanceRate(buckets[name]);
+      return { name, rate: rate != null ? Math.round(rate) : 0 };
+    });
   }, [todayRecords, studentsById, classNameById]);
 
   // "Needs Attention" + "Perfect Attendance" — driven by per-student rates in range.
@@ -412,10 +426,9 @@ export default function Reports() {
 
     // Summary stats subheader
     const totalStudents = scopedStudents.length;
-    const presentCount = exportRows.filter(r => r.status === 'Present' || r.status === 'Late').length;
-    const overallRate = exportRows.length > 0
-      ? Math.round((presentCount / exportRows.length) * 100)
-      : 0;
+    // Same shared formula as the on-screen stat: (present + late) / total.
+    const { rate: overall } = attendanceRate(scopedRecords);
+    const overallRate = overall != null ? Math.round(overall) : 0;
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
@@ -584,7 +597,7 @@ export default function Reports() {
               <LineChart data={monthlyData}>
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
                 <XAxis dataKey="week" fontSize={12} stroke="#1F1A12" />
-                <YAxis fontSize={12} domain={[80, 100]} stroke="#1F1A12" />
+                <YAxis fontSize={12} domain={monthlyDomain} stroke="#1F1A12" />
                 <Tooltip />
                 <Line type="monotone" dataKey="rate" stroke="#2F75C9" strokeWidth={3} dot={{ fill: '#F2C744', stroke: '#1F1A12', strokeWidth: 2, r: 6 }} activeDot={{ r: 8, fill: '#E04A3F', stroke: '#1F1A12', strokeWidth: 2 }} />
               </LineChart>
