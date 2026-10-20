@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Camera, Eye, EyeOff, CheckCircle, Shield, Zap, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { recordTermsAndPrivacyAcceptance } from '../lib/policyAcceptance';
@@ -11,6 +11,30 @@ const highlights = [
   { icon: Zap, text: 'Instant parent notifications' },
 ];
 
+// Where each role lands after signing in when there's no saved destination.
+const ROLE_HOME = { parent: '/parent', admin: '/dashboard', teacher: '/dashboard' };
+
+// Honour a saved destination (set by ProtectedRoute when a signed-in user
+// was bounced off a route) only when the signed-in role is allowed to view
+// it — otherwise fall back to the role home. Teachers share every /dashboard
+// page except the admin panel.
+function destinationForRole(pathname, role) {
+  const home = ROLE_HOME[role];
+  if (!pathname || !pathname.startsWith('/')) return home;
+  if (role === 'parent' && (pathname === '/parent' || pathname.startsWith('/parent/'))) {
+    return pathname;
+  }
+  if (role === 'admin' && pathname.startsWith('/dashboard')) return pathname;
+  if (
+    role === 'teacher' &&
+    pathname.startsWith('/dashboard') &&
+    !pathname.startsWith('/dashboard/admin')
+  ) {
+    return pathname;
+  }
+  return home;
+}
+
 export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -19,19 +43,28 @@ export default function Login() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const navigate = useNavigate();
-  const { session, profile, signIn } = useAuth();
+  const location = useLocation();
+  const { session, profile, signIn, signOut, loading } = useAuth();
+
+  // Saved by ProtectedRoute when a signed-in user hit a route their role
+  // can't view — lets us send them back there after a fresh sign-in.
+  const fromPathname = location.state?.from?.pathname;
+
+  // Signed in but the profile carries no role we can route to: there is no
+  // safe home for them, so explain instead of redirecting.
+  const unassignedRole = Boolean(session && profile && !ROLE_HOME[profile.role]);
+
+  // Session restored but the profile never arrived once loading finished:
+  // the account has no usable profile, so the login form would just sit
+  // there doing nothing. Show the stranded-account card instead.
+  const stranded = Boolean(session && !loading && !profile);
 
   useEffect(() => {
     if (!session || !profile) return;
-    const r = profile.role;
-    if (r === 'parent') {
-      navigate('/parent', { replace: true });
-    } else if (r === 'admin' || r === 'teacher') {
-      navigate('/dashboard', { replace: true });
-    } else {
-      setErrorMessage('Your account is not assigned a role. Contact the school administrator.');
-    }
-  }, [session, profile, navigate]);
+    const home = ROLE_HOME[profile.role];
+    if (!home) return;
+    navigate(destinationForRole(fromPathname, profile.role), { replace: true });
+  }, [session, profile, navigate, fromPathname]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -85,6 +118,29 @@ export default function Login() {
 
         {/* RIGHT — form */}
         <section className="login-form-col">
+          {stranded ? (
+            <div className="login-form">
+              <span className="tape tl" />
+              <span className="tape tr" />
+
+              <h2>
+                <span className="word k">Account</span> <span className="word y">Pending</span>
+              </h2>
+              <p className="login-subtitle">Your account profile could not be loaded.</p>
+
+              <p className="login-error" role="alert">
+                Your account is not set up yet. Please contact your school administrator.
+              </p>
+
+              <button
+                type="button"
+                className="btn btn-primary login-btn"
+                onClick={() => signOut?.()}
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
           <form className="login-form reveal reveal-3" onSubmit={handleSubmit}>
             <span className="tape tl" />
             <span className="tape tr" />
@@ -140,8 +196,10 @@ export default function Login() {
               </label>
             </div>
 
-            {errorMessage && (
-              <p className="login-error" role="alert">{errorMessage}</p>
+            {(errorMessage || unassignedRole) && (
+              <p className="login-error" role="alert">
+                {errorMessage || 'Your account is not assigned a role. Contact the school administrator.'}
+              </p>
             )}
 
             <button
@@ -164,6 +222,7 @@ export default function Login() {
               <Link to="/biometric-consent" className="pencil-link">Biometric Notice</Link>
             </div>
           </form>
+          )}
         </section>
       </div>
     </div>

@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
 import { classColors } from '../data/mockData';
-import { YearContext } from '../layouts/DashboardLayout';
+import { YearContext, ScopeContext } from '../layouts/DashboardLayout';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
@@ -59,16 +59,20 @@ export default function ClassComparison() {
   }, [classSections, isTeacher, profile?.id]);
   const teacherHasHomeroom = teacherHomeroomIds.length > 0;
 
-  // Default ON for teachers with a homeroom. Hidden for admins.
-  const [myHomeroomsOnly, setMyHomeroomsOnly] = useState(() => isTeacher);
+  // Shared view scope from the layout (ScopeContext): 'mine' maps to the old
+  // "My homerooms only" checkbox, 'all' to every class. The choice survives
+  // navigation between pages. Safe fallback mirrors the year context above.
+  const scopeCtx = useContext(ScopeContext) || {};
+  const myHomeroomsOnly = (scopeCtx.scope || 'all') === 'mine';
+  const setScope = useMemo(() => scopeCtx.setScope || (() => {}), [scopeCtx.setScope]);
 
   // If we later discover the teacher has no homeroom, force the filter off
   // so the dropdowns are not empty.
   useEffect(() => {
     if (isTeacher && classSections && classSections.length > 0 && !teacherHasHomeroom) {
-      setMyHomeroomsOnly(false);
+      setScope('all');
     }
-  }, [isTeacher, teacherHasHomeroom, classSections]);
+  }, [isTeacher, teacherHasHomeroom, classSections, setScope]);
 
   // The list of sections the picker offers.
   const filterToMine = isTeacher && myHomeroomsOnly && teacherHasHomeroom;
@@ -310,7 +314,7 @@ export default function ClassComparison() {
                 type="checkbox"
                 checked={myHomeroomsOnly}
                 onChange={e => {
-                  setMyHomeroomsOnly(e.target.checked);
+                  setScope(e.target.checked ? 'mine' : 'all');
                   setSelectedClassIds(new Set());
                 }}
               />

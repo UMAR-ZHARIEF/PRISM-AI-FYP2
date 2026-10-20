@@ -307,10 +307,20 @@ function PickerView({ selectedYear, dateString, dateISO }) {
                     {cls.total} students
                   </span>
                 </div>
-                <div className={`picker-status ${cls.allMarked ? 'picker-status-done' : 'picker-status-pending'}`}>
-                  {cls.marked > 0
-                    ? `${cls.marked}/${cls.total} marked`
-                    : 'Not marked'}
+                {/* Zero-student classes: neutral text, not the 'Not marked'
+                    pending badge, which implies a chore still to do. */}
+                <div
+                  className={
+                    cls.total === 0
+                      ? 'picker-status'
+                      : `picker-status ${cls.allMarked ? 'picker-status-done' : 'picker-status-pending'}`
+                  }
+                >
+                  {cls.total === 0
+                    ? 'No students'
+                    : cls.marked > 0
+                      ? `${cls.marked}/${cls.total} marked`
+                      : 'Not marked'}
                 </div>
               </div>
               <div className="picker-card-arrow">

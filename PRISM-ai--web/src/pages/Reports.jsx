@@ -8,7 +8,7 @@ import useAttendance from '../hooks/useAttendance';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import { useToast } from '../components/Toast';
-import { YearContext } from '../layouts/DashboardLayout';
+import { YearContext, ScopeContext } from '../layouts/DashboardLayout';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 import { attendanceRate } from '../lib/attendanceRate';
@@ -101,7 +101,12 @@ export default function Reports() {
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
-  const [viewScope, setViewScope] = useState(() => (isTeacher ? 'mine' : 'all'));
+  // Shared view scope from the layout (ScopeContext): the "My Classes" vs
+  // "All School" choice now survives navigation between pages. Safe fallback
+  // mirrors the year context pattern above; falls back to all-school.
+  const scopeCtx = useContext(ScopeContext) || {};
+  const viewScope = scopeCtx.scope || 'all';
+  const setViewScope = useMemo(() => scopeCtx.setScope || (() => {}), [scopeCtx.setScope]);
 
   // If the teacher loads in before classSections resolve, snap to "all" once
   // we discover they have no homeroom (and keep them there).
@@ -109,7 +114,7 @@ export default function Reports() {
     if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
       setViewScope('all');
     }
-  }, [isTeacher, myClassSectionIds]);
+  }, [isTeacher, myClassSectionIds, setViewScope]);
 
   const scopeToMine = viewScope === 'mine' && hasHomeroom;
 
