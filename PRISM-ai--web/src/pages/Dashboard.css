@@ -146,20 +146,24 @@
   align-items: baseline;
   gap: 12px;
   margin-bottom: 18px;
-  /* top/right padding keeps headings clear of the cut-2 diagonal that
-     slopes into the panel's top-right corner (worse on tall panels) */
-  padding: 8px 24px 12px 0;
+  /* Top/right padding keeps headings (and the right-side badge) clear of
+     the cut-2 diagonal that slopes into the panel's top-right corner.
+     The right inset must clear the shallow 94%->100% x wedge over the
+     header's first rows, which is deepest on short cards. */
+  padding: 12px 40px 12px 0;
   border-bottom: 2px dashed var(--ink);
 }
 .dashboard-page .card-header h2 {
   font-family: var(--display);
   font-weight: 900;
-  font-size: 28px;
+  font-size: 22px;
   letter-spacing: -0.02em;
   color: var(--ink);
   display: flex;
   align-items: center;
   gap: 10px;
+  /* drop the glyphs a little further below the sloped top edge */
+  padding-top: 4px;
 }
 
 /* ---------- Live Camera ---------- */
