@@ -138,7 +138,7 @@ DETECT_EVERY_N = 3        # AI worker runs InsightFace every 3rd new frame
 EMOTION_INTERVAL = 2.0    # seconds between emotion-inference passes
 EMOTION_CONF_THRESHOLD = 0.25   # min YOLO score to keep an emotion box
 EMOTION_NMS_IOU = 0.45          # NMS overlap threshold for emotion boxes
-MATCH_IOU_THRESHOLD = 0.3       # min IoU to pair an emotion box with a face
+FACE_CROP_PADDING = 30          # px of context added around each face crop
 
 # ONNX export of the YOLOv8 emotion detector (built from best_v2.pt by the
 # model-export lane; best_v2.pt lives next to this script).
@@ -336,12 +336,30 @@ def parse_yolo_predictions(pred, num_classes, gain, pad_x, pad_y,
     return results
 
 
-class EmotionEngine:
-    """YOLOv8 ONNX emotion detector over full camera frames.
+def crop_face_with_padding(frame, bbox, pad=FACE_CROP_PADDING):
+    """Crop `frame` around an InsightFace bbox with `pad` px of context.
 
-    Runs on the SAME onnxruntime providers as InsightFace (from gpu_check),
-    but far less often — once per EMOTION_INTERVAL seconds, alongside the
-    recognition cycle in the AI worker thread.
+    bbox is [x1, y1, x2, y2] (floats, InsightFace convention); the padded
+    rectangle is clamped to the frame bounds. Returns None for degenerate
+    boxes that fall entirely outside the frame.
+    """
+    h, w = frame.shape[:2]
+    x1, y1, x2, y2 = np.asarray(bbox, dtype=np.float32)
+    xa, ya = int(max(0, x1 - pad)), int(max(0, y1 - pad))
+    xb, yb = int(min(w, x2 + pad)), int(min(h, y2 + pad))
+    if xb <= xa or yb <= ya:
+        return None
+    return frame[ya:yb, xa:xb]
+
+
+class EmotionEngine:
+    """YOLOv8 ONNX emotion classifier over cropped face regions.
+
+    InsightFace finds the faces; this engine only LABELS them. Each face crop
+    (see crop_face_with_padding) is letterboxed and classified individually,
+    so the model sees an actual face instead of the edge artifacts a
+    full-frame YOLO run locks onto. Runs on CPU, far less often than
+    detection — once per EMOTION_INTERVAL seconds in the AI worker thread.
     """
 
     def __init__(self, model_path, providers):
@@ -374,68 +392,33 @@ class EmotionEngine:
         self.input_size = size
 
         self.classes = read_onnx_class_names(self.session, FALLBACK_EMOTION_CLASSES)
-        self._frame_wh = None
         print(f"[EMOTION] Ready — {len(self.classes)} classes, input {size}x{size}")
 
-    def detect(self, frame_bgr):
-        """Return [{bbox, emotion, confidence}] for faces in `frame_bgr`."""
-        if self.session is None:
-            return []
-        h, w = frame_bgr.shape[:2]
-        padded, gain, pad_x, pad_y = _letterbox(frame_bgr, self.input_size)
+    def classify_face(self, face_crop):
+        """Classify one cropped face region; (emotion, confidence) or None.
+
+        The crop already centers on an InsightFace detection, so the YOLO
+        model only has to label it: the highest-confidence detection wins and
+        'nothing above threshold' simply means the emotion is unknown (None).
+        """
+        if self.session is None or face_crop is None or face_crop.size == 0:
+            return None
+        padded, gain, pad_x, pad_y = _letterbox(face_crop, self.input_size)
         # NOTE: best_v2.pt was trained on raw 0-255 pixel values, NOT
         # normalized 0-1. Dividing by 255 crushes the signal to near-zero
         # (verified: 0.0019 max confidence vs 0.9985 without normalization).
         blob = padded[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32)
         outputs = self.session.run(None, {self.input_name: blob})
 
+        # Boxes stay in crop coordinates (no frame_wh clamp) — only the label
+        # and score are consumed, never the geometry.
         raw = parse_yolo_predictions(
-            outputs[0], len(self.classes), gain, pad_x, pad_y, frame_wh=(w, h)
+            outputs[0], len(self.classes), gain, pad_x, pad_y
         )
-        faces = []
-        for det in raw:
-            faces.append({
-                "bbox": det["bbox"],
-                "emotion": self.classes[det["class_id"]],
-                "confidence": det["confidence"],
-            })
-        return faces
-
-
-def iou(box_a, box_b):
-    """Intersection over Union of two (x1, y1, x2, y2) boxes."""
-    ax1, ay1, ax2, ay2 = box_a[0], box_a[1], box_a[2], box_a[3]
-    bx1, by1, bx2, by2 = box_b[0], box_b[1], box_b[2], box_b[3]
-    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
-    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
-    inter_w = max(0.0, ix2 - ix1)
-    inter_h = max(0.0, iy2 - iy1)
-    inter = inter_w * inter_h
-    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-    union = area_a + area_b - inter
-    return inter / union if union > 0 else 0.0
-
-
-def attach_emotions(face_results, emotion_faces):
-    """Pair each InsightFace face with the best-overlapping emotion box.
-
-    IoU matching inline: for every face bbox pick the emotion detection with
-    the highest IoU above MATCH_IOU_THRESHOLD and attach its label. Faces
-    without a match keep emotion=None (drawn gray, engagement null).
-    """
-    for entry in face_results:
-        best, best_iou = None, MATCH_IOU_THRESHOLD
-        face_box = np.asarray(entry["bbox"], dtype=np.float32)
-        for ef in emotion_faces:
-            overlap = iou(face_box, ef["bbox"])
-            if overlap > best_iou:
-                best, best_iou = ef, overlap
-        if best is not None:
-            entry["emotion"] = best["emotion"]
-            entry["emotion_confidence"] = best["confidence"]
-            entry["engagement_state"] = engagement_state_for(best["emotion"])
-    return face_results
+        if not raw:
+            return None
+        best = max(raw, key=lambda det: det["confidence"])
+        return self.classes[best["class_id"]], best["confidence"]
 
 
 # ── InsightFace Setup ─────────────────────────────────────────────────────────
@@ -591,19 +574,28 @@ def send_to_dashboard(recognized_list):
 
 # ── AI Worker (Thread 2) ──────────────────────────────────────────────────────
 
-def ai_worker_loop(app, emotion_engine, db_holder, threshold, stop_event):
+def ai_worker_loop(app_holder, emotion_engine, db_holder, threshold, stop_event):
     """Thread-2 body: detection + recognition + emotion on the shared frame.
 
     Consumes only every DETECT_EVERY_N-th NEW camera frame (skipping keeps
-    latency low when inference is slower than the display capture rate). After
-    each cycle it atomically swaps the shared annotation cache; the display
-    thread draws that cache without ever waiting on GPU inference.
+    latency low when inference is slower than the display capture rate). Each
+    InsightFace face is cropped (padded bbox) and classified individually by
+    the emotion engine — no IoU matching, the crop IS the face. After each
+    cycle it atomically swaps the shared annotation cache; the display thread
+    draws that cache without ever waiting on GPU inference.
     """
     frames_seen = 0
     last_seq = -1
     last_emotion_time = 0.0
-    emotion_faces = []   # most recent emotion detections (updated every EMOTION_INTERVAL)
+    last_emotions = []   # per-face (emotion, confidence) from the last emotion pass
     last_log_time = 0.0
+
+    # ── Watchdog state (self-healing for silently degraded detection) ──
+    silent_cycles = 0          # consecutive cycles with 0 faces detected
+    last_reinit_time = 0.0     # last time we reinitialized
+    camera_black_count = 0     # consecutive near-black frames
+    SILENT_CYCLES_THRESHOLD = 90  # ~30 seconds at 3 AI cycles/sec
+    REINIT_COOLDOWN = 60.0      # minimum seconds between reinitializations
     while not stop_event.is_set():
         # Grab the newest frame + its sequence number (display thread replaces
         # the array reference per capture; it never mutates frames in place).
@@ -615,6 +607,18 @@ def ai_worker_loop(app, emotion_engine, db_holder, threshold, stop_event):
             time.sleep(0.005)  # display thread hasn't captured yet
             continue
         last_seq = seq
+
+        # ── Camera watchdog: a stream of near-black frames points at a camera
+        # or driver problem, not a model problem — surface it loudly. ──
+        frame_mean = np.mean(frame) if frame is not None else 0
+        if frame_mean < 5.0:  # nearly pure black
+            camera_black_count += 1
+            if camera_black_count >= 30:  # ~30 consecutive black frames
+                print("[WATCHDOG] Camera producing black frames — possible hardware issue", flush=True)
+                camera_black_count = 0  # reset to avoid spam
+        else:
+            camera_black_count = 0
+
         frames_seen += 1
         if frames_seen % DETECT_EVERY_N != 0:
             continue
@@ -625,7 +629,7 @@ def ai_worker_loop(app, emotion_engine, db_holder, threshold, stop_event):
         results = []
         recognized_count = 0
         try:
-            faces = app.get(frame)
+            faces = app_holder[0].get(frame)
         except Exception as e:
             print(f"[AI] detection error: {e}", flush=True)
             continue
@@ -646,22 +650,58 @@ def ai_worker_loop(app, emotion_engine, db_holder, threshold, stop_event):
                 "similarity": sim_score,
                 "student_uuid": student_uuid,
                 "det_score": det_score,
-                # Emotion fields default to None; filled in below on a match.
+                # Emotion fields default to None; filled from the face's
+                # own crop classification below.
                 "emotion": None,
                 "engagement_state": None,
                 "emotion_confidence": None,
             })
 
+        # ── Detection watchdog: a long silent streak usually means the GPU
+        # session degraded (DML sessions have been observed to stop detecting
+        # after minutes of concurrent use). Reinitialize InsightFace in place;
+        # app_holder is a mutable box so the swap persists for later cycles. ──
+        if len(results) == 0:
+            silent_cycles += 1
+        else:
+            silent_cycles = 0
+
+        if (silent_cycles >= SILENT_CYCLES_THRESHOLD and
+                time.time() - last_reinit_time > REINIT_COOLDOWN):
+            print(f"[WATCHDOG] Detection silent for {silent_cycles} cycles — reinitializing InsightFace", flush=True)
+            try:
+                app_holder[0] = init_face_app(det_size=(640, 640))
+                silent_cycles = 0
+                last_reinit_time = time.time()
+                print("[WATCHDOG] InsightFace reinitialized successfully", flush=True)
+            except Exception as e:
+                print(f"[WATCHDOG] Reinitialization failed: {e}", flush=True)
+                # Keep trying — reset the cooldown so it retries sooner
+                last_reinit_time = time.time() - REINIT_COOLDOWN + 30.0
+
         # ── Emotion inference (every EMOTION_INTERVAL seconds, same frame) ──
+        # Each face is classified on its own padded crop; the per-face label
+        # is carried forward between passes positionally (faces keep their
+        # last emotion until the next pass rebuilds the list).
         now = time.time()
         if emotion_engine is not None and now - last_emotion_time >= EMOTION_INTERVAL:
-            try:
-                emotion_faces = emotion_engine.detect(frame)
-            except Exception as e:
-                print(f"[EMOTION] inference error: {e}", flush=True)
-                emotion_faces = []
+            fresh_emotions = []
+            for entry in results:
+                face_crop = crop_face_with_padding(frame, entry["bbox"])
+                try:
+                    fresh_emotions.append(emotion_engine.classify_face(face_crop))
+                except Exception as e:
+                    print(f"[EMOTION] inference error: {e}", flush=True)
+                    fresh_emotions.append(None)
+            last_emotions = fresh_emotions
             last_emotion_time = now
-        attach_emotions(results, emotion_faces)
+        for idx, entry in enumerate(results):
+            cached = last_emotions[idx] if idx < len(last_emotions) else None
+            if cached is not None:
+                emotion, conf = cached
+                entry["emotion"] = emotion
+                entry["emotion_confidence"] = conf
+                entry["engagement_state"] = engagement_state_for(emotion)
 
         # ── Publish the new cache snapshot ──
         with _cache_lock:
@@ -680,7 +720,7 @@ def draw_face_result(frame, entry):
     """Draw bounding box, name, and scores for one cached recognition result.
 
     Box color encodes engagement: green = attentive, red = disengaged,
-    gray = no emotion attached (model missing or no IoU match yet).
+    gray = no emotion attached (model missing or no crop classified yet).
     """
     bbox = np.asarray(entry["bbox"])
     x1, y1, x2, y2 = bbox.astype(int)
@@ -764,6 +804,11 @@ def run_recognition(args):
     enrolled_names, enrolled_embeddings, enrolled_uuids = load_enrolled_students()
     db_holder = [(enrolled_names, enrolled_embeddings, enrolled_uuids)]
 
+    # app_holder is a mutable box (same pattern as db_holder) so the AI
+    # worker's watchdog can swap in a reinitialized InsightFace instance and
+    # have the swap persist for later cycles.
+    app_holder = [app]
+
     # Open camera
     camera_source = args.camera
     if camera_source.isdigit():
@@ -812,7 +857,7 @@ def run_recognition(args):
     # Boot the AI worker (Thread 2) — daemon so Ctrl+C still exits.
     ai_thread = threading.Thread(
         target=ai_worker_loop,
-        args=(app, emotion_engine, db_holder, args.threshold, stop_event),
+        args=(app_holder, emotion_engine, db_holder, args.threshold, stop_event),
         daemon=True,
         name="prism-ai-worker",
     )
