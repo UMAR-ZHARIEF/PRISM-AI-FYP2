@@ -55,10 +55,12 @@ function computeEngagementStats(summaries) {
 }
 
 // useEngagement(date) — per-student engagement summary for one date
-// (YYYY-MM-DD). Returns { summaries, loading, error, refresh }; rows arrive
-// pre-normalized (see normalizeSummary) so pages can render directly.
+// (YYYY-MM-DD). Returns { summaries, loading, error, empty, refresh }; rows
+// arrive pre-normalized (see normalizeSummary) so pages can render directly.
+// `empty` is true only when the API answered OK with no rows for the date —
+// a graceful "no data yet" state, distinct from `error` (request failed).
 function useEngagement(date) {
-  const { session } = useAuth();
+  const { session, loading: authLoading } = useAuth();
   const token = session?.access_token;
   const [summaries, setSummaries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,12 @@ function useEngagement(date) {
   }, []);
 
   useEffect(function fetchEngagement() {
+    // The endpoint is staff-only (requireStaff). The auth session is restored
+    // asynchronously on mount: fetching before it lands sends an auth-less
+    // request, gets 401, and the page shows a false "couldn't load" error.
+    // Hold the loading state until the session is known.
+    if (authLoading) return undefined;
+
     let cancelled = false;
 
     async function load() {
@@ -103,9 +111,11 @@ function useEngagement(date) {
     return function cleanup() {
       cancelled = true;
     };
-  }, [date, token, refreshTick]);
+  }, [authLoading, date, token, refreshTick]);
 
-  return { summaries, loading, error, refresh };
+  const empty = !loading && !error && summaries.length === 0;
+
+  return { summaries, loading, error, empty, refresh };
 }
 
 export { computeEngagementStats };

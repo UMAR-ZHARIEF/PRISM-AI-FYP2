@@ -1131,6 +1131,12 @@
   gap: 12px;
   align-items: center;
   flex-wrap: wrap;
+  /* Drop + inset the controls so the Add User button clears the card's
+     cut-2 clip: the top edge slopes down 6% of card height (deeper on
+     tall cards, so padding alone is not enough) and the top-right
+     diagonal cuts in from 94% width. */
+  padding-top: 28px;
+  padding-right: 80px;
 }
 
 .admin-log-target {

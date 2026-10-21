@@ -102,27 +102,37 @@ export default function AdminPanel() {
 
   // --- Overview system health (best-effort single fetch) ---
   // Active Cameras = is the Express process currently supervising the Python
-  // AI (GET /api/ai/process, same source the Camera page uses). System Uptime
-  // = GET /api/health uptimeSeconds (added by the server lane); shown as '—'
-  // until the server provides it.
+  // AI (GET /api/ai/process, same source the Camera page uses; staff-only, so
+  // it carries the admin's JWT). System Uptime = GET /api/health
+  // uptimeSeconds; /api/health itself is public — when it cannot be reached
+  // at all the Express bridge is down and the card reads 'Offline'.
   const [aiProcRunning, setAiProcRunning] = useState(false);
   const [uptimeSeconds, setUptimeSeconds] = useState(null);
+  // null = still checking, true = reachable, false = unreachable ('Offline').
+  const [serverOnline, setServerOnline] = useState(null);
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/ai/process')
+    const token = session?.access_token;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch('/api/ai/process', { headers })
       .then(r => (r.ok ? r.json() : null))
       .then(d => { if (!cancelled && d) setAiProcRunning(Boolean(d.running)); })
       .catch(() => { /* server offline — card stays at 0 */ });
-    fetch('/api/health')
+    fetch('/api/health', { headers })
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
-        if (cancelled || !d) return;
+        if (cancelled) return;
+        setServerOnline(Boolean(d));
+        if (!d) return;
         const secs = Number(d.uptimeSeconds);
         if (Number.isFinite(secs)) setUptimeSeconds(secs);
       })
-      .catch(() => { /* server offline — card stays at — */ });
+      .catch(() => {
+        if (cancelled) return;
+        setServerOnline(false); // Express bridge unreachable — card shows 'Offline'
+      });
     return () => { cancelled = true; };
-  }, []);
+  }, [session?.access_token]);
 
   // Derived from /api/ai/enrolled (which reads enrolled_students.json on the
   // server). Maps student.id → true if their full_name (lowercased) appears
@@ -691,7 +701,7 @@ export default function AdminPanel() {
   const overviewStats = [
     { label: 'Total Users', value: profiles.length, icon: Users, variant: 's-blue', tape: 'tl' },
     { label: 'Active Cameras', value: aiProcRunning ? 1 : 0, icon: Wifi, variant: 's-green', tape: 'tr' },
-    { label: 'System Uptime', value: formatUptime(uptimeSeconds), icon: Server, variant: 's-yellow', tape: 'bl' },
+    { label: 'System Uptime', value: serverOnline === false ? 'Offline' : formatUptime(uptimeSeconds), icon: Server, variant: 's-yellow', tape: 'bl' },
     { label: 'AI Accuracy', value: latestAccuracyLabel, icon: Cpu, variant: 's-orange', tape: 'br' },
   ];
 
