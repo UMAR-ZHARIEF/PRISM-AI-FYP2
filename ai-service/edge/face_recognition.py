@@ -1,7 +1,22 @@
 """
-PRISM-AI Edge Service — Real-Time Face Recognition
-Detects and recognizes enrolled student faces from a webcam in real time.
-Uses InsightFace (SCRFD + ArcFace) for long-distance face recognition.
+PRISM-AI Edge Service — Real-Time Face Recognition + Emotion Engine
+Detects and recognizes enrolled student faces from a webcam in real time,
+and labels each face with a classroom-engagement emotion.
+
+Two-thread architecture (fixes the low display FPS: the main loop only
+captures/annotates/encodes, never runs GPU inference):
+  Thread 1 (display, main thread): capture frame -> draw the CACHED face
+      boxes + emotion labels -> JPEG encode -> publish _latest_jpeg.
+      Targets 25-30 fps.
+  Thread 2 (AI worker, daemon): every DETECT_EVERY_N new frames, grab the
+      latest shared frame -> InsightFace (SCRFD) detection -> ArcFace
+      recognition -> emotion inference every EMOTION_INTERVAL seconds ->
+      atomically swap the shared annotation cache.
+
+Shared state (all guarded by _cache_lock):
+  annotation_cache — list of dicts (name, bbox, similarity, student_uuid,
+      emotion, engagement_state, emotion_confidence, det_score)
+  latest_frame     — newest raw camera frame (numpy array)
 
 Usage:
     python face_recognition.py --camera 0 --debug
@@ -36,11 +51,22 @@ import numpy as np
 import gpu_check
 
 # ── MJPEG live-stream state ───────────────────────────────────────────────────
-# The main loop encodes its annotated display frame into a JPEG and stores the
+# The display loop encodes its annotated frame into a JPEG and stores the
 # bytes here; the StreamHandler reads them whenever a browser polls /stream.
 # A lock keeps writer/reader race-free even at 30+ fps.
 _latest_jpeg = None  # bytes — most recently encoded annotated frame
 _latest_lock = threading.Lock()
+
+# ── Shared AI/annotation state (display thread ⇄ AI worker thread) ───────────
+# annotation_cache holds the most recent recognition results; the display
+# thread only ever READS it (quick copy under the lock) and the AI worker
+# replaces its content wholesale after each detection cycle. Entries are
+# never mutated after publication, so a shallow list copy is a consistent
+# snapshot for drawing.
+_cache_lock = threading.Lock()
+annotation_cache = []       # list of dicts — newest recognition results
+latest_frame = None         # np.ndarray BGR — newest raw camera frame
+_frame_seq = 0              # increments once per captured frame
 
 
 class StreamHandler(BaseHTTPRequestHandler):
@@ -99,12 +125,310 @@ def start_stream_server(port=5174):
 DB_PATH = Path(__file__).parent / "enrolled_students.json"
 UNKNOWN_LABEL = "Unknown"
 COLORS = {
-    "recognized": (0, 255, 0),     # Green
-    "unknown": (0, 0, 255),         # Red
-    "low_conf": (0, 255, 255),      # Yellow
-    "info": (255, 255, 255),        # White
-    "header_bg": (50, 50, 50),      # Dark grey
+    "attentive": (0, 255, 0),        # Green — engagement_state 'attentive'
+    "disengaged": (0, 0, 255),       # Red — engagement_state 'disengaged'
+    "unknown_emotion": (160, 160, 160),  # Grey — no emotion attached yet
+    "low_conf": (0, 255, 255),       # Yellow
+    "info": (255, 255, 255),         # White
+    "header_bg": (50, 50, 50),       # Dark grey
 }
+
+# ── Two-thread tuning knobs ───────────────────────────────────────────────────
+DETECT_EVERY_N = 3        # AI worker runs InsightFace every 3rd new frame
+EMOTION_INTERVAL = 2.0    # seconds between emotion-inference passes
+EMOTION_CONF_THRESHOLD = 0.25   # min YOLO score to keep an emotion box
+EMOTION_NMS_IOU = 0.45          # NMS overlap threshold for emotion boxes
+MATCH_IOU_THRESHOLD = 0.3       # min IoU to pair an emotion box with a face
+
+# ONNX export of the YOLOv8 emotion detector (built from best_v2.pt by the
+# model-export lane; best_v2.pt lives next to this script).
+EMOTION_MODEL_PATH = Path(__file__).parent / "best_v2.onnx"
+
+# Class order verified from the best_v2.pt checkpoint ('names' dict in the
+# pickled train args): 10 classes, index 0..9. The ONNX file carries the same
+# mapping in its metadata; this list is only the fallback when metadata is
+# absent. Note 'neutral' is lowercase in the checkpoint — matching is
+# case-insensitive everywhere below.
+FALLBACK_EMOTION_CLASSES = [
+    "Angry", "Disgust", "Excited", "Fear", "Happy",
+    "Sad", "Serious", "Thinking", "Worried", "neutral",
+]
+
+# Emotion → classroom engagement mapping (case-insensitive), approved mapping:
+# attentive  = Neutral, Happy, Excited, Serious, Thinking
+# disengaged = Sad, Angry, Fear, Disgust, Worried
+ATTENTIVE_EMOTIONS = {"neutral", "happy", "excited", "serious", "thinking"}
+DISENGAGED_EMOTIONS = {"sad", "angry", "fear", "disgust", "worried"}
+
+# CUDA-only VRAM ceilings (bytes) for onnxruntime session arenas. DirectML has
+# no memory-cap provider option — see gpu_provider_options().
+INSIGHTFACE_GPU_MEM_LIMIT = 2 * 1024 * 1024 * 1024   # 2 GiB per ORT session
+EMOTION_GPU_MEM_LIMIT = 512 * 1024 * 1024            # 512 MiB
+
+
+def engagement_state_for(emotion):
+    """Map a raw emotion class name to 'attentive'/'disengaged' (or None)."""
+    if not emotion:
+        return None
+    key = str(emotion).strip().lower()
+    if key in ATTENTIVE_EMOTIONS:
+        return "attentive"
+    if key in DISENGAGED_EMOTIONS:
+        return "disengaged"
+    return None
+
+
+def engagement_color(engagement_state):
+    """BGR box color for an engagement state (green/red/gray)."""
+    if engagement_state == "attentive":
+        return COLORS["attentive"]
+    if engagement_state == "disengaged":
+        return COLORS["disengaged"]
+    return COLORS["unknown_emotion"]
+
+
+# ── GPU session options ───────────────────────────────────────────────────────
+
+def gpu_provider_options(providers, gpu_mem_limit=INSIGHTFACE_GPU_MEM_LIMIT):
+    """Build onnxruntime provider_options aligned 1:1 with `providers`.
+
+    insightface 0.7.3 forwards FaceAnalysis(**kwargs) straight through to
+    model_zoo.get_model() → InferenceSession(**kwargs), so provider_options
+    can be set via the FaceAnalysis API the same way as the providers param
+    (added in deepinsight/insightface#1726). Verified in the installed copy:
+    PickableInferenceSession.__init__ passes **kwargs to onnxruntime.
+
+    VRAM limits are best-effort per execution provider:
+      - CUDAExecutionProvider: gpu_mem_limit caps the arena and
+        arena_extend_strategy='kSameAsRequested' stops the allocator from
+        doubling the reservation on every growth spike.
+      - DmlExecutionProvider: has NO memory-cap option (only device_id) —
+        documented limitation; DML manages its own residency.
+    """
+    options = []
+    for provider in providers:
+        if provider == "CUDAExecutionProvider":
+            options.append({
+                "device_id": "0",
+                "gpu_mem_limit": int(gpu_mem_limit),
+                "arena_extend_strategy": "kSameAsRequested",
+            })
+        elif provider == "DmlExecutionProvider":
+            options.append({"device_id": "0"})
+        else:
+            options.append({})
+    return options
+
+
+# ── Emotion Engine (YOLOv8 ONNX) ──────────────────────────────────────────────
+
+def read_onnx_class_names(session, fallback):
+    """Read the class-index→name map from ONNX metadata, else `fallback`.
+
+    Ultralytics exports store the training class dict in the model's metadata
+    under the 'names' key (e.g. "{0: 'Angry', 1: 'Disgust', ...}"). The dict
+    literal is Python-style, so json.loads is tried first and
+    ast.literal_eval second.
+    """
+    try:
+        meta = session.get_modelmeta().custom_metadata_map
+    except Exception:
+        return fallback
+    raw = meta.get("names") or meta.get("classes")
+    if not raw:
+        return fallback
+    import ast
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            parsed = loader(raw)
+        except Exception:
+            continue
+        if isinstance(parsed, dict):
+            try:
+                names = [str(parsed[k]) for k in sorted(parsed, key=lambda x: int(x))]
+            except (ValueError, TypeError, KeyError):
+                continue
+            print(f"[EMOTION] Class map from ONNX metadata: {names}")
+            return names
+    return fallback
+
+
+def _letterbox(frame, size):
+    """Resize `frame` to size×size with letterbox padding (YOLO convention).
+
+    Returns (padded_image, gain, pad_x, pad_y) so boxes can be mapped back to
+    original frame coordinates.
+    """
+    h, w = frame.shape[:2]
+    gain = min(size / h, size / w)
+    new_w, new_h = int(round(w * gain)), int(round(h * gain))
+    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    padded = np.full((size, size, 3), 114, dtype=np.uint8)
+    pad_x, pad_y = (size - new_w) // 2, (size - new_h) // 2
+    padded[pad_y:pad_y + new_h, pad_x:pad_x + new_w] = resized
+    return padded, gain, pad_x, pad_y
+
+
+def parse_yolo_predictions(pred, num_classes, gain, pad_x, pad_y,
+                           conf_threshold=EMOTION_CONF_THRESHOLD,
+                           frame_wh=None):
+    """Parse a raw YOLOv8 ONNX output tensor into per-face emotion detections.
+
+    `pred` is the first session output: (1, 4+nc, 8400) or (8400, 4+nc) —
+    rows are (cx, cy, w, h, class_scores...) in letterbox space. Returns a
+    list of dicts {bbox, emotion, confidence} in ORIGINAL frame coordinates
+    (pass frame_wh=(w, h) to clamp boxes to the frame).
+
+    Exported emotion classes can shift if lane 2 re-orders the dataset —
+    callers resolve names via read_onnx_class_names() so indices stay in sync
+    with the metadata, never with a hardcoded order.
+    """
+    pred = np.asarray(pred)
+    if pred.ndim == 3:  # squeeze the batch dim
+        pred = pred[0]
+    # Ultralytics v8 layout: channels-first (4+nc, N); some exports are (N, 4+nc).
+    if pred.shape[0] == 4 + num_classes and pred.shape[0] < pred.shape[-1]:
+        pred = pred.T
+    if pred.ndim != 2 or pred.shape[1] != 4 + num_classes:
+        return []
+
+    boxes_cxcywh = pred[:, :4]
+    scores = pred[:, 4:]
+    if scores.shape[1] != num_classes:
+        return []
+
+    class_ids = scores.argmax(axis=1)
+    confs = scores.max(axis=1)
+    keep = confs >= conf_threshold
+    if not np.any(keep):
+        return []
+    boxes_cxcywh = boxes_cxcywh[keep]
+    class_ids = class_ids[keep]
+    confs = confs[keep]
+
+    # cxcywh → xyxy, then undo the letterbox (subtract pad, divide by gain).
+    cx, cy, w, h = boxes_cxcywh[:, 0], boxes_cxcywh[:, 1], boxes_cxcywh[:, 2], boxes_cxcywh[:, 3]
+    x1 = (cx - w / 2 - pad_x) / gain
+    y1 = (cy - h / 2 - pad_y) / gain
+    x2 = (cx + w / 2 - pad_x) / gain
+    y2 = (cy + h / 2 - pad_y) / gain
+
+    dets = np.stack([x1, y1, x2, y2, confs, class_ids.astype(np.float32)], axis=1)
+
+    # supervision provides the NMS utility (xyxy + conf + class columns) and
+    # returns a boolean keep-mask; we build Detections manually after it.
+    import supervision as sv
+    keep_mask = sv.box_non_max_suppression(dets[:, :6], iou_threshold=EMOTION_NMS_IOU)
+    dets = dets[keep_mask]
+
+    results = []
+    for row in dets:
+        bbox = [float(row[0]), float(row[1]), float(row[2]), float(row[3])]
+        if frame_wh is not None:
+            fw, fh = frame_wh
+            bbox = [max(0.0, min(bbox[0], fw - 1)), max(0.0, min(bbox[1], fh - 1)),
+                    max(0.0, min(bbox[2], fw - 1)), max(0.0, min(bbox[3], fh - 1))]
+        results.append({
+            "bbox": bbox,
+            "confidence": float(row[4]),
+            "class_id": int(row[5]),
+        })
+    return results
+
+
+class EmotionEngine:
+    """YOLOv8 ONNX emotion detector over full camera frames.
+
+    Runs on the SAME onnxruntime providers as InsightFace (from gpu_check),
+    but far less often — once per EMOTION_INTERVAL seconds, alongside the
+    recognition cycle in the AI worker thread.
+    """
+
+    def __init__(self, model_path, providers):
+        import onnxruntime as ort
+
+        self.classes = FALLBACK_EMOTION_CLASSES
+        self.session = None
+        if not model_path.exists():
+            raise FileNotFoundError(f"emotion model not found: {model_path}")
+
+        print(f"[EMOTION] Loading {model_path.name} on providers: {providers}")
+        self.session = ort.InferenceSession(
+            str(model_path),
+            providers=providers,
+            provider_options=gpu_provider_options(providers, EMOTION_GPU_MEM_LIMIT),
+        )
+        self.input_name = self.session.get_inputs()[0].name
+
+        # Static exports pin the input size in the shape (e.g. [1,3,640,640]);
+        # dynamic exports fall back to YOLOv8's default 640.
+        shape = self.session.get_inputs()[0].shape
+        size = 640
+        if isinstance(shape, (list, tuple)) and len(shape) >= 4 and isinstance(shape[2], int):
+            size = shape[2]
+        self.input_size = size
+
+        self.classes = read_onnx_class_names(self.session, FALLBACK_EMOTION_CLASSES)
+        self._frame_wh = None
+        print(f"[EMOTION] Ready — {len(self.classes)} classes, input {size}x{size}")
+
+    def detect(self, frame_bgr):
+        """Return [{bbox, emotion, confidence}] for faces in `frame_bgr`."""
+        if self.session is None:
+            return []
+        h, w = frame_bgr.shape[:2]
+        padded, gain, pad_x, pad_y = _letterbox(frame_bgr, self.input_size)
+        blob = padded[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        outputs = self.session.run(None, {self.input_name: blob})
+
+        raw = parse_yolo_predictions(
+            outputs[0], len(self.classes), gain, pad_x, pad_y, frame_wh=(w, h)
+        )
+        faces = []
+        for det in raw:
+            faces.append({
+                "bbox": det["bbox"],
+                "emotion": self.classes[det["class_id"]],
+                "confidence": det["confidence"],
+            })
+        return faces
+
+
+def iou(box_a, box_b):
+    """Intersection over Union of two (x1, y1, x2, y2) boxes."""
+    ax1, ay1, ax2, ay2 = box_a[0], box_a[1], box_a[2], box_a[3]
+    bx1, by1, bx2, by2 = box_b[0], box_b[1], box_b[2], box_b[3]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter_w = max(0.0, ix2 - ix1)
+    inter_h = max(0.0, iy2 - iy1)
+    inter = inter_w * inter_h
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def attach_emotions(face_results, emotion_faces):
+    """Pair each InsightFace face with the best-overlapping emotion box.
+
+    IoU matching inline: for every face bbox pick the emotion detection with
+    the highest IoU above MATCH_IOU_THRESHOLD and attach its label. Faces
+    without a match keep emotion=None (drawn gray, engagement null).
+    """
+    for entry in face_results:
+        best, best_iou = None, MATCH_IOU_THRESHOLD
+        face_box = np.asarray(entry["bbox"], dtype=np.float32)
+        for ef in emotion_faces:
+            overlap = iou(face_box, ef["bbox"])
+            if overlap > best_iou:
+                best, best_iou = ef, overlap
+        if best is not None:
+            entry["emotion"] = best["emotion"]
+            entry["emotion_confidence"] = best["confidence"]
+            entry["engagement_state"] = engagement_state_for(best["emotion"])
+    return face_results
+
 
 # ── InsightFace Setup ─────────────────────────────────────────────────────────
 
@@ -125,6 +449,7 @@ def init_face_app(det_size=(320, 320)):
     app = FaceAnalysis(
         name="buffalo_l",
         providers=providers,
+        provider_options=gpu_provider_options(providers),
         # This service only uses bbox/kps/det_score/embedding — skip the
         # genderage + two landmark models, saving 3 GPU dispatches per face
         # per frame (measured 4.4 -> 10.4 fps with 6 faces on DirectML).
@@ -146,14 +471,14 @@ def load_enrolled_students():
         print(f"[WARN] No enrolled students found at {DB_PATH}")
         print(f"[WARN] Run enroll_student.py first to register students.")
         return [], [], []
-    
+
     with open(DB_PATH, "r", encoding="utf-8") as f:
         db = json.load(f)
-    
+
     names = []
     embeddings = []
     uuids = []
-    
+
     for student in db.get("students", []):
         names.append(f"{student['name']} ({student['class']})")
         # Supabase UUID, may be absent in pre-UUID enrollment records —
@@ -165,11 +490,11 @@ def load_enrolled_students():
         if norm > 0:
             emb = emb / norm
         embeddings.append(emb)
-    
+
     print(f"[INIT] Loaded {len(names)} enrolled student(s)")
     for i, name in enumerate(names):
         print(f"  [{i+1}] {name}")
-    
+
     return names, embeddings, uuids
 
 
@@ -184,7 +509,7 @@ def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4,
                enrolled_uuids=None):
     """
     Match a detected face embedding against enrolled students.
-    
+
     Args:
         embedding: 512-d face embedding from detected face
         enrolled_names: List of student names
@@ -192,26 +517,26 @@ def match_face(embedding, enrolled_names, enrolled_embeddings, threshold=0.4,
         threshold: Minimum cosine similarity for a match (0.0 to 1.0)
         enrolled_uuids: Optional list of Supabase UUIDs, index-aligned with
             enrolled_names/enrolled_embeddings (None entries for old records)
-    
+
     Returns:
         tuple: (name, similarity_score, student_uuid) — student_uuid is None
         for unknown faces or enrollments without a UUID
     """
     if len(enrolled_embeddings) == 0:
         return UNKNOWN_LABEL, 0.0, None
-    
+
     # Normalize input embedding
     norm = np.linalg.norm(embedding)
     if norm > 0:
         embedding = embedding / norm
-    
+
     # Compute cosine similarity with all enrolled embeddings
-    similarities = [cosine_similarity(embedding, enrolled) 
+    similarities = [cosine_similarity(embedding, enrolled)
                     for enrolled in enrolled_embeddings]
-    
+
     best_idx = np.argmax(similarities)
     best_score = similarities[best_idx]
-    
+
     if best_score >= threshold:
         # Same similarity logic as before — the UUID is only metadata carried
         # alongside the winning match (None for old enrollment records).
@@ -256,43 +581,146 @@ def send_to_dashboard(recognized_list):
         print(f"[DASHBOARD] Error: {e}")
 
 
+# ── AI Worker (Thread 2) ──────────────────────────────────────────────────────
+
+def ai_worker_loop(app, emotion_engine, db_holder, threshold, stop_event):
+    """Thread-2 body: detection + recognition + emotion on the shared frame.
+
+    Consumes only every DETECT_EVERY_N-th NEW camera frame (skipping keeps
+    latency low when inference is slower than the display capture rate). After
+    each cycle it atomically swaps the shared annotation cache; the display
+    thread draws that cache without ever waiting on GPU inference.
+    """
+    frames_seen = 0
+    last_seq = -1
+    last_emotion_time = 0.0
+    emotion_faces = []   # most recent emotion detections (updated every EMOTION_INTERVAL)
+    last_log_time = 0.0
+    while not stop_event.is_set():
+        # Grab the newest frame + its sequence number (display thread replaces
+        # the array reference per capture; it never mutates frames in place).
+        with _cache_lock:
+            frame = latest_frame
+            seq = _frame_seq
+
+        if frame is None or seq == last_seq:
+            time.sleep(0.005)  # display thread hasn't captured yet
+            continue
+        last_seq = seq
+        frames_seen += 1
+        if frames_seen % DETECT_EVERY_N != 0:
+            continue
+
+        enrolled_names, enrolled_embeddings, enrolled_uuids = db_holder[0]
+
+        # ── InsightFace detection + ArcFace recognition ──
+        results = []
+        recognized_count = 0
+        try:
+            faces = app.get(frame)
+        except Exception as e:
+            print(f"[AI] detection error: {e}", flush=True)
+            continue
+
+        for face in faces:
+            det_score = face.det_score
+            if det_score < 0.3:
+                continue
+            name, sim_score, student_uuid = match_face(
+                face.embedding, enrolled_names, enrolled_embeddings,
+                threshold=threshold, enrolled_uuids=enrolled_uuids
+            )
+            if name != UNKNOWN_LABEL:
+                recognized_count += 1
+            results.append({
+                "name": name,
+                "bbox": face.bbox,
+                "similarity": sim_score,
+                "student_uuid": student_uuid,
+                "det_score": det_score,
+                # Emotion fields default to None; filled in below on a match.
+                "emotion": None,
+                "engagement_state": None,
+                "emotion_confidence": None,
+            })
+
+        # ── Emotion inference (every EMOTION_INTERVAL seconds, same frame) ──
+        now = time.time()
+        if emotion_engine is not None and now - last_emotion_time >= EMOTION_INTERVAL:
+            try:
+                emotion_faces = emotion_engine.detect(frame)
+            except Exception as e:
+                print(f"[EMOTION] inference error: {e}", flush=True)
+                emotion_faces = []
+            last_emotion_time = now
+        attach_emotions(results, emotion_faces)
+
+        # ── Publish the new cache snapshot ──
+        with _cache_lock:
+            annotation_cache[:] = results
+
+        if now - last_log_time >= 5.0:
+            emotions = [r["emotion"] for r in results if r["emotion"]]
+            print(f"[AI] Faces: {len(results)} | Recognized: {recognized_count} | "
+                  f"Emotions: {emotions}", flush=True)
+            last_log_time = now
+
+
 # ── Visualization ─────────────────────────────────────────────────────────────
 
-def draw_face_result(frame, bbox, name, score, det_score):
-    """Draw bounding box, name, and scores on the frame."""
+def draw_face_result(frame, entry):
+    """Draw bounding box, name, and scores for one cached recognition result.
+
+    Box color encodes engagement: green = attentive, red = disengaged,
+    gray = no emotion attached (model missing or no IoU match yet).
+    """
+    bbox = np.asarray(entry["bbox"])
     x1, y1, x2, y2 = bbox.astype(int)
-    
-    is_recognized = name != UNKNOWN_LABEL
-    color = COLORS["recognized"] if is_recognized else COLORS["unknown"]
-    
+
+    name = entry["name"]
+    score = entry["similarity"]
+    det_score = entry["det_score"]
+    emotion = entry.get("emotion")
+    emotion_conf = entry.get("emotion_confidence")
+
+    color = engagement_color(entry.get("engagement_state"))
+
     # Draw bounding box
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-    
-    # Draw label background
-    label = f"{name}" if is_recognized else "Unknown"
-    score_text = f"{score:.2f}"
-    
+
+    # Draw label background (name above the box, same pattern as before)
+    label = f"{name}" if name != UNKNOWN_LABEL else "Unknown"
     label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-    cv2.rectangle(frame, (x1, y1 - label_size[1] - 10), 
+    cv2.rectangle(frame, (x1, y1 - label_size[1] - 10),
                   (x1 + label_size[0] + 10, y1), color, -1)
     cv2.putText(frame, label, (x1 + 5, y1 - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
-    
-    # Draw similarity score below box
-    cv2.putText(frame, f"Sim: {score_text} | Det: {det_score:.2f}", 
-                (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+    # Similarity score below box, with the emotion label next to it
+    below = f"Sim: {score:.2f} | Det: {det_score:.2f}"
+    if emotion:
+        conf_text = f" ({emotion_conf:.2f})" if emotion_conf is not None else ""
+        below += f" | {emotion}{conf_text}"
+    cv2.putText(frame, below, (x1, y2 + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
 
-def draw_hud(frame, fps, face_count, recognized_count):
-    """Draw heads-up display with live stats (no desktop key hints)."""
+def draw_hud(frame, fps, face_count, recognized_count, engaged_count,
+             engaged_total):
+    """Draw heads-up display with live stats (no desktop key hints).
+
+    Engaged: P/Q where P = recognized faces currently 'attentive' and
+    Q = recognized faces that have an emotion label at all.
+    """
     h, w = frame.shape[:2]
-    
+
     # Header bar
     cv2.rectangle(frame, (0, 0), (w, 40), COLORS["header_bg"], -1)
-    
+
     hud_text = (f"PRISM-AI | FPS: {fps:.1f} | "
                 f"Faces: {face_count} | "
-                f"Recognized: {recognized_count}")
+                f"Recognized: {recognized_count} | "
+                f"Engaged: {engaged_count}/{engaged_total}")
     cv2.putText(frame, hud_text, (10, 28),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLORS["info"], 1)
     # No key hints here: this frame is JPEG-encoded for the browser stream,
@@ -300,22 +728,39 @@ def draw_hud(frame, fps, face_count, recognized_count):
     # the debug window's waitKey loop still document/handle those keys.
 
 
-# ── Main Recognition Loop ────────────────────────────────────────────────────
+# ── Display Thread (Thread 1, main) ───────────────────────────────────────────
 
 def run_recognition(args):
-    """Main real-time face recognition loop."""
-    
-    # Initialize InsightFace
+    """Display thread: capture → draw cached annotations → JPEG → stream.
+
+    All GPU inference (InsightFace + emotion) lives in ai_worker_loop so this
+    loop keeps the camera at 25-30 fps regardless of model latency.
+    """
+
+    # Initialize InsightFace (GPU gate + models)
     app = init_face_app(det_size=(args.det_size, args.det_size))
-    
-    # Load enrolled students
+
+    # Emotion engine — same providers as InsightFace; disabled with a warning
+    # when the ONNX export is not on disk yet (recognition keeps working).
+    emotion_engine = None
+    try:
+        emotion_engine = EmotionEngine(Path(args.emotion_model),
+                                       gpu_check.require_gpu_providers())
+    except FileNotFoundError as e:
+        print(f"[EMOTION] Disabled: {e} (run the ONNX export to enable)")
+    except Exception as e:
+        print(f"[EMOTION] Disabled: failed to load model — {e}")
+
+    # Load enrolled students; db_holder lets the 'r' hot-reload key swap the
+    # tuple the AI worker reads without any lock (atomic rebinding).
     enrolled_names, enrolled_embeddings, enrolled_uuids = load_enrolled_students()
-    
+    db_holder = [(enrolled_names, enrolled_embeddings, enrolled_uuids)]
+
     # Open camera
     camera_source = args.camera
     if camera_source.isdigit():
         camera_source = int(camera_source)
-    
+
     # Use DirectShow backend explicitly; let camera pick its native resolution
     # (forcing 1280x720 breaks low-res cameras like UGREEN's default 640x480)
     if isinstance(camera_source, int):
@@ -325,28 +770,41 @@ def run_recognition(args):
     if not cap.isOpened():
         print(f"[ERROR] Cannot open camera: {args.camera}")
         sys.exit(1)
-    
+
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"[INIT] Camera opened: {actual_w}x{actual_h}")
-    
+
     show_debug = args.debug
     frame_count = 0
     fps = 0.0
     fps_timer = time.time()
     last_send_time = time.time()  # Dashboard send timer
-    
+    stop_event = threading.Event()
+    global latest_frame, _frame_seq  # published by this (display) thread
+
     print(f"\n{'='*60}")
-    print(f"  PRISM-AI — Real-Time Face Recognition")
+    print(f"  PRISM-AI — Real-Time Face Recognition + Emotion")
     print(f"  Threshold: {args.threshold} | Camera: {args.camera}")
     print(f"  Enrolled students: {len(enrolled_names)}")
+    print(f"  Detection every {DETECT_EVERY_N} frames | Emotion every "
+          f"{EMOTION_INTERVAL:.0f}s")
     print(f"  Press 'q' to quit | 'd' to toggle debug view")
     print(f"{'='*60}\n")
 
     # Boot the MJPEG stream server so the React dashboard can render frames in
-    # a <img src="/stream"> tag. The server reads _latest_jpeg, which the main
-    # loop refreshes after annotating each frame.
+    # a <img src="/stream"> tag. The server reads _latest_jpeg, which this
+    # display loop refreshes after annotating each frame.
     start_stream_server(port=args.stream_port)
+
+    # Boot the AI worker (Thread 2) — daemon so Ctrl+C still exits.
+    ai_thread = threading.Thread(
+        target=ai_worker_loop,
+        args=(app, emotion_engine, db_holder, args.threshold, stop_event),
+        daemon=True,
+        name="prism-ai-worker",
+    )
+    ai_thread.start()
 
     try:
         while True:
@@ -357,53 +815,35 @@ def run_recognition(args):
                     break
                 print("[ERROR] Failed to read frame")
                 continue
-            
-            frame_start = time.time()
-            
-            # ── Face Detection + Embedding Extraction ──
-            faces = app.get(frame)
-            
-            recognized_count = 0
-            results = []
-            
-            for face in faces:
-                embedding = face.embedding  # 512-d ArcFace embedding
-                det_score = face.det_score
-                bbox = face.bbox
-                
-                # Skip low-confidence detections
-                if det_score < 0.3:
-                    continue
-                
-                # Match against enrolled students
-                name, sim_score, student_uuid = match_face(
-                    embedding, enrolled_names, enrolled_embeddings,
-                    threshold=args.threshold, enrolled_uuids=enrolled_uuids
-                )
-                
-                if name != UNKNOWN_LABEL:
-                    recognized_count += 1
-                
-                results.append({
-                    "name": name,
-                    "student_uuid": student_uuid,
-                    "similarity": sim_score,
-                    "det_score": det_score,
-                    "bbox": bbox,
-                    "embedding": embedding,
-                })
-            
-            # ── Visualization ──
-            # Build the annotated `display` frame on every iteration so the
-            # MJPEG stream always has fresh content, regardless of whether the
-            # desktop debug window is currently shown.
+
+            # Publish the raw frame for the AI worker (reference swap under
+            # the shared lock — no copy, the lock is held for microseconds).
+            with _cache_lock:
+                latest_frame = frame
+                _frame_seq += 1
+
+            # Snapshot the latest recognition results (quick copy under lock;
+            # entries are immutable after publication).
+            with _cache_lock:
+                results = list(annotation_cache)
+
+            # ── Visualization (cached boxes only — never blocks on GPU) ──
             display = frame.copy()
+            recognized_count = 0
+            engaged_count = 0
+            engaged_total = 0
+            for entry in results:
+                if entry["name"] != UNKNOWN_LABEL:
+                    recognized_count += 1
+                    emotion = entry.get("emotion")
+                    if emotion:
+                        engaged_total += 1
+                        if entry.get("engagement_state") == "attentive":
+                            engaged_count += 1
+                draw_face_result(display, entry)
 
-            for r in results:
-                draw_face_result(display, r["bbox"], r["name"],
-                                 r["similarity"], r["det_score"])
-
-            draw_hud(display, fps, len(results), recognized_count)
+            draw_hud(display, fps, len(results), recognized_count,
+                     engaged_count, engaged_total)
 
             if show_debug:
                 cv2.imshow("PRISM-AI Face Recognition", display)
@@ -411,7 +851,7 @@ def run_recognition(args):
             # Push the annotated frame to the MJPEG stream. JPEG quality 80
             # keeps the wire size sane (~30-60 KB/frame at 640x480). Any
             # encoder error is swallowed — we never let streaming crash the
-            # recognition loop.
+            # display loop.
             try:
                 _, jpeg_buf = cv2.imencode(
                     '.jpg', display, [int(cv2.IMWRITE_JPEG_QUALITY), 80]
@@ -420,7 +860,7 @@ def run_recognition(args):
                     globals()['_latest_jpeg'] = jpeg_buf.tobytes()
             except Exception:
                 pass
-            
+
             # ── Send to Dashboard (every SEND_INTERVAL seconds) ──
             if time.time() - last_send_time >= SEND_INTERVAL:
                 recognized_students = []
@@ -433,7 +873,8 @@ def run_recognition(args):
                         if "(" in full_name and ")" in full_name:
                             student_name = full_name.split("(")[0].strip()
                             student_class = full_name.split("(")[1].replace(")", "").strip()
-                        
+
+                        emotion_conf = r.get("emotion_confidence")
                         recognized_students.append({
                             "student_name": student_name,
                             "student_class": student_class,
@@ -443,13 +884,21 @@ def run_recognition(args):
                             # name matching for old data).
                             "student_uuid": r.get("student_uuid"),
                             "similarity_score": round(float(r["similarity"]), 4),
-                            "status": "Present"
+                            "status": "Present",
+                            # Emotion-engine additions (null when no emotion
+                            # label is attached to this face right now).
+                            "emotion": r.get("emotion"),
+                            "engagement_state": r.get("engagement_state"),
+                            "emotion_confidence": (
+                                round(float(emotion_conf), 4)
+                                if emotion_conf is not None else None
+                            ),
                         })
-                
+
                 if recognized_students:
                     send_to_dashboard(recognized_students)
                 last_send_time = time.time()
-            
+
             # ── FPS Calculation ──
             frame_count += 1
             elapsed = time.time() - fps_timer
@@ -457,7 +906,7 @@ def run_recognition(args):
                 fps = frame_count / elapsed
                 frame_count = 0
                 fps_timer = time.time()
-                
+
                 # Console output (periodic)
                 if results:
                     names_found = [r["name"] for r in results]
@@ -466,10 +915,7 @@ def run_recognition(args):
                           f"Faces: {len(results)} | "
                           f"Recognized: {recognized_count} | "
                           f"IDs: {names_found}")
-            
-            # ── Frame timing ──
-            frame_time = time.time() - frame_start
-            
+
             # ── Key handling ──
             if show_debug:
                 key = cv2.waitKey(1) & 0xFF
@@ -478,23 +924,26 @@ def run_recognition(args):
                 elif key == ord('d'):
                     show_debug = not show_debug
                 elif key == ord('r'):
-                    # Reload enrolled students (hot-reload)
+                    # Reload enrolled students (hot-reload); the AI worker
+                    # picks the new tuple up on its next cycle.
                     print("[INFO] Reloading enrolled students...")
-                    enrolled_names, enrolled_embeddings, enrolled_uuids = load_enrolled_students()
+                    db_holder[0] = load_enrolled_students()
             else:
                 # Even without debug window, check for keyboard interrupt
                 # Add a minimal waitKey for non-debug mode
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-    
+
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted by user.")
-    
+
     finally:
+        stop_event.set()
+        ai_thread.join(timeout=3.0)
         cap.release()
         cv2.destroyAllWindows()
         print("[INFO] Camera released. Goodbye!")
-    
+
     # ── PRIVACY GUARANTEE ──
     # No frames, images, or face crops were saved to disk.
     # Only 512-d mathematical vectors were processed in RAM.
@@ -504,7 +953,7 @@ def run_recognition(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PRISM-AI — Real-Time Face Recognition (Edge Service)"
+        description="PRISM-AI — Real-Time Face Recognition + Emotion (Edge Service)"
     )
     parser.add_argument("--camera", type=str, default="0",
                         help="Camera index or video file path (default: 0)")
@@ -516,6 +965,9 @@ def main():
                         help="Face detection input size (default: 320)")
     parser.add_argument("--stream-port", type=int, default=5174,
                         help="Port for the MJPEG live-stream HTTP server (default: 5174)")
+    parser.add_argument("--emotion-model", type=str, default=str(EMOTION_MODEL_PATH),
+                        help="Path to the YOLOv8 emotion ONNX model "
+                             "(default: best_v2.onnx next to this script)")
 
     args = parser.parse_args()
     run_recognition(args)

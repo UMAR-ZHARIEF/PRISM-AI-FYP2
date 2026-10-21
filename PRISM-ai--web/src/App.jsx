@@ -6,6 +6,7 @@ import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Students from './pages/Students';
 import Reports from './pages/Reports';
+import Engagement from './pages/Engagement';
 import AdminPanel from './pages/AdminPanel';
 import ParentPortal from './pages/ParentPortal';
 import ParentConsent from './pages/ParentConsent';
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="students" element={<Students />} />
           <Route path="students/:studentId" element={<StudentProfile />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="engagement" element={<Engagement />} />
           <Route path="admin" element={<ProtectedRoute requireRole="admin"><AdminPanel /></ProtectedRoute>} />
           <Route path="camera" element={<Camera />} />
           <Route path="class/:year/:className" element={<ClassDetail />} />

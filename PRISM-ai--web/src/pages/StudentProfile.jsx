@@ -7,6 +7,7 @@ import useAttendance from '../hooks/useAttendance';
 import useTeacherNotes from '../hooks/useTeacherNotes';
 import useEnrolledFaces from '../hooks/useEnrolledFaces';
 import AttendanceCalendar from '../components/AttendanceCalendar';
+import './Engagement.css';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { supabase } from '../lib/supabase';
@@ -32,6 +33,25 @@ function timeAgo(timestamp) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+// ISO date (YYYY-MM-DD) in local time — same rule as Dashboard.
+function isoDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// The last n calendar days (oldest first) in local time.
+function lastNDates(n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    out.push(isoDate(d));
+  }
+  return out;
 }
 
 export default function StudentProfile() {
@@ -129,6 +149,78 @@ export default function StudentProfile() {
       cancelled = true;
     };
   }, [studentId]);
+
+  // ── Emotion-engine history (engagement_summaries, last 30 days) ──
+  // Read straight from the table the edge AI writes, same direct-Supabase
+  // pattern as parents and homeroom teacher above. Missing table or RLS
+  // denial degrades quietly to "no engagement data" — never a crash.
+  const [engagementRows, setEngagementRows] = useState([]);
+  const [engagementLoading, setEngagementLoading] = useState(Boolean(studentId));
+
+  useEffect(function fetchEngagementHistory() {
+    if (!studentId) {
+      setEngagementRows([]);
+      setEngagementLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setEngagementLoading(true);
+
+    const since = new Date();
+    since.setDate(since.getDate() - 29);
+    supabase
+      .from('engagement_summaries')
+      .select('*')
+      .eq('student_id', studentId)
+      .gte('date', isoDate(since))
+      .order('date', { ascending: true })
+      .then(function handleResult({ data, error: queryError }) {
+        if (cancelled) return;
+        if (queryError) {
+          console.warn('StudentProfile: engagement_summaries unavailable', queryError.message);
+          setEngagementRows([]);
+        } else {
+          setEngagementRows(data || []);
+        }
+        setEngagementLoading(false);
+      });
+
+    return function cleanup() {
+      cancelled = true;
+    };
+  }, [studentId]);
+
+  // Collate the raw rows into 30 day squares + summary numbers. A day counts
+  // as attentive when its attentive share is the majority (>= 50%).
+  const engagement = useMemo(function buildEngagementStrip() {
+    const byDate = new Map();
+    (engagementRows || []).forEach(function keyByDate(row) {
+      const key = String(row.date ?? row.summary_date ?? row.day ?? '').slice(0, 10);
+      if (!key) return;
+      const raw = row.attentive_pct ?? row.attentivePercent ?? row.attentive_percent;
+      const pct = raw == null ? null : Number(String(raw).replace('%', ''));
+      byDate.set(key, {
+        pct: Number.isNaN(pct) ? null : pct,
+        atRisk: Boolean(row.at_risk ?? row.atRisk),
+      });
+    });
+
+    const days = lastNDates(30).map(function toSquare(key) {
+      const entry = byDate.get(key);
+      if (!entry) return { date: key, tone: 'x' };
+      return { date: key, tone: entry.pct != null && entry.pct >= 50 ? 'g' : 'r' };
+    });
+
+    const withPct = [...byDate.values()].filter(function hasPct(e) { return e.pct != null; });
+    const avg = withPct.length
+      ? Math.round(withPct.reduce(function sum(acc, e) { return acc + e.pct; }, 0) / withPct.length)
+      : null;
+    // "Currently at risk" = the most recent day with a score flagged at_risk.
+    const atRisk = withPct.length > 0 ? withPct[withPct.length - 1].atRisk : false;
+
+    return { days, avg, atRisk, hasData: byDate.size > 0 };
+  }, [engagementRows]);
 
   // Note composer state
   const [noteText, setNoteText] = useState('');
@@ -610,6 +702,39 @@ export default function StudentProfile() {
           <h2>Attendance History</h2>
         </div>
         <AttendanceCalendar studentId={student.id} />
+      </div>
+
+      {/* ENGAGEMENT — LAST 30 DAYS */}
+      <div className="sprofile-section reveal reveal-6">
+        <div className="sprofile-section-title">
+          <h2>Engagement · Last 30 Days</h2>
+        </div>
+        <div className="card eng-profile-card">
+          <span className="tape tr" />
+          {engagementLoading ? (
+            <p className="eng-overview-empty">Loading…</p>
+          ) : engagement.hasData ? (
+            <>
+              <div className="eng-strip">
+                {engagement.days.map(function daySquare(d) {
+                  const mood = d.tone === 'x' ? 'no data' : d.tone === 'g' ? 'attentive' : 'disengaged';
+                  return <span key={d.date} className={`eng-day ${d.tone}`} title={`${d.date} · ${mood}`} />;
+                })}
+              </div>
+              <div className="eng-strip-legend">
+                <span><span className="eng-day g" /> Attentive day</span>
+                <span><span className="eng-day r" /> Disengaged day</span>
+                <span><span className="eng-day x" /> No data</span>
+              </div>
+              <div className="eng-strip-meta">
+                <span>Avg: <span className="mono">{engagement.avg == null ? '—' : `${engagement.avg}%`}</span> attentive</span>
+                <span>At-risk: {engagement.atRisk ? <span className="eng-risk-yes">Yes</span> : <span className="mono">No</span>}</span>
+              </div>
+            </>
+          ) : (
+            <p className="eng-overview-empty">No engagement data yet</p>
+          )}
+        </div>
       </div>
 
       {/* TEACHER NOTES */}
