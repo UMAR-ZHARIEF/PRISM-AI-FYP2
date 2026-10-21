@@ -80,7 +80,10 @@ export default function Students() {
   // Single batched query (same join StudentProfile uses); primary parent wins.
   const [parentsByStudent, setParentsByStudent] = useState(new Map());
 
-  // Attendance rate per student over the last 30 days, keyed by student_id.
+  // Attendance rate per student over all recorded attendance, keyed by
+  // student_id. No date floor: a rolling window (e.g. last 30 days) reads as
+  // '—' whenever the school's records sit older than the window, which is
+  // exactly the demo/term-break case.
   const [ratesByStudent, setRatesByStudent] = useState(new Map());
 
   useEffect(function fetchParents() {
@@ -122,15 +125,11 @@ export default function Students() {
     }
 
     let cancelled = false;
-    const since = new Date();
-    since.setDate(since.getDate() - 30);
-    const sinceISO = `${since.getFullYear()}-${String(since.getMonth() + 1).padStart(2, '0')}-${String(since.getDate()).padStart(2, '0')}`;
 
     supabase
       .from('attendance_records')
       .select('student_id, status')
       .in('student_id', ids)
-      .gte('date', sinceISO)
       .then(function handleResult({ data, error: queryError }) {
         if (cancelled) return;
         if (queryError) {
