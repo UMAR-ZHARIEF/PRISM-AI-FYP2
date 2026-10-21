@@ -1,0 +1,247 @@
+/* ============================================================
+   ENGAGEMENT PAGE — M · Construction Paper Collage
+   Also holds the shared engagement strip + overview bits that
+   Dashboard.jsx and StudentProfile.jsx import this file for.
+   ============================================================ */
+
+.engagement-page {
+  position: relative;
+  padding-bottom: 48px;
+}
+
+/* === HEADER ============================================== */
+.engagement-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-bottom: 36px;
+  padding-bottom: 24px;
+  border-bottom: 3px dashed var(--ink);
+}
+.engagement-header h1 {
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 0.95;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0;
+  border: 0;
+}
+.engagement-subtitle {
+  margin-top: 12px;
+  font-family: var(--accent);
+  font-size: 18px;
+  color: var(--ink-soft);
+}
+.engagement-date-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--accent);
+  font-size: 16px;
+  color: var(--ink-soft);
+}
+.engagement-date-input { min-width: 170px; }
+.engagement-retry { margin-top: 14px; }
+.engagement-error { text-align: center; }
+
+/* === TOP ROW: GAUGE + STAT CARDS ========================== */
+.engagement-top {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 24px;
+  align-items: stretch;
+}
+.engagement-stats {
+  display: grid;
+  grid-template-rows: repeat(3, 1fr);
+  gap: 18px;
+}
+.engagement-stats .stat-card {
+  padding: 18px 24px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.engagement-stats .stat-info {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  width: 100%;
+}
+.engagement-stats .stat-info h3 {
+  font-size: 44px;
+  min-width: 96px;
+}
+.engagement-stats .stat-info p {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* === GAUGE ================================================ */
+.eng-gauge {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.eng-gauge-number {
+  font-size: clamp(56px, 7vw, 88px);
+  font-weight: 700;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+}
+.eng-gauge-caption {
+  font-family: var(--accent);
+  font-size: 17px;
+  color: var(--ink-soft);
+}
+.tone-g { color: var(--green); }
+.tone-y { color: var(--ink); }
+.tone-r { color: var(--red); }
+
+/* Progress bar — paper strip with inked edges */
+.eng-bar {
+  height: 26px;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow-paper);
+  overflow: hidden;
+}
+.eng-bar-fill {
+  height: 100%;
+  transition: width 0.6s ease;
+}
+.eng-bar-fill.tone-g { background: var(--green); }
+.eng-bar-fill.tone-y { background: var(--yellow); }
+.eng-bar-fill.tone-r { background: var(--red); }
+.eng-bar-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+/* === TABLE ================================================= */
+.engagement-table-card { overflow: visible; }
+.eng-student-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.eng-student-cell .avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.eng-student-name { font-weight: 700; }
+.eng-emotion {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 2px solid var(--ink);
+  font-family: var(--accent);
+  font-size: 14px;
+  background: var(--paper-light);
+  transform: rotate(-1deg);
+}
+.eng-emotion.tone-g { background: var(--green); color: var(--paper-light); }
+.eng-emotion.tone-y { background: var(--yellow); color: var(--ink); }
+.eng-emotion.tone-r { background: var(--red); color: var(--paper-light); }
+.eng-emotion.tone-k { background: var(--ink); color: var(--paper-light); }
+
+/* === 30-DAY STRIP (shared with StudentProfile) ============= */
+.eng-strip {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.eng-day {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  flex-shrink: 0;
+}
+.eng-day.g { background: var(--green); }
+.eng-day.r { background: var(--red); }
+.eng-day.x { background: var(--paper); opacity: 0.55; }
+.eng-strip-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-family: var(--accent);
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.eng-strip-legend .eng-day {
+  display: inline-block;
+  vertical-align: -3px;
+  margin-right: 6px;
+  width: 13px;
+  height: 13px;
+}
+.eng-strip-meta {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  font-family: var(--accent);
+  font-size: 17px;
+  color: var(--ink);
+}
+.eng-strip-meta .mono { font-size: 17px; }
+.eng-strip-meta .eng-risk-yes { color: var(--red); font-weight: 700; }
+
+/* === DASHBOARD OVERVIEW CARD (shared) ====================== */
+.eng-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eng-overview-number {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+}
+.eng-overview-label {
+  font-family: var(--accent);
+  font-size: 16px;
+  color: var(--ink-soft);
+}
+.eng-overview .eng-bar { height: 18px; }
+.eng-overview-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.eng-overview-link {
+  font-family: var(--accent);
+  font-size: 15px;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--blue);
+  text-underline-offset: 4px;
+}
+.eng-overview-empty {
+  font-family: var(--accent);
+  font-size: 16px;
+  color: var(--ink-faint);
+}
+
+/* === RESPONSIVE ============================================ */
+@media (max-width: 1024px) {
+  .engagement-top { grid-template-columns: 1fr; }
+  .engagement-stats { grid-template-rows: none; grid-template-columns: 1fr; }
+}

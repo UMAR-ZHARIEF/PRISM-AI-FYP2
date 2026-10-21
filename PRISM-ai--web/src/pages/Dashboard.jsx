@@ -10,6 +10,8 @@ import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skelet
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
+import useEngagement, { computeEngagementStats } from '../hooks/useEngagement';
+import './Engagement.css';
 import useNotifications from '../hooks/useNotifications';
 import useSchoolEvents from '../hooks/useSchoolEvents';
 import { supabase } from '../lib/supabase';
@@ -113,6 +115,14 @@ export default function Dashboard() {
   const { students: dbStudents, loading: studentsLoading } = useStudents({ year: hookYear });
   const { classSections, loading: sectionsLoading } = useClassSections({ year: hookYear });
   const { records: weekRecords, loading: attendanceLoading, refresh: refreshAttendance } = useAttendance({ fromDate: weekAgo, toDate: today });
+  // Today's emotion-engine summary — powers the compact engagement card below
+  // (green >70%, yellow 40-70%, red <40% class attentive average).
+  const { summaries: engagementSummaries, loading: engagementLoading } = useEngagement(today);
+  const engagementStats = computeEngagementStats(engagementSummaries);
+  const engagementTone = engagementStats.attentiveAvg == null ? ''
+    : engagementStats.attentiveAvg > 70 ? 'g'
+    : engagementStats.attentiveAvg >= 40 ? 'y'
+    : 'r';
   // Notifications for the panel at the bottom — same rows the topbar bell reads
   // (RLS already scopes them to the signed-in user). Loads independently, so it
   // never blocks the page skeleton below.
@@ -774,6 +784,34 @@ export default function Dashboard() {
               );
             })}
           </div>
+        </div>
+
+        {/* ENGAGEMENT OVERVIEW — today's emotion-engine summary */}
+        <div className="card tilt-l">
+          <span className="tape tr" />
+          <div className="card-header">
+            <h2>Class Engagement</h2>
+            <Activity size={18} aria-hidden="true" />
+          </div>
+          {engagementLoading ? (
+            <p className="eng-overview-empty">Loading engagement…</p>
+          ) : engagementStats.attentiveAvg == null ? (
+            <p className="eng-overview-empty">No engagement data yet today.</p>
+          ) : (
+            <div className="eng-overview">
+              <span className={`eng-overview-number mono tone-${engagementTone}`}>{engagementStats.attentiveAvg}%</span>
+              <span className="eng-overview-label">% Attentive</span>
+              <div className="eng-bar">
+                <div className={`eng-bar-fill tone-${engagementTone}`} style={{ width: `${engagementStats.attentiveAvg}%` }} />
+              </div>
+              <div className="eng-overview-foot">
+                {engagementStats.atRiskCount > 0 && (
+                  <span className="badge badge-absent">{engagementStats.atRiskCount} at risk</span>
+                )}
+                <Link to="/dashboard/engagement" className="eng-overview-link">View details</Link>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

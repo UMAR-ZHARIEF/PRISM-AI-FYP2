@@ -379,6 +379,230 @@ function logAudit(actorId, action, targetId, metadata) {
     });
 }
 
+// ── Engagement pipeline (fire-and-forget) ────────────────────────────────────
+// The Edge AI payload can carry per-detection emotion data. Every tick that
+// carries emotions is sampled into engagement_records. Unlike attendance,
+// this is NOT deduplicated to the first sighting per day: session percentages
+// ("disengaged in N% of today's session") need continuous samples. After
+// each batch, aggregate_engagement rebuilds the student's
+// engagement_summaries row for the date, and a homeroom-teacher notification
+// fires the first time a student crosses the at-risk line for that date.
+
+// Server-side half of the note-taking rule (the 60-second sustained no-face
+// rule lives in the Python edge): when the class-average disengagement
+// exceeds this threshold, the whole class is doing the same low-attention
+// activity (e.g. writing notes), so individual at-risk flags are skipped.
+const ENGAGEMENT_CLASS_GATE_PCT = 60;
+
+// Detection -> student resolution cache for the engagement pass. The payload
+// repeats every SEND_INTERVAL (10s), so caching the UUID/name lookup keeps
+// the per-tick DB load flat. Bounded by the roster size.
+const engagementStudentCache = new Map();
+
+// Same resolution order as the attendance bridge: UUID first (exact even for
+// namesakes), then case-insensitive name matching disambiguated by the
+// payload's class name when several students share a name. Returns the
+// students row (id, full_name, class_section_id) or null.
+async function resolveEngagementStudent(det) {
+  const bareName = (det.student_name || '')
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .trim();
+  if (!bareName || bareName.toLowerCase() === 'unknown') return null;
+
+  const detUuid = String(det.student_uuid || '').trim();
+  const uuidKey = detUuid ? `uuid:${detUuid}` : null;
+  const nameKey = `name:${bareName.toLowerCase()}`;
+
+  if (uuidKey && engagementStudentCache.has(uuidKey)) {
+    return engagementStudentCache.get(uuidKey);
+  }
+  if (!uuidKey && engagementStudentCache.has(nameKey)) {
+    return engagementStudentCache.get(nameKey);
+  }
+
+  let student = null;
+
+  if (detUuid) {
+    const { data: byUuid, error: uuidErr } = await supabase
+      .from('students')
+      .select('id, full_name, class_section_id')
+      .eq('id', detUuid)
+      .maybeSingle();
+    if (uuidErr) {
+      console.warn(`[engagement] UUID lookup error for ${detUuid}:`, uuidErr.message);
+    } else if (byUuid) {
+      student = byUuid;
+    }
+  }
+
+  if (!student) {
+    const { data: matches, error: lookupErr } = await supabase
+      .from('students')
+      .select('id, full_name, class_section_id, class_section:class_sections(name)')
+      .ilike('full_name', bareName);
+    if (lookupErr) {
+      console.warn(`[engagement] lookup error for "${bareName}":`, lookupErr.message);
+    } else if (matches && matches.length === 1) {
+      student = matches[0];
+    } else if (matches && matches.length > 1) {
+      // Namesake disambiguation via the payload's class name (same rule as
+      // the attendance bridge): only pick when it uniquely resolves one
+      // student, otherwise leave null (never guess).
+      const detClass = (det.student_class || '').trim().toLowerCase();
+      const byClass = detClass
+        ? matches.filter((m) => (m.class_section?.name || '').trim().toLowerCase() === detClass)
+        : [];
+      if (byClass.length === 1) student = byClass[0];
+    }
+  }
+
+  if (student) {
+    if (uuidKey) engagementStudentCache.set(uuidKey, student);
+    engagementStudentCache.set(nameKey, student);
+  } else if (uuidKey) {
+    // Negative cache: a dead UUID must not re-query on every 10s tick.
+    engagementStudentCache.set(uuidKey, null);
+  }
+  return student;
+}
+
+// Aggregate one student's day summary, then apply the class gate and the
+// at-risk alert. Runs inside the fire-and-forget chain only: every failure
+// logs and never touches the attendance response.
+async function aggregateEngagementForStudent(studentId, dateStr) {
+  try {
+    // 1) Pre-aggregation at_risk: the alert must fire only on a false ->
+    //    true flip within the same date, never once per tick.
+    const { data: prev } = await supabase
+      .from('engagement_summaries')
+      .select('at_risk')
+      .eq('student_id', studentId)
+      .eq('date', dateStr)
+      .maybeSingle();
+
+    // 2) Rebuild the day summary from engagement_records (DB-side RPC).
+    const { error: rpcErr } = await supabase.rpc('aggregate_engagement', {
+      p_student_id: studentId,
+      p_date: dateStr,
+    });
+    if (rpcErr) {
+      console.warn('[engagement] aggregate_engagement RPC failed:', rpcErr.message);
+      return;
+    }
+
+    // 3) Fresh summary plus the student's class membership (for the gate
+    //    and the homeroom-teacher lookup).
+    const { data: summary, error: sumErr } = await supabase
+      .from('engagement_summaries')
+      .select('at_risk, disengaged_pct, student:students(full_name, class_section_id)')
+      .eq('student_id', studentId)
+      .eq('date', dateStr)
+      .maybeSingle();
+    if (sumErr) {
+      console.warn('[engagement] summary read failed:', sumErr.message);
+      return;
+    }
+    if (!summary || !summary.at_risk) return;
+
+    // 4) Class-average gate: when most of the class is disengaged the
+    //    reading is ambient (collective note-writing), not an individual
+    //    problem. Un-flag the student so the summary endpoint stays
+    //    consistent with the skip decision.
+    const sectionId = summary.student?.class_section_id || null;
+    if (sectionId) {
+      const { data: classRows, error: clsErr } = await supabase
+        .from('engagement_summaries')
+        .select('disengaged_pct, students!inner(class_section_id)')
+        .eq('date', dateStr)
+        .eq('students.class_section_id', sectionId);
+      if (clsErr) {
+        console.warn('[engagement] class-average lookup failed:', clsErr.message);
+      } else if (Array.isArray(classRows) && classRows.length > 0) {
+        const classAvg = classRows.reduce(
+          (sum, r) => sum + (Number(r.disengaged_pct) || 0),
+          0
+        ) / classRows.length;
+        if (classAvg > ENGAGEMENT_CLASS_GATE_PCT) {
+          const { error: unflagErr } = await supabase
+            .from('engagement_summaries')
+            .update({ at_risk: false })
+            .eq('student_id', studentId)
+            .eq('date', dateStr);
+          if (unflagErr) {
+            console.warn('[engagement] class-gate unflag failed:', unflagErr.message);
+          }
+          return;
+        }
+      }
+    }
+
+    // 5) Newly at-risk only: a pre-existing true flag means the alert for
+    //    this date already went out (or the flag was up) — never re-alert.
+    if (prev && prev.at_risk) return;
+
+    let teacherId = null;
+    if (sectionId) {
+      const { data: section } = await supabase
+        .from('class_sections')
+        .select('homeroom_teacher_id')
+        .eq('id', sectionId)
+        .maybeSingle();
+      teacherId = section?.homeroom_teacher_id || null;
+    }
+    if (!teacherId) return;
+
+    const studentName = summary.student?.full_name || 'A student';
+    const pct = Math.round(Number(summary.disengaged_pct) || 0);
+    const { error: nErr } = await supabase.from('notifications').insert({
+      recipient_id: teacherId,
+      scope: 'user',
+      type: 'engagement',
+      title: `${studentName} engagement concern`,
+      body: `${studentName} has been disengaged in ${pct}% of today's session.`,
+    });
+    if (nErr) console.warn('[engagement] at-risk notification failed:', nErr.message);
+  } catch (e) {
+    console.error('[engagement] aggregation pipeline threw:', e);
+  }
+}
+
+// Sample one payload's emotion-carrying detections into engagement_records,
+// then aggregate every sampled student for the date. One record per student
+// per tick (a duplicated face match in the same payload must not double-
+// weight a sample). Fire-and-forget.
+async function persistEngagementBatch(detections, classroomId, dateStr) {
+  if (!supabase) return;
+  const sampled = new Map(); // student_id -> resolved students row
+  try {
+    for (const det of detections) {
+      if (!det || !det.emotion) continue;
+      const student = await resolveEngagementStudent(det);
+      if (!student || sampled.has(student.id)) continue;
+      sampled.set(student.id, student);
+      const { error: engErr } = await supabase
+        .from('engagement_records')
+        .insert({
+          student_id: student.id,
+          date: dateStr,
+          emotion: det.emotion,
+          engagement_state: det.engagement_state || 'attentive',
+          confidence: det.emotion_confidence || null,
+          classroom_id: classroomId || null,
+        });
+      if (engErr) {
+        console.warn(`[engagement] record insert failed for ${student.full_name}:`, engErr.message);
+      }
+    }
+    if (sampled.size === 0) return;
+    console.log(`[engagement] sampled ${sampled.size} student(s) for ${dateStr}`);
+    for (const sid of sampled.keys()) {
+      await aggregateEngagementForStudent(sid, dateStr);
+    }
+  } catch (e) {
+    console.error('[engagement] batch persistence threw:', e);
+  }
+}
+
 const VALID_ROLES = ['admin', 'teacher', 'parent'];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -658,6 +882,80 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
       }
     }
   })();
+
+  // ── Engagement capture (fire-and-forget) ────────────────────────────
+  // Runs on EVERY tick, not just first sightings: session percentages are
+  // built from continuous emotion samples, so the attendance dedup
+  // (presentToday) must not throttle this path. Skipped silently when the
+  // payload carries no emotions (legacy Python) or Supabase is off.
+  if (detections.some((d) => d && d.emotion)) {
+    persistEngagementBatch(detections, classroom_id, localDateStr(new Date()))
+      .catch((e) => console.error('[engagement] batch rejected:', e));
+  }
+});
+
+// GET /api/engagement/summary?date=YYYY-MM-DD — day-level engagement
+// summaries for the Dashboard. Staff-only. The server queries with the
+// service key, so RLS cannot scope the rows: teachers are filtered by hand
+// to the class sections they may touch (teacher_class_ids: homeroom UNION
+// taught years, the same rule the database enforces on teacher clients).
+// Admins get the whole school for the date.
+app.get('/api/engagement/summary', requireStaff, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  // ?date=YYYY-MM-DD (optional, defaults to today, LOCAL calendar day).
+  // A malformed date is a client bug: reject it instead of silently
+  // returning today's rows.
+  const dateStr = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : null;
+  if (req.query.date && !dateStr) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  }
+  const day = dateStr || localDateStr(new Date());
+
+  try {
+    // class_section_id rides along in the join so teacher rows can be
+    // filtered in JS (avoids PostgREST alias-vs-filter ambiguity).
+    const { data, error } = await supabase
+      .from('engagement_summaries')
+      .select('student_id, attentive_pct, disengaged_pct, at_risk, dominant_emotion, student:students(full_name, class_section_id, class_section:class_sections(name))')
+      .eq('date', day);
+    if (error) {
+      console.error('[engagement] summary query failed:', error.message);
+      return res.status(500).json({ error: 'Failed to load engagement summaries' });
+    }
+
+    let rows = data || [];
+
+    if (req.actor.role === 'teacher') {
+      // Service-key query: resolve the sections this teacher may see, then
+      // scope manually (RLS is bypassed by the service key).
+      const { data: classIds, error: tcErr } = await supabase
+        .rpc('teacher_class_ids', { uid: req.actor.id });
+      if (tcErr) {
+        console.error('[engagement] teacher_class_ids failed:', tcErr.message);
+        return res.status(500).json({ error: 'Failed to resolve teacher classes' });
+      }
+      const ids = (Array.isArray(classIds) ? classIds : []).filter(Boolean);
+      if (ids.length === 0) return res.json([]); // teacher with no sections
+      rows = rows.filter((r) => ids.includes(r.student?.class_section_id));
+    }
+
+    const summaries = rows.map((row) => ({
+      student_id: row.student_id,
+      student_name: row.student?.full_name || null,
+      class_name: row.student?.class_section?.name || null,
+      attentive_pct: row.attentive_pct,
+      disengaged_pct: row.disengaged_pct,
+      at_risk: row.at_risk,
+      dominant_emotion: row.dominant_emotion,
+    }));
+    return res.json(summaries);
+  } catch (e) {
+    console.error('[engagement] summary endpoint threw:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // ── Admin: User Management ───────────────────────────────────────────────────
@@ -1236,6 +1534,7 @@ app.listen(PORT, () => {
   console.log('    GET  /api/health            → Server status');
   console.log('    GET  /api/attendance         → All live data');
   console.log('    POST /api/attendance         → AI sends data');
+  console.log('    GET  /api/engagement/summary → Day engagement summaries (staff)');
   console.log('    POST   /api/admin/users      → Invite user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');

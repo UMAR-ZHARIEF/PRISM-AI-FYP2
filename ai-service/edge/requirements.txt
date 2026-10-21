@@ -18,6 +18,11 @@ onnxruntime-gpu>=1.17 ; sys_platform == 'linux'
 # Computer Vision
 opencv-python>=4.8.0
 
+# Detection utilities — NMS + IoU helpers for the YOLOv8 emotion-model
+# output parsing in face_recognition.py (box_non_max_suppression; the
+# emotion→face IoU matching is implemented inline beside it)
+supervision>=0.24.0
+
 # Numerical Computing — pinned <2: insightface 0.7.3's compiled extension is
 # built against the NumPy 1.x ABI and crashes on import under NumPy 2
 numpy>=1.24.0,<2
