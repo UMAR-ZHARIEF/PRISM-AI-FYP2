@@ -353,10 +353,15 @@ class EmotionEngine:
             raise FileNotFoundError(f"emotion model not found: {model_path}")
 
         print(f"[EMOTION] Loading {model_path.name} on providers: {providers}")
+        # Run the emotion model on CPU: two DmlExecutionProvider sessions
+        # (InsightFace + emotion) conflict on the same GPU and silently degrade
+        # InsightFace's detection after minutes of concurrent use. The emotion
+        # model only runs every EMOTION_INTERVAL seconds on a single frame, so
+        # CPU inference (~100-200ms) is imperceptible.
+        emotion_providers = ['CPUExecutionProvider']
         self.session = ort.InferenceSession(
             str(model_path),
-            providers=providers,
-            provider_options=gpu_provider_options(providers, EMOTION_GPU_MEM_LIMIT),
+            providers=emotion_providers,
         )
         self.input_name = self.session.get_inputs()[0].name
 
@@ -378,7 +383,10 @@ class EmotionEngine:
             return []
         h, w = frame_bgr.shape[:2]
         padded, gain, pad_x, pad_y = _letterbox(frame_bgr, self.input_size)
-        blob = padded[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        # NOTE: best_v2.pt was trained on raw 0-255 pixel values, NOT
+        # normalized 0-1. Dividing by 255 crushes the signal to near-zero
+        # (verified: 0.0019 max confidence vs 0.9985 without normalization).
+        blob = padded[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32)
         outputs = self.session.run(None, {self.input_name: blob})
 
         raw = parse_yolo_predictions(
@@ -761,10 +769,14 @@ def run_recognition(args):
     if camera_source.isdigit():
         camera_source = int(camera_source)
 
-    # Use DirectShow backend explicitly; let camera pick its native resolution
-    # (forcing 1280x720 breaks low-res cameras like UGREEN's default 640x480)
+    # Use the DEFAULT backend (MSMF on modern Windows) — DirectShow (CAP_DSHOW)
+    # can produce black frames after Windows restarts or driver updates, while
+    # MSMF (the same backend the Windows Camera app uses) works reliably.
+    # Only force CAP_DSHOW if MSMF fails to open the device.
     if isinstance(camera_source, int):
-        cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(camera_source)  # MSMF (default) — reliable
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)  # fallback
     else:
         cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():
