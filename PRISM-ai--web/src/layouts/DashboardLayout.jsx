@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, createContext, useContext } from 
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
-  Camera, UserCog, ChevronDown, Video, ClipboardCheck, BarChart3
+  Camera, UserCog, ChevronDown, Video, ClipboardCheck, BarChart3, Activity
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
@@ -31,6 +31,7 @@ const sidebarSections = [
     links: [
       { path: '/dashboard/students', label: 'Students', icon: Users },
       { path: '/dashboard/reports', label: 'Reports', icon: FileBarChart },
+      { path: '/dashboard/engagement', label: 'Engagement', icon: Activity },
       { path: '/dashboard/attendance', label: 'Take Attendance', icon: ClipboardCheck },
       { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3 },
     ]
@@ -113,6 +114,7 @@ export default function DashboardLayout() {
     if (path.includes('students/') && path !== '/dashboard/students') return 'Student Profile';
     if (path.includes('students')) return 'Students';
     if (path.includes('reports')) return 'Reports';
+    if (path.includes('engagement')) return 'Engagement';
     if (path.includes('admin')) return 'Admin Panel';
     if (path.includes('camera')) return 'Live Camera';
     if (path.includes('class/')) return 'Class Detail';
