@@ -152,7 +152,7 @@ export default function DashboardLayout() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-header">
           <Link to="/" className="sidebar-logo">
-            <Camera size={24} />
+            <img src="/logo.png" alt="PRISM-AI" className="sidebar-logo-img" />
             {sidebarOpen && <span>PRISM-AI</span>}
           </Link>
           <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>

@@ -266,7 +266,7 @@ export default function ParentPortal() {
         <nav className="pp-nav">
           <div className="pp-nav-container">
             <Link to="/" className="pp-nav-logo">
-              <span className="pp-nav-mark">P/A</span>
+              <img src="/logo.png" alt="PRISM-AI Logo" className="pp-nav-logo-img" />
               <span className="pp-nav-name">PRISM-AI</span>
             </Link>
             <div className="pp-nav-right">
@@ -347,7 +347,7 @@ export default function ParentPortal() {
       <nav className="pp-nav">
         <div className="pp-nav-container">
           <Link to="/" className="pp-nav-logo">
-            <span className="pp-nav-mark">P/A</span>
+            <img src="/logo.png" alt="PRISM-AI Logo" className="pp-nav-logo-img" />
             <span className="pp-nav-name">PRISM-AI</span>
           </Link>
 

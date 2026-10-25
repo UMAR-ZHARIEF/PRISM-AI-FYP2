@@ -53,6 +53,13 @@
   color: var(--paper-light);
 }
 .sidebar-logo svg { color: var(--red); }
+.sidebar-logo-img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
 
 .sidebar-toggle {
   background: none;

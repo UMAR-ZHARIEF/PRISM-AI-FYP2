@@ -99,7 +99,7 @@ export default function Login() {
         {/* LEFT — brand panel */}
         <aside className="login-aside">
           <div className="login-brand reveal reveal-1">
-            <Camera size={40} />
+            <img src="/logo.png" alt="PRISM-AI Logo" className="login-logo-img" />
             <h1>
               <span className="word k">PRISM-AI</span>
             </h1>
