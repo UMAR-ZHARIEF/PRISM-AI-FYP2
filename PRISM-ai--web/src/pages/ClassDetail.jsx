@@ -66,12 +66,8 @@ export default function ClassDetail() {
     [classSections, className, yearNum]
   );
 
-  // Teacher scoping: if a teacher is viewing a class outside their homeroom(s),
-  // surface a small informational note. Admins (and teachers viewing their own
-  // homeroom) never see it.
   const { profile } = useAuth();
   const isTeacher = profile?.role === 'teacher';
-
   // Distinguish "genuinely not found" from "not yours": when the loaded
   // sections miss the URL, re-check ALL class_sections with a separate query.
   // A class that exists but is not this teacher's renders read-only instead
@@ -205,6 +201,28 @@ export default function ClassDetail() {
     );
   }
   if (sectionMissing) {
+    if (isTeacher) {
+      return (
+        <div className="classdetail-page">
+          <div className="page-header classdetail-header">
+            <div>
+              <h1><span className="word r">Access</span> <span className="word k">Restricted</span></h1>
+              <p className="page-subtitle">Year {yearNum || year} &middot; {className}</p>
+            </div>
+          </div>
+          <div className="card classdetail-empty">
+            <span className="tape tl" />
+            <UserX size={48} />
+            <h3>Class Access Restricted</h3>
+            <p>You are not assigned to teach Year {yearNum || year} {className}. Teachers can only view and manage their assigned class.</p>
+            <Link to="/dashboard" className="btn btn-primary">
+              <ArrowLeft size={16} /> Back to Dashboard
+            </Link>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="classdetail-page">
         <div className="page-header classdetail-header">
@@ -301,7 +319,7 @@ export default function ClassDetail() {
         {!isOutsideHomeroom && (
           <div className="page-header-actions">
             <Link to={`/dashboard/attendance/${yearNum}/${className}`} className="btn btn-green">
-              <ClipboardCheck size={16} /> Take Attendance
+              <ClipboardCheck size={16} /> Manual Attendance
             </Link>
           </div>
         )}

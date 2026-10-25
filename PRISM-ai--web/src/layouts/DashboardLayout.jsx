@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
+import useClassSections from '../hooks/useClassSections';
 import useNotifications from '../hooks/useNotifications';
 import './DashboardLayout.css';
 
@@ -23,17 +24,17 @@ const sidebarSections = [
     label: 'Main',
     links: [
       { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { path: '/dashboard/camera', label: 'Live Camera', icon: Video },
+      { path: '/dashboard/camera', label: 'Take Attendance', icon: Video },
     ]
   },
   {
-    label: 'Management',
+    label: 'Academic',
     links: [
       { path: '/dashboard/students', label: 'Students', icon: Users },
       { path: '/dashboard/reports', label: 'Reports', icon: FileBarChart },
       { path: '/dashboard/engagement', label: 'Engagement', icon: Activity },
-      { path: '/dashboard/attendance', label: 'Take Attendance', icon: ClipboardCheck },
-      { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3 },
+      { path: '/dashboard/attendance', label: 'Manual Attendance', icon: ClipboardCheck },
+      { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3, adminOnly: true },
     ]
   },
   {
@@ -67,10 +68,27 @@ export default function DashboardLayout() {
   const userRef = useRef(null);
 
   const { years, loading: yearsLoading } = useYears();
+  const { classSections: mySections } = useClassSections();
   const { notifications, unreadCount, markAllRead } = useNotifications();
   const { user, profile, signOut } = useAuth();
 
   const role = profile?.role;
+  const isTeacher = role === 'teacher';
+
+  const teacherClassSections = useMemo(() => {
+    if (!isTeacher) return [];
+    return (mySections || []).filter(s => s.homeroom_teacher_id === profile?.id);
+  }, [isTeacher, mySections, profile?.id]);
+
+  const teacherYears = useMemo(() => {
+    return Array.from(new Set(teacherClassSections.map(s => s.year_num)));
+  }, [teacherClassSections]);
+
+  useEffect(() => {
+    if (isTeacher && selectedYear !== null && teacherYears.length > 0 && !teacherYears.includes(selectedYear)) {
+      setSelectedYear(null);
+    }
+  }, [isTeacher, teacherYears, selectedYear]);
 
   // Shared view scope for the pages below (see ScopeContext above). The user's
   // explicit pick wins once made; until then the scope derives from the role:
@@ -116,9 +134,9 @@ export default function DashboardLayout() {
     if (path.includes('reports')) return 'Reports';
     if (path.includes('engagement')) return 'Engagement';
     if (path.includes('admin')) return 'Admin Panel';
-    if (path.includes('camera')) return 'Live Camera';
+    if (path.includes('camera')) return 'Take Attendance';
     if (path.includes('class/')) return 'Class Detail';
-    if (path.includes('attendance')) return 'Attendance';
+    if (path.includes('attendance')) return 'Manual Attendance';
     if (path.includes('comparison')) return 'Compare Classes';
     return 'Dashboard';
   };
@@ -148,16 +166,19 @@ export default function DashboardLayout() {
             return (
               <div key={section.label} className="sidebar-section">
                 {sidebarOpen && <span className="sidebar-section-label">{section.label}</span>}
-                {section.links.map(link => (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    className={`sidebar-link ${isSidebarLinkActive(link, location.pathname) ? 'active' : ''}`}
-                  >
-                    <link.icon size={20} />
-                    {sidebarOpen && <span>{link.label}</span>}
-                  </Link>
-                ))}
+                {section.links.map(link => {
+                  if (link.adminOnly && role !== 'admin') return null;
+                  return (
+                    <Link
+                      key={link.path}
+                      to={link.path}
+                      className={`sidebar-link ${isSidebarLinkActive(link, location.pathname) ? 'active' : ''}`}
+                    >
+                      <link.icon size={20} />
+                      {sidebarOpen && <span>{link.label}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             );
           })}
@@ -183,6 +204,36 @@ export default function DashboardLayout() {
               <span className="breadcrumb-current">{getPageTitle()}</span>
             </div>
             {showYearDropdown && (
+              isTeacher ? (
+                teacherClassSections.length <= 1 ? (
+                  <div className="teacher-assigned-badge" title="Your assigned class">
+                    <span className="teacher-badge-pill">
+                      {teacherClassSections.length === 1
+                        ? `Year ${teacherClassSections[0].year_num} ${teacherClassSections[0].name}`
+                        : 'Class: Assigned'}
+                    </span>
+                  </div>
+                ) : (
+                  <select
+                    className="year-dropdown"
+                    value={selectedYear ?? ''}
+                    onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">All My Classes ({teacherClassSections.length})</option>
+                    {teacherYears.map(yn => {
+                      const classesInYear = teacherClassSections
+                        .filter(s => s.year_num === yn)
+                        .map(s => s.name)
+                        .join(', ');
+                      return (
+                        <option key={yn} value={yn}>
+                          Year {yn} ({classesInYear})
+                        </option>
+                      );
+                    })}
+                  </select>
+                )
+              ) : (
               <select
                 className="year-dropdown"
                 value={selectedYear ?? ''}

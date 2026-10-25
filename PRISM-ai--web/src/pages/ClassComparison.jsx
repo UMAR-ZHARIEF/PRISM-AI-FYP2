@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useContext } from 'react';
+import { Link } from 'react-router-dom';
 import { BarChart3, Users, Filter, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -288,6 +289,32 @@ export default function ClassComparison() {
 
   /* ── Section color helper (DB color first, then static fallback) ── */
   const colorFor = (sectionName) => classColors[sectionName] || '#1F1A12';
+
+  if (isTeacher) {
+    return (
+      <div className="comparison-page">
+        <div className="page-header comparison-header">
+          <div>
+            <h1>
+              <span className="word b">Compare</span>{' '}
+              <span className="word k">Classes</span>
+            </h1>
+          </div>
+        </div>
+        <div className="card comparison-empty-card" style={{ textAlign: 'center', padding: '60px 20px' }}>
+          <span className="tape tl" />
+          <BarChart3 size={48} style={{ margin: '0 auto 16px', opacity: 0.5, display: 'block' }} />
+          <h3>School-Wide Comparison Restricted</h3>
+          <p style={{ maxWidth: 460, margin: '8px auto 20px', color: 'var(--muted)' }}>
+            Cross-class comparisons are reserved for school administrators and academic coordinators. As a teacher, you have full access to your assigned class on your dashboard.
+          </p>
+          <Link to="/dashboard" className="btn btn-primary">
+            Back to My Dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="comparison-page">
