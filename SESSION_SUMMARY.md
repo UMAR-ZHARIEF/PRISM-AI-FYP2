@@ -85,3 +85,51 @@ During this session, we completed the following major milestones:
 * **Frontend**: [`http://localhost:5173`](http://localhost:5173)
 * **Backend Bridge**: [`http://localhost:3001`](http://localhost:3001) (`/api/health`)
 * **AI Camera Feed**: `127.0.0.1:5174/stream` (proxied via `/stream`)
+
+---
+
+## 🔄 Session Update: October 25, 2026 — Branch Merging & Brand Logo Integration
+
+### 1. Multi-Branch Harmonization
+* Unified all 3 project branches on GitHub (`main`, `umar`, and `syed`).
+* Resolved merge conflicts across core pages:
+  - `PRISM-ai--web/src/layouts/DashboardLayout.jsx`
+  - `PRISM-ai--web/src/pages/Attendance.jsx`
+  - `PRISM-ai--web/src/pages/ClassDetail.jsx`
+  - `PRISM-ai--web/src/pages/Dashboard.jsx`
+  - `PRISM-ai--web/src/pages/Reports.jsx`
+
+### 2. Maintained Syed's Architecture & Ordering
+* **Sidebar Layout**: Kept section labeled **`Academic`** and links ordered as:
+  1. Students
+  2. Reports
+  3. Engagement
+  4. Manual Attendance
+  5. Compare Classes (`adminOnly: true`)
+* **Attendance Terminology**:
+  - Live AI camera feed titled **`Take Attendance`** (`/dashboard/camera`).
+  - Manual marking titled **`Manual Attendance`** (`/dashboard/attendance`).
+  - Action buttons synced on Dashboard and ClassDetail pages.
+* **Teacher Multi-Class & Access Control**:
+  - Preserved multi-class badges/selectors in Dashboard topbar.
+  - Retained strict teacher access restrictions (`Access Restricted` screens and RLS policy `0005_teacher_class_access_control.sql`).
+  - Preserved teacher assignment scripts (`scripts/assign-15-teachers.cjs` and `scripts/randomize-classes.cjs`).
+
+### 3. Integrated Umar's Technical Features
+* **Emotion Engine & Engagement**: YOLOv8 face-crop emotion model (`best_v2.pt`), engagement rate tracking (`/dashboard/engagement`), and dashboard summary card.
+* **Notifications & Auditing**: Fire-and-forget parent/teacher notification fanouts on bulk present and row edits, paired with `audit_logs` entries.
+* **UI Bug Fixes**: Resolved layout and phone-width geometry defects from the open-eyed UX audit.
+
+### 4. PRISM-AI Brand Logo Integration
+* Added the official geometric faceted **PRISM-AI "P"** logo mark and transparent assets (`/logo.png`, `/logo-full.png`, `/favicon.png`).
+* Integrated brand logo across:
+  - Browser tab Favicon (`index.html`)
+  - Dashboard Sidebar header (`DashboardLayout.jsx` / `DashboardLayout.css`)
+  - Landing page navbar & footer (`Landing.jsx` / `Landing.css`)
+  - Staff login page brand panel (`Login.jsx` / `Login.css`)
+  - Parent Portal navbar (`ParentPortal.jsx` / `ParentPortal.css`)
+
+### 5. Build & Sync Status
+* Production build verified: `npm run build` compiles with **0 errors**.
+* Branch state: Synchronized and pushed directly to **`origin/syed`** on GitHub (`https://github.com/UMAR-ZHARIEF/PRISM-AI-FYP2.git`).
+
