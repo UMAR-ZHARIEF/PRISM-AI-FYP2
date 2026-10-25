@@ -212,10 +212,10 @@ export default function Camera() {
       <div className="page-header">
         <div>
           <h1>
-            <span className="word k">Live</span>{' '}
-            <span className="word r">Camera</span>
+            <span className="word g">Take</span>{' '}
+            <span className="word k">Attendance</span>
           </h1>
-          <p className="page-subtitle">Annotated face-recognition feed from PRISM-AI, plus live detection status and the list of students spotted so far.</p>
+          <p className="page-subtitle">Live AI face-recognition camera feed, real-time arrival detection, and automated attendance logging.</p>
         </div>
         <div className="page-header-actions">
           <span className={`live-cam-ai-pill ${aiOnline ? 'is-on' : 'is-off'}`}>
