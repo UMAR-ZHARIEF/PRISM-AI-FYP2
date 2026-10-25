@@ -245,7 +245,7 @@ export default function DashboardLayout() {
                   <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
                 ))}
               </select>
-            )}
+            ))}
           </div>
 
           <div className="topbar-right">
