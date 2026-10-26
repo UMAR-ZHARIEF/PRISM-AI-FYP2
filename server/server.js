@@ -522,7 +522,9 @@ async function aggregateEngagementForStudent(studentId, dateStr) {
           (sum, r) => sum + (Number(r.disengaged_pct) || 0),
           0
         ) / classRows.length;
-        if (classAvg > ENGAGEMENT_CLASS_GATE_PCT) {
+        // engagement_summaries stores the *_pct columns as 0-1 fractions,
+        // so compare in fraction space; the constant keeps its percent scale.
+        if (classAvg > ENGAGEMENT_CLASS_GATE_PCT / 100) {
           const { error: unflagErr } = await supabase
             .from('engagement_summaries')
             .update({ at_risk: false })
@@ -552,7 +554,8 @@ async function aggregateEngagementForStudent(studentId, dateStr) {
     if (!teacherId) return;
 
     const studentName = summary.student?.full_name || 'A student';
-    const pct = Math.round(Number(summary.disengaged_pct) || 0);
+    // disengaged_pct is a 0-1 fraction in the DB; scale to percent for text.
+    const pct = Math.round((Number(summary.disengaged_pct) || 0) * 100);
     const { error: nErr } = await supabase.from('notifications').insert({
       recipient_id: teacherId,
       scope: 'user',
@@ -946,8 +949,10 @@ app.get('/api/engagement/summary', requireStaff, async (req, res) => {
       student_id: row.student_id,
       student_name: row.student?.full_name || null,
       class_name: row.student?.class_section?.name || null,
-      attentive_pct: row.attentive_pct,
-      disengaged_pct: row.disengaged_pct,
+      // Response boundary only: DB stores the *_pct columns as 0-1
+      // fractions, but the UI renders these keys as 0-100 percentages.
+      attentive_pct: Math.round((Number(row.attentive_pct) || 0) * 100),
+      disengaged_pct: Math.round((Number(row.disengaged_pct) || 0) * 100),
       at_risk: row.at_risk,
       dominant_emotion: row.dominant_emotion,
     }));

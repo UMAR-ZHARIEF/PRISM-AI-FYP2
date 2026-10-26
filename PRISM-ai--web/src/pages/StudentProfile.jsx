@@ -199,7 +199,9 @@ export default function StudentProfile() {
       const key = String(row.date ?? row.summary_date ?? row.day ?? '').slice(0, 10);
       if (!key) return;
       const raw = row.attentive_pct ?? row.attentivePercent ?? row.attentive_percent;
-      const pct = raw == null ? null : Number(String(raw).replace('%', ''));
+      // engagement_summaries stores *_pct as a 0-1 fraction (0.85 = 85%),
+      // so scale to a 0-100 percent before the >= 50 checks below.
+      const pct = raw == null ? null : Math.round(Number(String(raw).replace('%', '')) * 100);
       byDate.set(key, {
         pct: Number.isNaN(pct) ? null : pct,
         atRisk: Boolean(row.at_risk ?? row.atRisk),
