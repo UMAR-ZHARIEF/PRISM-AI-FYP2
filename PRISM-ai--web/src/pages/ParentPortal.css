@@ -1020,3 +1020,16 @@
   padding: 16px 4px;
   text-align: center;
 }
+
+/* Legal footer links (same trio as Landing/Login footers) */
+.pp-legal-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 0 24px 40px;
+  font-family: var(--accent);
+  font-size: 14px;
+  color: var(--ink-faint);
+}
+.pp-legal-links span { color: var(--ink-faint); }
