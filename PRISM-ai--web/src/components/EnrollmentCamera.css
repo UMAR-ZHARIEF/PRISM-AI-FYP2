@@ -1,0 +1,142 @@
+/* ============================================================
+   ENROLLMENT CAMERA - in-browser face enrollment (admin panel)
+   Lives inside the "Enroll a new face" card on AdminPanel.
+   Cut-paper look: ink borders, tape-tag details, no rounded
+   corners anywhere (only 50% circles are allowed).
+   ============================================================ */
+
+.enrollcam {
+  margin-top: 18px;
+}
+
+/* --- Header: who is enrolling + captures progress ------------- */
+.enrollcam-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.enrollcam-name {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  margin-top: 4px;
+}
+/* n / 5 counter: JetBrains Mono via the global .mono class, the
+   current count set in Fraunces for the display-serif look. */
+.enrollcam-count {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  padding: 6px 12px;
+  clip-path: var(--cut-pill);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.enrollcam-count strong {
+  font-family: var(--display);
+  font-size: 24px;
+  font-weight: 900;
+  color: var(--ink);
+  letter-spacing: -0.02em;
+}
+
+/* --- Live video stage ----------------------------------------- */
+.enrollcam-stage {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  aspect-ratio: 4 / 3;
+  background: var(--ink);
+  border: 3px solid var(--ink);
+  overflow: hidden;
+  box-shadow: var(--shadow-paper);
+}
+.enrollcam-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Same stretch as the 640x480 upload canvas, so the bbox overlay
+     lines up with the face on screen at any displayed size. */
+  object-fit: fill;
+}
+
+/* Face box from the server, scaled from the 640x480 frame space to
+   the displayed size with percentage offsets. */
+.enrollcam-box {
+  position: absolute;
+  border: 3px solid var(--yellow);
+  outline: 1px solid rgba(31, 26, 18, 0.65);
+  pointer-events: none;
+}
+.enrollcam-box.is-ok { border-color: var(--green); }
+.enrollcam-box.is-flash { animation: enrollcam-flash 0.45s ease-out 1; }
+@keyframes enrollcam-flash {
+  0% { background: rgba(79, 167, 100, 0.55); border-color: var(--green); }
+  100% { background: transparent; }
+}
+
+.enrollcam-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(31, 26, 18, 0.72);
+  color: var(--paper-light);
+  font-family: var(--body);
+  font-size: 18px;
+}
+
+/* --- Guidance strip under the video ---------------------------- */
+.enrollcam-guidance {
+  display: inline-block;
+  margin: 14px 0 0;
+  padding: 8px 14px;
+  border-left: 4px solid var(--yellow);
+  background: rgba(242, 199, 68, 0.22);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.enrollcam-guidance.tone-ok { border-left-color: var(--green); background: rgba(79, 167, 100, 0.16); }
+.enrollcam-guidance.tone-warn { border-left-color: var(--yellow); background: rgba(242, 199, 68, 0.22); }
+.enrollcam-guidance.tone-error { border-left-color: var(--red); background: rgba(224, 74, 63, 0.12); }
+
+/* --- Buttons ---------------------------------------------------- */
+.enrollcam-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* --- Ended / camera-error panel --------------------------------- */
+.enrollcam-ended {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border: 2px dashed var(--ink);
+}
+.enrollcam-ended-title {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 900;
+  color: var(--ink);
+}
+.enrollcam-ended-body {
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+  margin: 6px 0 12px;
+}

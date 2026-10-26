@@ -28,6 +28,12 @@ const PORT = 3001;
 
 // Middleware
 app.use(cors());
+// Browser-enrollment frames (Phase 1) arrive as base64 JPEG data URLs, which
+// easily pass the default 100 KB JSON body cap, so this one route gets its
+// own larger limit. It must be registered above the global parser: whichever
+// parser consumes the stream first wins, and body-parser skips a request
+// once the stream has been read.
+app.use('/api/ai/enroll/frame', express.json({ limit: '10mb' }));
 app.use(express.json());
 
 // ── Supabase Client ──────────────────────────────────────────────────────────
@@ -1527,6 +1533,369 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
   child.on('error', (e) => res.status(500).json({ error: e.message }));
 });
 
+// ── Browser enrollment sessions (Phase 1) ────────────────────────────────
+// In-browser enrollment: the admin's webcam (in the React page) captures the
+// frames, this server relays them to a local headless Python helper
+// (enroll_server.py) that holds InsightFace, and on completion this server
+// writes enrolled_students.json itself. The classroom webcam (held by the
+// face_recognition.py child) is NOT involved, so a session is deliberately
+// ALLOWED while the recognition AI is running. The CLI fallback (POST
+// /api/ai/enroll above) stays untouched for machines without the helper.
+
+// Module-level single-session state: only one browser enrollment at a time.
+let enrollSession = null; // { id, studentId, studentName, studentClass, child, port, startedAt }
+
+// Matches enroll_student.py's default --captures (5). The helper announces
+// the authoritative per-frame count; this is only what /api/ai/enroll/session
+// returns so the UI can show a target before the first frame arrives.
+const ENROLL_REQUIRED_CAPTURES = 5;
+
+// enroll_server.py prints "ENROLL_READY port=<P>" on stdout once its HTTP
+// server is listening, and refuses without CUDA/DirectML by printing
+// GPU_REQUIRED and exiting with code 3 (same contract as the other AI
+// children, mapped to the same user-facing message below).
+const ENROLL_HELPER_START_TIMEOUT_MS = 45 * 1000;
+
+// Serialize writes to enrolled_students.json through a promise chain. The CLI
+// fallback (POST /api/ai/enroll) is the only other writer, and it can never
+// overlap a browser session: it is refused while the recognition AI runs
+// (409 rule), and this chain additionally orders concurrent completions.
+let enrollJsonWriteChain = Promise.resolve();
+function withEnrollJsonLock(fn) {
+  const run = enrollJsonWriteChain.then(fn, fn);
+  enrollJsonWriteChain = run.then(() => {}, () => {});
+  return run;
+}
+
+// time.strftime("%Y-%m-%dT%H:%M:%S") equivalent in LOCAL time, the exact
+// enrolled_at format enroll_student.py writes (toISOString would be UTC).
+function localEnrollTimestamp(d) {
+  const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  return `${localDateStr(d)}T${t}`;
+}
+
+// If Express exits while a helper is up, take the helper down with it so no
+// headless Python process outlives the server (the helper also idle-exits
+// after 10 minutes on its own).
+process.on('exit', () => {
+  if (enrollSession && enrollSession.child.exitCode === null) {
+    try { enrollSession.child.kill(); } catch (_) { /* best effort */ }
+  }
+});
+
+// POST /api/ai/enroll/session - start a browser-enrollment session for one
+// student. Admin-only, same reasoning as POST /api/ai/enroll: this path ends
+// in face embeddings being written, which is a sensitive operation.
+app.post('/api/ai/enroll/session', requireAdmin, async (req, res) => {
+  const { student_id } = req.body || {};
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  // Look up the student's id, name + class section name from Supabase.
+  const { data: student, error } = await supabase
+    .from('students')
+    .select('id, full_name, class_section:class_sections(name)')
+    .eq('id', student_id)
+    .maybeSingle();
+  if (error || !student) return res.status(404).json({ error: 'Student not found' });
+
+  // Server-side PDPA consent gate (the CLI endpoint trusts the client for
+  // this; here it is enforced). Mirrors the client rule in AdminPanel.jsx
+  // (consentStatusFor(studentId) === 'granted'): the LATEST non-revoked
+  // biometric_consents row decides; a missing row counts as pending and is
+  // refused too.
+  const { data: consentRows, error: consentErr } = await supabase
+    .from('biometric_consents')
+    .select('granted')
+    .eq('student_id', student_id)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (consentErr) {
+    console.error('[ai/enroll-session] consent lookup failed:', consentErr.message);
+    return res.status(500).json({ error: 'Failed to check biometric consent' });
+  }
+  const consented = Array.isArray(consentRows) && consentRows.length > 0 && consentRows[0].granted === true;
+  if (!consented) {
+    return res.status(403).json({ error: 'Parent biometric consent not granted' });
+  }
+
+  // One helper at a time. A session whose helper already died does not block
+  // a new one; the frame endpoint clears the stale state on its next call.
+  if (enrollSession && enrollSession.child.exitCode === null) {
+    return res.status(409).json({ error: 'An enrollment session is already active' });
+  }
+
+  // Not blocked while the recognition AI runs: enrollment uses the admin's
+  // browser camera, not the classroom webcam the AI child holds.
+
+  const settings = await getAppSettings(); // det_size from Admin settings (cached, fail-safe default 320)
+  const { aiDir, pythonExe } = aiPaths();
+  const script = path.join(aiDir, 'enroll_server.py');
+  if (!fs.existsSync(pythonExe)) {
+    return res.status(500).json({
+      error: `Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`,
+    });
+  }
+  if (!fs.existsSync(script)) {
+    return res.status(500).json({ error: 'Enrollment helper missing (ai-service/edge/enroll_server.py)' });
+  }
+
+  const child = spawn(pythonExe, [
+    '-u', script,
+    // Port 0 = the helper picks a free ephemeral port and announces it on
+    // stdout, so there is no fixed port to collide with.
+    '--port', '0',
+    '--det-size', String(settings.det_size),
+  ], {
+    cwd: aiDir,
+    windowsHide: true, // headless helper, nothing to show on screen
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+  });
+
+  // Log everything the helper says for its whole lifetime, watch for the
+  // ready line and the GPU refusal, and keep a stderr tail for the
+  // startup-failure response below.
+  let readyPort = null;
+  let gpuSignalled = false;
+  let stderrTail = '';
+  child.stdout.on('data', (d) => {
+    const s = d.toString();
+    s.split(/\r?\n/).filter(Boolean).forEach((l) => console.log(`[AI:enroll-server:stdout] ${l}`));
+    const m = s.match(/ENROLL_READY\s+port=(\d+)/);
+    if (m) readyPort = parseInt(m[1], 10);
+    if (s.includes('GPU_REQUIRED')) gpuSignalled = true;
+  });
+  child.stderr.on('data', (d) => {
+    const s = d.toString();
+    stderrTail = (stderrTail + s).slice(-2000);
+    s.split(/\r?\n/).filter(Boolean).forEach((l) => console.warn(`[AI:enroll-server:stderr] ${l}`));
+    if (s.includes('GPU_REQUIRED')) gpuSignalled = true;
+  });
+  child.on('exit', (code, signal) => {
+    // Session state is intentionally left in place so the frame endpoint can
+    // return its dedicated "helper stopped" answer; this is just the log line.
+    console.log(`[AI:enroll-server] helper exited code=${code} signal=${signal}`);
+  });
+
+  // Wait for ENROLL_READY, a GPU refusal (exit 3 / GPU_REQUIRED marker), a
+  // spawn error, or the startup deadline, whichever comes first.
+  const outcome = await new Promise((resolve) => {
+    let settled = false;
+    let spawnErr = null;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), ENROLL_HELPER_START_TIMEOUT_MS);
+    child.on('error', (e) => { spawnErr = e; });
+    const poll = setInterval(() => {
+      if (spawnErr) finish({ ok: false, reason: 'error', message: spawnErr.message });
+      else if (readyPort !== null) finish({ ok: true, port: readyPort });
+      else if (child.exitCode !== null) finish({
+        ok: false,
+        reason: 'exit',
+        code: child.exitCode,
+        gpu: gpuSignalled || child.exitCode === AI_EXIT_GPU_REQUIRED,
+      });
+    }, 100);
+  });
+
+  if (!outcome.ok) {
+    try { child.kill(); } catch (_) { /* already gone */ }
+    if (outcome.reason === 'exit' && outcome.gpu) {
+      // Same hardware refusal as the CLI path: surface the real reason
+      // instead of a generic "failed to start".
+      return res.status(503).json({ error: GPU_REQUIRED_MSG });
+    }
+    return res.status(500).json({
+      error: 'Enrollment helper failed to start',
+      stderr: outcome.reason === 'error' ? String(outcome.message || '') : stderrTail.slice(-500),
+    });
+  }
+
+  enrollSession = {
+    id: `es_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+    studentId: student.id,
+    studentName: student.full_name,
+    studentClass: student.class_section?.name || 'Unknown',
+    child,
+    port: outcome.port,
+    startedAt: new Date().toISOString(),
+  };
+
+  return res.json({
+    session_id: enrollSession.id,
+    student_name: student.full_name,
+    required_captures: ENROLL_REQUIRED_CAPTURES,
+  });
+});
+
+// POST /api/ai/enroll/frame - relay one browser-camera frame to the helper.
+// Body: { session_id, image, mode? } where image is a data URL or a raw
+// base64 JPEG and mode is 'preview' (default) or 'capture'. The helper's
+// verdict JSON is relayed to the client unchanged, status code included.
+app.post('/api/ai/enroll/frame', requireAdmin, async (req, res) => {
+  const { session_id, image, mode } = req.body || {};
+  if (!session_id || !image) return res.status(400).json({ error: 'session_id and image required' });
+  if (!enrollSession || enrollSession.id !== session_id) {
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+  if (enrollSession.child.exitCode !== null) {
+    enrollSession = null; // dead helper: drop the stale session
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+  // Accept both data URLs ("data:image/jpeg;base64,...") and raw base64.
+  const dm = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(image);
+  const image_b64 = dm ? image.slice(dm[0].length) : image;
+  try {
+    const r = await fetch(`http://127.0.0.1:${enrollSession.port}/frame`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_b64, mode: mode === 'capture' ? 'capture' : 'preview' }),
+    });
+    const data = await r.json().catch(() => ({}));
+    return res.status(r.status).json(data);
+  } catch (_) {
+    // The helper died between the liveness check above and this call.
+    enrollSession = null;
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+});
+
+// POST /api/ai/enroll/complete - ask the helper to finalize the captures
+// into one 512-float embedding, then write enrolled_students.json with EXACTLY
+// the semantics of enroll_student.py (add_student / --overwrite): an entry
+// with the same name (case-insensitive) keeps its id and gets the embedding,
+// class, timestamp and UUID refreshed; otherwise it is appended with
+// max(existing ids)+1. Admin-only.
+app.post('/api/ai/enroll/complete', requireAdmin, async (req, res) => {
+  const { session_id } = req.body || {};
+  if (!session_id) return res.status(400).json({ error: 'session_id required' });
+  if (!enrollSession || enrollSession.id !== session_id) {
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+  if (enrollSession.child.exitCode !== null) {
+    enrollSession = null;
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+  const session = enrollSession;
+
+  let finalizeRes;
+  try {
+    finalizeRes = await fetch(`http://127.0.0.1:${session.port}/finalize`, { method: 'POST' });
+  } catch (_) {
+    // Helper died before finalize could run.
+    enrollSession = null;
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+  const finalizeData = await finalizeRes.json().catch(() => ({}));
+  if (!finalizeRes.ok) {
+    // 409 = not enough captures yet: relay the helper's error + counts.
+    return res.status(finalizeRes.status).json(finalizeData);
+  }
+
+  // Contract: 200 { embedding: [512 floats], captures }.
+  const embedding = Array.isArray(finalizeData.embedding) ? finalizeData.embedding : null;
+  if (!embedding || embedding.length !== 512 || embedding.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+    return res.status(500).json({ error: 'Enrollment helper returned an invalid embedding' });
+  }
+  if (enrollSession !== session) {
+    // The session was cancelled while finalize was in flight; discard the
+    // embedding instead of writing it for a cancelled enrollment.
+    try { fetch(`http://127.0.0.1:${session.port}/shutdown`, { method: 'POST' }).catch(() => {}); } catch (_) { /* already gone */ }
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+
+  let writeResult;
+  try {
+    writeResult = await withEnrollJsonLock(async () => {
+      const dbPath = path.join(aiPaths().aiDir, 'enrolled_students.json');
+      // Same load rule as enroll_student.load_database: a missing file is an
+      // empty database, and students must be a list.
+      let db = { students: [] };
+      if (fs.existsSync(dbPath)) {
+        db = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+        if (!Array.isArray(db.students)) db.students = [];
+      }
+      const students = db.students;
+      const target = session.studentName.trim().toLowerCase();
+      const idx = students.findIndex((st) => (st.name || '').trim().toLowerCase() === target);
+      const enrolledAt = localEnrollTimestamp(new Date());
+      let result;
+      if (idx !== -1) {
+        // enroll_student.py --overwrite branch: keep the id, replace the
+        // embedding, refresh class + enrolled_at, and (re)link the Supabase
+        // UUID (we always have one, so the link can never be erased here).
+        const existing = students[idx];
+        existing.embedding = embedding;
+        existing.class = session.studentClass;
+        existing.enrolled_at = enrolledAt;
+        existing.student_uuid = session.studentId;
+        result = { replaced: true, id: existing.id };
+      } else {
+        // add_student branch: max(id)+1, not count+1, so ids of removed
+        // entries are never reissued.
+        const newId = Math.max(...students.map((s) => Number(s.id) || 0), 0) + 1;
+        students.push({
+          id: newId,
+          name: session.studentName,
+          class: session.studentClass,
+          student_uuid: session.studentId,
+          embedding,
+          enrolled_at: enrolledAt,
+        });
+        result = { replaced: false, id: newId };
+      }
+      // Same save rule as enroll_student.save_database: indent 2, raw UTF-8
+      // (JSON.stringify leaves non-ASCII unescaped, matching
+      // ensure_ascii=False). Written inside the lock so the whole
+      // read-modify-write cycle is atomic.
+      fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf-8');
+      return result;
+    });
+  } catch (e) {
+    console.error('[ai/enroll-complete] failed:', e);
+    return res.status(500).json({ error: 'Failed to update enrolled_students.json' });
+  }
+
+  // Tell the helper to exit (best effort: it also exits by itself after
+  // answering shutdown, and idles out after 10 minutes regardless), then
+  // drop the session state.
+  try { await fetch(`http://127.0.0.1:${session.port}/shutdown`, { method: 'POST' }); } catch (_) { /* already gone */ }
+  enrollSession = null;
+  logAudit(req.actor.id, 'face.enroll', session.studentId, { name: session.studentName });
+  return res.json({
+    success: true,
+    replaced: writeResult.replaced,
+    message: `Enrolled ${session.studentName}`,
+  });
+});
+
+// DELETE /api/ai/enroll/session - cancel the active browser-enrollment
+// session: tell the helper to shut down (best effort, it also idle-exits on
+// its own) and drop the session state. Admin-only like the other routes.
+app.delete('/api/ai/enroll/session', requireAdmin, async (req, res) => {
+  const { session_id } = req.body || {};
+  if (!session_id) return res.status(400).json({ error: 'session_id required' });
+  if (!enrollSession || enrollSession.id !== session_id) {
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+  const session = enrollSession;
+  enrollSession = null;
+  try {
+    await fetch(`http://127.0.0.1:${session.port}/shutdown`, { method: 'POST' });
+  } catch (_) {
+    // Helper already gone or unreachable: kill the child as a fallback.
+    try { session.child.kill(); } catch (_) { /* nothing left to do */ }
+  }
+  return res.json({ cancelled: true });
+});
+
 // ── Start Server ─────────────────────────────────────────────────────────────
 reconcileAiPid(); // reclaim any AI child orphaned by a previous server run (#15)
 app.listen(PORT, () => {
@@ -1550,6 +1919,10 @@ app.listen(PORT, () => {
   console.log('    POST   /api/ai/start         → Start Python AI (admin/teacher)');
   console.log('    POST   /api/ai/stop          → Stop Python AI  (admin/teacher)');
   console.log('    POST   /api/ai/enroll        → Enroll a face   (admin)');
+  console.log('    POST   /api/ai/enroll/session → Start browser enroll (admin)');
+  console.log('    POST   /api/ai/enroll/frame   → Browser enroll frame (admin)');
+  console.log('    POST   /api/ai/enroll/complete → Finish browser enroll (admin)');
+  console.log('    DELETE /api/ai/enroll/session → Cancel browser enroll (admin)');
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Waiting for AI face recognition data...');
