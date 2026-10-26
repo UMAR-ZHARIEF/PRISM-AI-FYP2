@@ -20,13 +20,14 @@ import './AdminPanel.css';
 const PER_PAGE = 8;
 
 // System Settings defaults: mirror the seeded values in migrations
-// 0005_app_settings_and_checkout.sql and 0010_autorestart_setting.sql
-// (single app_settings row, id = 1).
+// 0005_app_settings_and_checkout.sql, 0010_autorestart_setting.sql and
+// 0012_classroom_label.sql (single app_settings row, id = 1).
 const SETTINGS_DEFAULTS = {
   school_name: 'PRISM-AI Primary School',
   late_cutoff: '08:00',
   det_size: 320,
   match_threshold: 0.4,
+  classroom_label: 'CLASS_1A',
   autorestart_ai: true,
 };
 // Face-detection input sizes the AI service accepts (pixels).
@@ -769,7 +770,7 @@ export default function AdminPanel() {
     let cancelled = false;
     supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data, error: queryError }) => {
@@ -785,6 +786,7 @@ export default function AdminPanel() {
             late_cutoff: (data.late_cutoff || SETTINGS_DEFAULTS.late_cutoff).slice(0, 5),
             det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
             match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+            classroom_label: data.classroom_label ?? SETTINGS_DEFAULTS.classroom_label,
             autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
           });
         }
@@ -810,6 +812,7 @@ export default function AdminPanel() {
       late_cutoff: settingsForm.late_cutoff || SETTINGS_DEFAULTS.late_cutoff,
       det_size: Number(settingsForm.det_size),
       match_threshold: Number(settingsForm.match_threshold),
+      classroom_label: settingsForm.classroom_label,
       autorestart_ai: Boolean(settingsForm.autorestart_ai),
     };
     const { data, error: updateError } = await supabase
@@ -1141,6 +1144,18 @@ export default function AdminPanel() {
                       A crashed AI service is started again after 3 seconds.
                       GPU refusals are never retried, and the server allows at
                       most 5 restarts in any 10 minutes.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label>Classroom label</label>
+                    <input
+                      type="text"
+                      value={settingsForm.classroom_label}
+                      onChange={e => setSettingsForm(f => ({ ...f, classroom_label: e.target.value }))}
+                      disabled={!isAdmin || settingsSaving}
+                    />
+                    <p className="admin-check-note">
+                      Stamped on attendance and engagement data from this camera.
                     </p>
                   </div>
                 </div>
