@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear } from '../layouts/DashboardLayout';
+import { useYear } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import Pagination from '../components/Pagination';
 import useStudents from '../hooks/useStudents';
@@ -29,10 +29,10 @@ export default function Students() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
 
-  // Year context (safe fallback if context not yet available)
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
-  const { selectedYear } = yearCtx;
+  // Year context (safe fallback if context not yet available). The hook call
+  // is unconditional: outside the layout provider useYear() returns undefined
+  // (createContext default), never throws, so the fallback is a value check.
+  const { selectedYear } = useYear() || { selectedYear: null };
 
   const [search, setSearch] = useState('');
   const [filterClass, setFilterClass] = useState('all');
@@ -67,10 +67,15 @@ export default function Students() {
   const [studentToDelete, setStudentToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Sync filterYear when global selectedYear changes
-  useEffect(() => {
+  // Sync filterYear when global selectedYear changes, during render via the
+  // guarded state-mirror pattern instead of an effect (per
+  // react-hooks/set-state-in-effect). Initial state already matches the
+  // selectedYear mapping, so the old mount-run reset was a no-op.
+  const [prevSelectedYear, setPrevSelectedYear] = useState(selectedYear);
+  if (prevSelectedYear !== selectedYear) {
+    setPrevSelectedYear(selectedYear);
     setFilterYear(selectedYear ? String(selectedYear) : 'all');
-  }, [selectedYear]);
+  }
 
   // Load students from Supabase. When filterYear === 'all', pass undefined so the hook returns all years.
   const hookYear = filterYear === 'all' ? undefined : Number(filterYear);
@@ -89,7 +94,9 @@ export default function Students() {
   useEffect(function fetchParents() {
     const ids = (dbStudents || []).map(row => row.id);
     if (ids.length === 0) {
-      setParentsByStudent(new Map());
+      // No-op reset deletion (per react-hooks/set-state-in-effect): with no
+      // students scoped, nothing renders rows to look up, so the map is never
+      // read here; the next successful fetch replaces it wholesale anyway.
       return undefined;
     }
 
@@ -120,7 +127,9 @@ export default function Students() {
   useEffect(function fetchAttendanceRates() {
     const ids = (dbStudents || []).map(row => row.id);
     if (ids.length === 0) {
-      setRatesByStudent(new Map());
+      // No-op reset deletion (per react-hooks/set-state-in-effect): with no
+      // students scoped, nothing renders rows to look up, so the map is never
+      // read here; the next successful fetch replaces it wholesale anyway.
       return undefined;
     }
 
@@ -220,10 +229,20 @@ export default function Students() {
     return matchYear && matchSearch && matchClass && matchFace;
   });
 
-  // Reset page to 1 when search/filters change
-  useEffect(() => {
+  // Reset page to 1 when search/filters change, during render via the
+  // guarded state-mirror pattern instead of an effect (per
+  // react-hooks/set-state-in-effect). On mount page is already 1, matching
+  // the old effect's no-op first run.
+  const [pageKey, setPageKey] = useState({ search, filterClass, filterFace, filterYear });
+  if (
+    pageKey.search !== search ||
+    pageKey.filterClass !== filterClass ||
+    pageKey.filterFace !== filterFace ||
+    pageKey.filterYear !== filterYear
+  ) {
+    setPageKey({ search, filterClass, filterFace, filterYear });
     setPage(1);
-  }, [search, filterClass, filterFace, filterYear]);
+  }
 
   // Sort filtered data for table view
   const sorted = useMemo(() => {

@@ -101,7 +101,6 @@ export default function Camera() {
     setRetryAttempt(0);
     setStreamState(proc.running ? 'connecting' : 'idle');
     return clearRetryTimer; // cleanup on unmount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proc.running, proc.startedAt]);
 
   // <img> error → schedule an auto-retry instead of giving up. Python's MJPEG

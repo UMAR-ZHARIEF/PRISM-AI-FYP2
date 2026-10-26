@@ -6,10 +6,11 @@ function useSubjects() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // loading starts true and this effect runs once ([] deps), so the old
+  // synchronous setLoading(true)/setError(null) reset was a no-op and is
+  // omitted to satisfy react-hooks/set-state-in-effect.
   useEffect(function fetchSubjects() {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     supabase
       .from('subjects')

@@ -4,7 +4,7 @@ import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck,
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear, ScopeContext } from '../layouts/DashboardLayout';
+import { useYear, ScopeContext } from '../layouts/dashboardContexts';
 import Pagination from '../components/Pagination';
 import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skeleton';
 import useStudents from '../hooks/useStudents';
@@ -107,10 +107,10 @@ export default function Dashboard() {
   const [editTimeOut, setEditTimeOut] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
-  // Year context (safe fallback if context not yet available)
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
-  const { selectedYear } = yearCtx;
+  // Year context (safe fallback if context not yet available). The hook call
+  // is unconditional: outside the layout provider useYear() returns undefined
+  // (createContext default), never throws, so the fallback is a value check.
+  const { selectedYear } = useYear() || { selectedYear: null };
 
   // Today and the 7-day window ending today (anchored to local-time date math).
   const today = useMemo(() => isoDate(new Date()), []);

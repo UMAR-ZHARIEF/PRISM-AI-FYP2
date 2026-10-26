@@ -11,10 +11,23 @@ function useStudents({ year, classSectionId } = {}) {
     setRefreshTick(function bump(n) { return n + 1; });
   }, []);
 
-  useEffect(function fetchStudents() {
-    let cancelled = false;
+  // Re-enter the loading state synchronously whenever the query inputs
+  // change, during render instead of inside the effect (per
+  // react-hooks/set-state-in-effect), so the spinner-while-refetching
+  // behaviour stays identical to the old effect-body reset.
+  const [fetchKey, setFetchKey] = useState({ year, classSectionId, refreshTick });
+  if (
+    fetchKey.year !== year ||
+    fetchKey.classSectionId !== classSectionId ||
+    fetchKey.refreshTick !== refreshTick
+  ) {
+    setFetchKey({ year, classSectionId, refreshTick });
     setLoading(true);
     setError(null);
+  }
+
+  useEffect(function fetchStudents() {
+    let cancelled = false;
 
     let query = supabase
       .from('students')

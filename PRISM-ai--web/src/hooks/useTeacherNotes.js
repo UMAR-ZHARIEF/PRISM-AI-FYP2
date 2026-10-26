@@ -13,17 +13,28 @@ function useTeacherNotes(studentId) {
     setRefreshTick(function bump(n) { return n + 1; });
   }, []);
 
-  useEffect(function fetchNotes() {
+  // Reset the fetch state synchronously whenever studentId or refreshTick
+  // changes, during render instead of inside the effect (per
+  // react-hooks/set-state-in-effect). The no-student branch reproduces the
+  // old early-return resets; mount without a student is already covered by
+  // the initial state (loading starts Boolean(studentId), notes start []).
+  const [fetchKey, setFetchKey] = useState({ studentId, refreshTick });
+  if (fetchKey.studentId !== studentId || fetchKey.refreshTick !== refreshTick) {
+    setFetchKey({ studentId, refreshTick });
     if (!studentId) {
       setNotes([]);
       setLoading(false);
       setError(null);
-      return undefined;
+    } else {
+      setLoading(true);
+      setError(null);
     }
+  }
+
+  useEffect(function fetchNotes() {
+    if (!studentId) return undefined;
 
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     supabase
       .from('teacher_notes')

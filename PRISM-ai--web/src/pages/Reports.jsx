@@ -8,7 +8,7 @@ import useAttendance from '../hooks/useAttendance';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import { useToast } from '../components/Toast';
-import { YearContext, ScopeContext } from '../layouts/DashboardLayout';
+import { YearContext, ScopeContext } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 import { attendanceRate } from '../lib/attendanceRate';
@@ -97,7 +97,7 @@ export default function Reports() {
     return (classSections || [])
       .filter(s => s.homeroom_teacher_id === profile.id)
       .map(s => s.id);
-  }, [classSections, isTeacher, profile?.id]);
+  }, [classSections, isTeacher, profile]);
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
@@ -277,28 +277,6 @@ export default function Reports() {
     });
   }, [todayRecords, studentsById, classNameById, ratesByStudent]);
 
-  const filteredAttendance = useMemo(() => {
-    const base = detailedRows.filter(a => filterClass === 'all' || a.class === filterClass);
-    if (!sortCol) return base;
-    const sorted = [...base].sort((a, b) => {
-      const av = a[sortCol] != null ? a[sortCol] : '';
-      const bv = b[sortCol] != null ? b[sortCol] : '';
-      const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return sorted;
-  }, [detailedRows, filterClass, sortCol, sortDir]);
-
-  const totalPages = Math.ceil(filteredAttendance.length / PER_PAGE);
-  const paged = filteredAttendance.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-
-  // School days in the loaded range: count of distinct dates present in records.
-  const schoolDays = useMemo(() => {
-    const set = new Set();
-    scopedRecords.forEach(r => { if (r.date) set.add(r.date); });
-    return set.size;
-  }, [scopedRecords]);
-
   // Class list for the filter dropdown — hook-loaded sections only. When the
   // sections query fails or returns nothing, the dropdown stays honestly empty
   // (just "All Classes") instead of falling back to static mock names.
@@ -310,11 +288,34 @@ export default function Reports() {
     return Array.from(new Set(sectionsForList.map(cs => cs.name).filter(Boolean)));
   }, [classSections, scopeToMine, myClassSectionIds]);
 
-  // Reset class filter if the previously chosen class falls outside scope.
-  useEffect(() => {
-    if (filterClass === 'all') return;
-    if (!classList.includes(filterClass)) setFilterClass('all');
-  }, [classList, filterClass]);
+  // Class filter as actually applied: a previously chosen class that falls
+  // outside the current list (scope or year change) filters as "all" instead
+  // of being reset with a setState-in-effect.
+  const activeFilterClass = filterClass !== 'all' && !classList.includes(filterClass)
+    ? 'all'
+    : filterClass;
+
+  const filteredAttendance = useMemo(() => {
+    const base = detailedRows.filter(a => activeFilterClass === 'all' || a.class === activeFilterClass);
+    if (!sortCol) return base;
+    const sorted = [...base].sort((a, b) => {
+      const av = a[sortCol] != null ? a[sortCol] : '';
+      const bv = b[sortCol] != null ? b[sortCol] : '';
+      const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [detailedRows, activeFilterClass, sortCol, sortDir]);
+
+  const totalPages = Math.ceil(filteredAttendance.length / PER_PAGE);
+  const paged = filteredAttendance.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+  // School days in the loaded range: count of distinct dates present in records.
+  const schoolDays = useMemo(() => {
+    const set = new Set();
+    scopedRecords.forEach(r => { if (r.date) set.add(r.date); });
+    return set.size;
+  }, [scopedRecords]);
 
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -322,7 +323,8 @@ export default function Reports() {
     setPage(1);
   };
 
-  const SortIcon = ({ col }) => {
+  // Sort indicator (plain render function, not a component, so it is not recreated during render)
+  const renderSortIcon = (col) => {
     if (sortCol !== col) return null;
     return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
@@ -675,7 +677,7 @@ export default function Reports() {
           <div>
             <h2>Detailed Records</h2>
           </div>
-          <select className="search-input report-class-select" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
+          <select className="search-input report-class-select" value={activeFilterClass} onChange={e => setFilterClass(e.target.value)}>
             <option value="all">All Classes</option>
             {classList.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -683,11 +685,11 @@ export default function Reports() {
         <table>
           <thead>
             <tr>
-              <th className="sortable" onClick={() => handleSort('name')}>Student <SortIcon col="name" /></th>
-              <th className="sortable" onClick={() => handleSort('class')}>Class <SortIcon col="class" /></th>
-              <th className="sortable" onClick={() => handleSort('status')}>Status <SortIcon col="status" /></th>
-              <th className="sortable" onClick={() => handleSort('attendanceRate')}>Attendance Rate <SortIcon col="attendanceRate" /></th>
-              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In <SortIcon col="timeIn" /></th>
+              <th className="sortable" onClick={() => handleSort('name')}>Student {renderSortIcon('name')}</th>
+              <th className="sortable" onClick={() => handleSort('class')}>Class {renderSortIcon('class')}</th>
+              <th className="sortable" onClick={() => handleSort('status')}>Status {renderSortIcon('status')}</th>
+              <th className="sortable" onClick={() => handleSort('attendanceRate')}>Attendance Rate {renderSortIcon('attendanceRate')}</th>
+              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In {renderSortIcon('timeIn')}</th>
             </tr>
           </thead>
           <tbody>

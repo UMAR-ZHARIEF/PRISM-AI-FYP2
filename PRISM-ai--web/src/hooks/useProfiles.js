@@ -18,10 +18,23 @@ function useProfiles({ role } = {}) {
     setRefreshTick(function bump(n) { return n + 1; });
   }, []);
 
-  useEffect(function fetchProfiles() {
-    let cancelled = false;
+  // Re-enter the loading state synchronously whenever the query inputs
+  // change, during render instead of inside the effect (per
+  // react-hooks/set-state-in-effect), so the spinner-while-refetching
+  // behaviour stays identical to the old effect-body reset.
+  const [fetchKey, setFetchKey] = useState({ role, refreshTick, adminToken });
+  if (
+    fetchKey.role !== role ||
+    fetchKey.refreshTick !== refreshTick ||
+    fetchKey.adminToken !== adminToken
+  ) {
+    setFetchKey({ role, refreshTick, adminToken });
     setLoading(true);
     setError(null);
+  }
+
+  useEffect(function fetchProfiles() {
+    let cancelled = false;
 
     async function fallbackToDirectQuery() {
       let query = supabase

@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
 import { classColors } from '../data/mockData';
-import { YearContext, ScopeContext } from '../layouts/DashboardLayout';
+import { YearContext, ScopeContext } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
@@ -23,6 +23,22 @@ function toLocalISODate(d) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+// Custom recharts tooltip, shared by both comparison charts. Declared at
+// module scope so it is not recreated (and does not reset) during render.
+function ClassTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="comparison-tooltip">
+      <p className="comparison-tooltip-label">{label}</p>
+      {payload.map((p, i) => (
+        <p key={i} className="comparison-tooltip-value" style={{ color: p.color || p.fill }}>
+          {p.name}: <strong className="mono">{p.value != null ? `${p.value}${p.dataKey === 'rate' ? '%' : ''}` : '—'}</strong>
+        </p>
+      ))}
+    </div>
+  );
 }
 
 export default function ClassComparison() {
@@ -56,7 +72,7 @@ export default function ClassComparison() {
     return (classSections || [])
       .filter(s => s.homeroom_teacher_id === profile.id)
       .map(s => s.id);
-  }, [classSections, isTeacher, profile?.id]);
+  }, [classSections, isTeacher, profile]);
   const teacherHasHomeroom = teacherHomeroomIds.length > 0;
 
   // Shared view scope from the layout (ScopeContext): 'mine' maps to the old
@@ -82,21 +98,19 @@ export default function ClassComparison() {
     return (classSections || []).filter(s => allow.has(s.id));
   }, [classSections, filterToMine, teacherHomeroomIds]);
 
-  // Drop any picked classes that fall outside the visible set (e.g. teacher
-  // toggles "My homerooms only" back on after picking a class that isn't theirs).
-  useEffect(() => {
-    if (!filterToMine) return;
-    setSelectedClassIds(prev => {
-      const allow = new Set(visibleClassSections.map(c => c.id));
-      let changed = false;
-      const next = new Set();
-      prev.forEach(id => {
-        if (allow.has(id)) next.add(id);
-        else changed = true;
-      });
-      return changed ? next : prev;
+  // Picked classes as actually counted: when scoped to homerooms, ids that
+  // fall outside the visible set (e.g. teacher toggles "My homerooms only"
+  // back on after picking a class that isn't theirs) are ignored here instead
+  // of being pruned with a setState-in-effect.
+  const effectiveSelectedClassIds = useMemo(() => {
+    if (!filterToMine) return selectedClassIds;
+    const allow = new Set(visibleClassSections.map(c => c.id));
+    const next = new Set();
+    selectedClassIds.forEach(id => {
+      if (allow.has(id)) next.add(id);
     });
-  }, [filterToMine, visibleClassSections]);
+    return next;
+  }, [selectedClassIds, filterToMine, visibleClassSections]);
 
   /* ── Today's date (YYYY-MM-DD) for "today" counts ── */
   const todayIso = useMemo(() => toLocalISODate(new Date()), []);
@@ -127,8 +141,8 @@ export default function ClassComparison() {
 
   /* ── Active sections (only those the user toggled on, in display order) ── */
   const activeClasses = useMemo(
-    () => classSections.filter(c => selectedClassIds.has(c.id)),
-    [classSections, selectedClassIds]
+    () => classSections.filter(c => effectiveSelectedClassIds.has(c.id)),
+    [classSections, effectiveSelectedClassIds]
   );
   const needsMore = activeClasses.length < 2;
 
@@ -262,29 +276,15 @@ export default function ClassComparison() {
     }
   };
 
-  const SortIcon = ({ col }) => {
+  // Sort indicator (plain render function, not a component, so it is not recreated during render)
+  const renderSortIcon = (col) => {
     if (sortCol !== col) return null;
     return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
 
-  /* ── Custom tooltip ── */
-  const ClassTooltip = ({ active, payload, label }) => {
-    if (!active || !payload || !payload.length) return null;
-    return (
-      <div className="comparison-tooltip">
-        <p className="comparison-tooltip-label">{label}</p>
-        {payload.map((p, i) => (
-          <p key={i} className="comparison-tooltip-value" style={{ color: p.color || p.fill }}>
-            {p.name}: <strong className="mono">{p.value != null ? `${p.value}${p.dataKey === 'rate' ? '%' : ''}` : '—'}</strong>
-          </p>
-        ))}
-      </div>
-    );
-  };
-
   /* ── Loading + empty checks ── */
   const isLoading = sectionsLoading || studentsLoading || attendanceLoading;
-  const noPick = selectedClassIds.size === 0;
+  const noPick = effectiveSelectedClassIds.size === 0;
 
   /* ── Section color helper (DB color first, then static fallback) ── */
   const colorFor = (sectionName) => classColors[sectionName] || '#1F1A12';
@@ -358,7 +358,7 @@ export default function ClassComparison() {
                 <span className="comparison-pick-hint">No classes available</span>
               ) : (
                 visibleClassSections.map(cls => {
-                  const checked = selectedClassIds.has(cls.id);
+                  const checked = effectiveSelectedClassIds.has(cls.id);
                   const cc = colorFor(cls.name);
                   return (
                     <button
@@ -579,14 +579,14 @@ export default function ClassComparison() {
               <table>
                 <thead>
                   <tr>
-                    <th className="sortable" onClick={() => handleSort('class')}>Class <SortIcon col="class" /></th>
-                    <th className="sortable" onClick={() => handleSort('total')}>Total Students <SortIcon col="total" /></th>
-                    <th className="sortable" onClick={() => handleSort('present')}>Present Today <SortIcon col="present" /></th>
-                    <th className="sortable" onClick={() => handleSort('absent')}>Absent Today <SortIcon col="absent" /></th>
-                    <th className="sortable" onClick={() => handleSort('late')}>Late Today <SortIcon col="late" /></th>
-                    <th className="sortable" onClick={() => handleSort('rate')}>Attendance Rate <SortIcon col="rate" /></th>
-                    <th className="sortable" onClick={() => handleSort('avgAge')}>Avg Age <SortIcon col="avgAge" /></th>
-                    <th className="sortable" onClick={() => handleSort('mfRatio')}>M/F Ratio <SortIcon col="mfRatio" /></th>
+                    <th className="sortable" onClick={() => handleSort('class')}>Class {renderSortIcon('class')}</th>
+                    <th className="sortable" onClick={() => handleSort('total')}>Total Students {renderSortIcon('total')}</th>
+                    <th className="sortable" onClick={() => handleSort('present')}>Present Today {renderSortIcon('present')}</th>
+                    <th className="sortable" onClick={() => handleSort('absent')}>Absent Today {renderSortIcon('absent')}</th>
+                    <th className="sortable" onClick={() => handleSort('late')}>Late Today {renderSortIcon('late')}</th>
+                    <th className="sortable" onClick={() => handleSort('rate')}>Attendance Rate {renderSortIcon('rate')}</th>
+                    <th className="sortable" onClick={() => handleSort('avgAge')}>Avg Age {renderSortIcon('avgAge')}</th>
+                    <th className="sortable" onClick={() => handleSort('mfRatio')}>M/F Ratio {renderSortIcon('mfRatio')}</th>
                   </tr>
                 </thead>
                 <tbody>

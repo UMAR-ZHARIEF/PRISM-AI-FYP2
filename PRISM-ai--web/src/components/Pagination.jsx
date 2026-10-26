@@ -46,6 +46,8 @@ export default function Pagination({ currentPage, totalPages, onPageChange }) {
   );
 }
 
+// Dev-only HMR rule: moving this hook export into its own file would churn every importer late in the round, so the suppression is deliberate.
+// eslint-disable-next-line react-refresh/only-export-components
 export function usePagination(items, perPage = 10) {
   const totalPages = Math.ceil(items.length / perPage);
   return { totalPages, perPage };
