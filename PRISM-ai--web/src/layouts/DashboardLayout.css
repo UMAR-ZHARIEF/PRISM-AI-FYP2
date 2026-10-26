@@ -128,6 +128,25 @@
   cursor: pointer;
 }
 
+/* RS-A collapsed-rail fit: the closed rail's inner box is 68px (72px minus the
+   4px border-right under the global border-box rule). The open-state horizontal
+   paddings overflow it: the header's content needs 62px in a 36px box (logo 24
+   + toggle 38 -> scrollWidth 78, clipped by overflow-x), and nav/footer links
+   keep only 12px of their 20px glyph box, flex-squeezing every icon to ~12px.
+   These closed-only overrides restore full-size, centered glyphs inside the
+   rail; the open sidebar and the phone drawer (.open at <=768px) are untouched. */
+.sidebar.closed .sidebar-header { padding-left: 4px; padding-right: 4px; }
+.sidebar.closed .sidebar-logo { gap: 0; }
+.sidebar.closed .sidebar-toggle { padding: 6px; }
+.sidebar.closed .sidebar-nav,
+.sidebar.closed .sidebar-footer { padding-left: 0; padding-right: 0; }
+.sidebar.closed .sidebar-link {
+  justify-content: center;
+  gap: 0;
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
 /* ============ MAIN ============ */
 .dashboard-main {
   flex: 1;
