@@ -148,6 +148,9 @@
 .risk-chip.band-low  { background: rgba(79, 167, 100, 0.26); }
 .risk-chip.band-watch { background: rgba(242, 199, 68, 0.36); }
 .risk-chip.band-high { background: rgba(224, 74, 63, 0.24); }
+/* Neutral chip: students with no numeric risk score yet — plain paper, no
+   band tint, so an unknown is never coloured like a reassurance. */
+.risk-chip.band-none { background: var(--paper-light); }
 .risk-chip-label {
   font-family: var(--accent);
   font-weight: 700;

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RefreshCw, Activity } from 'lucide-react';
 import useEngagement, { computeEngagementStats } from '../hooks/useEngagement';
-import useEngagementRisk, { computeRiskStats } from '../hooks/useEngagementRisk';
+import useEngagementRisk from '../hooks/useEngagementRisk';
 import { SkeletonCard, SkeletonTable } from '../components/Skeleton';
 import './Engagement.css';
 
@@ -72,7 +72,19 @@ export default function Engagement() {
 
   const stats = computeEngagementStats(summaries);
   const tone = toneForPct(stats.attentiveAvg);
-  const riskStats = computeRiskStats(risks);
+  // Chip counts over students who actually carry a numeric risk score.
+  // Rows without a score (not enough history yet) are counted separately so
+  // they are never folded into Low — having no data is not reassurance.
+  const riskChipStats = useMemo(function countRiskChips() {
+    const scored = risks.filter(function hasScore(r) { return typeof r.score === 'number'; });
+    return {
+      low: scored.filter(function isLow(r) { return r.band === 'low'; }).length,
+      watch: scored.filter(function isWatch(r) { return r.band === 'watch'; }).length,
+      high: scored.filter(function isHigh(r) { return r.band === 'high'; }).length,
+      noScore: risks.length - scored.length,
+    };
+  }, [risks]);
+
   const riskGroups = useMemo(function buildRiskGroups() {
     return groupRiskByClass(risks);
   }, [risks]);
@@ -202,16 +214,22 @@ export default function Engagement() {
                   <div className="risk-chips">
                     <span className="risk-chip band-low">
                       <span className="risk-chip-label">Low</span>
-                      <span className="risk-chip-count mono">{riskStats.lowCount}</span>
+                      <span className="risk-chip-count mono">{riskChipStats.low}</span>
                     </span>
                     <span className="risk-chip band-watch">
                       <span className="risk-chip-label">Watch</span>
-                      <span className="risk-chip-count mono">{riskStats.watchCount}</span>
+                      <span className="risk-chip-count mono">{riskChipStats.watch}</span>
                     </span>
                     <span className="risk-chip band-high">
                       <span className="risk-chip-label">High</span>
-                      <span className="risk-chip-count mono">{riskStats.highCount}</span>
+                      <span className="risk-chip-count mono">{riskChipStats.high}</span>
                     </span>
+                    {riskChipStats.noScore > 0 && (
+                      <span className="risk-chip band-none">
+                        <span className="risk-chip-label">No score yet</span>
+                        <span className="risk-chip-count mono">{riskChipStats.noScore}</span>
+                      </span>
+                    )}
                   </div>
                   {risks.length === 0 ? (
                     <div className="empty-state">Not enough engagement history yet.</div>
