@@ -48,18 +48,6 @@ function normalizeRisk(row, index) {
   };
 }
 
-// Aggregate over normalized rows: one headcount per band chip, plus how many
-// students actually carry a numeric risk score.
-function computeRiskStats(rows) {
-  const safe = Array.isArray(rows) ? rows : [];
-  return {
-    lowCount: safe.filter(function isLow(r) { return r.band === 'low'; }).length,
-    watchCount: safe.filter(function isWatch(r) { return r.band === 'watch'; }).length,
-    highCount: safe.filter(function isHigh(r) { return r.band === 'high'; }).length,
-    scored: safe.filter(function hasScore(r) { return typeof r.score === 'number'; }).length,
-  };
-}
-
 // useEngagementRisk(date): per-student disengagement risk for one date
 // (YYYY-MM-DD). Returns { risks, loading, error, empty, refresh }; rows
 // arrive pre-normalized (see normalizeRisk) so pages can render directly.
@@ -125,5 +113,4 @@ function useEngagementRisk(date) {
   return { risks, loading, error, empty, refresh };
 }
 
-export { computeRiskStats };
 export default useEngagementRisk;

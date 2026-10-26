@@ -1,6 +1,6 @@
 # Dasar Privasi PRISM-AI
 
-**Versi 1.0.0 — Berkuat kuasa dari 19 Mei 2026**
+**Versi 1.1.0, berkuat kuasa dari 26 Oktober 2026**
 
 Dasar Privasi ini menerangkan cara PRISM-AI mengumpul, menggunakan, menyimpan, dan melindungi data peribadi, mematuhi **Akta Perlindungan Data Peribadi 2010 (Akta 709)** Malaysia sebagaimana dipinda oleh **Akta Perlindungan Data Peribadi (Pindaan) 2024 (Akta A1727)**.
 
@@ -12,10 +12,10 @@ Jika anda membaca ini bagi pihak kanak-kanak, sila ambil perhatian bahawa dasar 
 
 **Sekolah** adalah pengawal data. Pembangun (perisian PRISM-AI) adalah pemproses data yang bekerja mengikut arahan sekolah.
 
-**Pegawai Perlindungan Data (DPO)** yang dilantik oleh sekolah akan dinamakan di sini setelah sekolah melantik seorang (dikehendaki di bawah PDPA Seksyen 12A yang baharu dari 1 Jun 2025):
+Titik hubungan **Pegawai Perlindungan Data (DPO)** untuk sistem ini (dikehendaki di bawah PDPA Seksyen 12A yang baharu, berkuat kuasa dari 1 Jun 2025) ialah:
 
-- **Nama**: *Untuk dilantik oleh sekolah.*
-- **E-mel**: *Untuk dipaparkan oleh sekolah.*
+- **Nama**: Director of PRISM-AI
+- **E-mel**: forprojectdump@gmail.com
 - **Alamat pos**: *Alamat pejabat sekolah.*
 
 Anda boleh menghubungi DPO pada bila-bila masa tentang data anda.
@@ -34,7 +34,7 @@ Kami mengumpul kategori data peribadi berikut:
 
 ### Tentang ibu bapa dan kakitangan
 - Nama penuh, e-mel, nombor telefon
-- Peranan dalam sistem (ibu bapa, guru, pentadbir, pembantu)
+- Peranan dalam sistem (ibu bapa, guru, pentadbir)
 - Foto profil (jika dimuat naik)
 - Rekod versi Terma dan Dasar Privasi yang telah anda terima
 - Rekod sebarang persetujuan yang anda berikan atau tarik balik untuk data biometrik anak
@@ -87,7 +87,7 @@ Kami **tidak** berkongsi data dengan syarikat pemasaran, platform media sosial, 
 Data peribadi disimpan dalam:
 
 - Pangkalan data yang dihoskan di **Supabase**, dengan pelayan terletak di rantau yang dipilih oleh sekolah (lalai: rantau terdekat dengan Malaysia).
-- Fail tempatan pada peranti kamera sekolah untuk embedding wajah semasa pengambilan kehadiran.
+- Fail data tempatan pada mesin AI sekolah (komputer yang menjalankan pengecaman wajah) untuk embedding wajah semasa pengambilan kehadiran.
 
 ### Pemindahan rentas sempadan
 
@@ -124,7 +124,7 @@ Kami memproses data wajah **hanya** jika:
 2. Murid mempunyai alternatif bukan-biometrik jika ibu bapa menolak (panggilan-nama manual). **Menolak persetujuan tidak menjejaskan hak anak untuk bersekolah.**
 3. Embedding disimpan sebagai senarai nombor, bukan sebagai gambar.
 
-Anda boleh **menarik balik persetujuan pada bila-bila masa** melalui Portal Ibu Bapa. Kami akan memadamkan embedding dalam tempoh 7 hari kalendar dari penarikan.
+Anda boleh **menarik balik persetujuan pada bila-bila masa** melalui Portal Ibu Bapa. Apabila anda menarik balik, pihak sekolah akan membuang data wajah anak anda mengikut peraturan pengekalan dalam Seksyen 7. Anda boleh menyemak status penarikan balik dalam Portal Ibu Bapa pada bila-bila masa, dan mengingatkan pihak sekolah melalui titik hubungan dalam Seksyen 15 jika pembuangan belum dilakukan.
 
 ## 9. Hak anda
 
@@ -139,9 +139,9 @@ Di bawah PDPA 2010 (sebagaimana dipinda), anda mempunyai hak untuk:
 
 Anda boleh melaksanakan hak ini melalui:
 
-- Skrin **"Data Saya"** dalam Portal Ibu Bapa.
-- E-mel kepada DPO sekolah (Seksyen 1 di atas).
-- Surat bertulis kepada pejabat sekolah.
+- E-mel kepada DPO sekolah di forprojectdump@gmail.com (Seksyen 1 di atas).
+- Surat bertulis atau lawatan ke pejabat sekolah.
+- Portal Ibu Bapa, untuk menarik balik persetujuan biometrik (Seksyen 8).
 
 Kami akan membalas dalam tempoh **21 hari** menerima permintaan anda.
 
@@ -150,9 +150,9 @@ Kami akan membalas dalam tempoh **21 hari** menerima permintaan anda.
 Kami mengikuti Standard PDPA 2015 (keselamatan, pengekalan, integriti):
 
 - Semua data peribadi disulitkan semasa transit (HTTPS).
-- Embedding wajah disulitkan semasa rehat.
-- Akses dihadkan kepada pengguna yang dibenarkan mengikut peranan.
-- Setiap akses kepada data wajah direkodkan dalam log audit.
+- Embedding wajah ialah vektor matematik (senarai nombor, bukan gambar) yang disimpan dalam fail data sebelah-pelayan pada mesin AI sekolah. Akses kepada fail tersebut dihadkan kepada pentadbir sahaja.
+- Akses kepada sistem dihadkan kepada pengguna yang dibenarkan mengikut peranan.
+- Tindakan pentadbiran (pendaftaran dan pembuangan data wajah, memulakan dan menghentikan AI, tandaan kehadiran, dan perubahan pengguna) direkodkan dalam log audit. Bacaan rutin data tidak direkodkan satu persatu.
 - Kami menguji keselamatan kami sekurang-kurangnya setahun sekali.
 - Kami mempunyai pelan tindakan insiden yang sedia (lihat Seksyen 11).
 
@@ -195,7 +195,8 @@ Apabila itu berlaku, kami akan:
 
 Untuk semua pertanyaan perlindungan-data:
 
-- **E-mel DPO**: *(untuk diisi oleh sekolah)*
+- **Nama DPO**: Director of PRISM-AI
+- **E-mel DPO**: forprojectdump@gmail.com
 - **Telefon DPO**: *(untuk diisi oleh sekolah)*
 - **Pos**: *(alamat sekolah)*
 

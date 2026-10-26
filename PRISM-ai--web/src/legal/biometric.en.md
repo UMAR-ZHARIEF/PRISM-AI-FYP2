@@ -28,7 +28,7 @@ If you consent, we will:
 
 1. Capture your child's face once during registration (at the school office, in your presence if requested).
 2. Generate the embedding from that capture.
-3. Store the embedding in our secure database.
+3. Store the embedding in a server-side data file on the school's AI machine.
 4. Use it to mark your child present when they walk past the school's attendance camera.
 
 We will **not**:
@@ -46,22 +46,23 @@ We will delete the embedding when **any** of these happens, whichever is earlies
 - You withdraw consent.
 - The end of the academic year (re-consent at start of new year).
 
-When we delete, the numbers are wiped from the database and from backups within 30 days.
+When we delete, the numbers are removed from the data file on the school's AI machine.
 
 ## 5. Your right to withdraw
 
 You can withdraw consent **at any time, for any reason, without explanation**. To withdraw:
 
 - Open the Parent Portal.
-- Go to "My Data" → "Consents".
-- Click "Withdraw biometric consent".
+- Find the "Biometric Consent" card for your child.
+- Click "Withdraw" to open the consent screen, then record your decision there.
 
 We will:
 
 - Stop using your child's face for attendance immediately.
-- Delete the embedding within **7 calendar days**.
-- Confirm deletion to you by email.
+- Remove the face data in line with the retention rules in Section 4.
 - Switch your child to manual attendance.
+
+You can check the withdrawal status in the Parent Portal at any time. If the face data has not been removed, please remind the school using the contact points in Section 10.
 
 There is **no penalty** to your child or to you for withdrawing.
 
@@ -79,10 +80,12 @@ You can change your mind later (in either direction) at any time through the Par
 
 The embedding is:
 
-- Encrypted while stored in the database.
-- Encrypted while travelling between the camera and the database.
-- Accessible only to authorised school staff (admin and the homeroom teacher).
-- Logged every time it is accessed — we keep a record of who looked at it and when.
+- A list of numbers, never a photograph.
+- Transmitted over an encrypted connection (HTTPS).
+- Stored in a server-side data file on the school's AI machine, not in the school's database.
+- Accessible only to administrators of the system.
+
+Administrative actions (enrolment, removal, AI start and stop, attendance marks, and user changes) are recorded in an audit log. Routine reads of the data are not individually logged.
 
 We follow the PDPA Personal Data Protection Standard 2015 (security, retention, integrity).
 
@@ -110,7 +113,7 @@ You have the right to:
 
 For any questions about this Notice:
 
-- **Data Protection Officer** (school's DPO): *to be filled in by the school.*
+- **Data Protection Officer**: Director of PRISM-AI, forprojectdump@gmail.com
 - **School Office**: *(address, phone)*
 
 For independent complaints:

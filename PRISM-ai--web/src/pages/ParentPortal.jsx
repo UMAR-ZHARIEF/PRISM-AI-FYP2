@@ -688,6 +688,15 @@ export default function ParentPortal() {
           </div>
         </section>
       </div>
+
+      {/* === LEGAL FOOTER LINKS (same trio as Landing/Login) === */}
+      <footer className="pp-legal-links">
+        <Link to="/terms" className="pencil-link">Terms</Link>
+        <span aria-hidden="true">•</span>
+        <Link to="/privacy" className="pencil-link">Privacy</Link>
+        <span aria-hidden="true">•</span>
+        <Link to="/biometric-consent" className="pencil-link">Biometric Notice</Link>
+      </footer>
     </div>
   );
 }

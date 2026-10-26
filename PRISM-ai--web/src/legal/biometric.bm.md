@@ -28,7 +28,7 @@ Jika anda bersetuju, kami akan:
 
 1. Menangkap wajah anak anda sekali semasa pendaftaran (di pejabat sekolah, dengan kehadiran anda jika diminta).
 2. Menjana embedding daripada tangkapan tersebut.
-3. Menyimpan embedding dalam pangkalan data selamat kami.
+3. Menyimpan embedding dalam fail data sebelah-pelayan pada mesin AI sekolah.
 4. Menggunakannya untuk menanda anak anda hadir apabila mereka berjalan melepasi kamera kehadiran sekolah.
 
 Kami **tidak** akan:
@@ -46,22 +46,23 @@ Kami akan memadamkan embedding apabila **mana-mana** daripada ini berlaku, yang 
 - Anda menarik balik persetujuan.
 - Akhir tahun akademik (persetujuan semula pada awal tahun baharu).
 
-Apabila kami memadam, nombor dipadam dari pangkalan data dan dari sandaran dalam tempoh 30 hari.
+Apabila kami memadam, nombor dibuang daripada fail data pada mesin AI sekolah.
 
 ## 5. Hak anda untuk menarik balik
 
 Anda boleh menarik balik persetujuan **pada bila-bila masa, untuk sebarang sebab, tanpa penjelasan**. Untuk menarik balik:
 
 - Buka Portal Ibu Bapa.
-- Pergi ke "Data Saya" → "Persetujuan".
-- Klik "Tarik balik persetujuan biometrik".
+- Cari kad "Biometric Consent" untuk anak anda.
+- Klik butang "Withdraw" untuk membuka skrin persetujuan, kemudian rakamkan keputusan anda di sana.
 
 Kami akan:
 
 - Berhenti menggunakan wajah anak anda untuk kehadiran serta-merta.
-- Memadam embedding dalam tempoh **7 hari kalendar**.
-- Mengesahkan pemadaman kepada anda melalui e-mel.
+- Membuang data wajah mengikut peraturan pengekalan dalam Seksyen 4.
 - Menukar anak anda kepada kehadiran manual.
+
+Anda boleh menyemak status penarikan balik dalam Portal Ibu Bapa pada bila-bila masa. Jika data wajah belum dibuang, sila ingatkan pihak sekolah melalui titik hubungan dalam Seksyen 10.
 
 **Tiada hukuman** kepada anak atau anda untuk menarik balik.
 
@@ -79,10 +80,12 @@ Anda boleh menukar fikiran kemudian (dalam mana-mana arah) pada bila-bila masa m
 
 Embedding adalah:
 
-- Disulitkan semasa disimpan dalam pangkalan data.
-- Disulitkan semasa bergerak antara kamera dan pangkalan data.
-- Boleh diakses hanya oleh kakitangan sekolah yang dibenarkan (pentadbir dan guru kelas).
-- Dilog setiap kali ia diakses — kami menyimpan rekod siapa melihatnya dan bila.
+- Senarai nombor, bukan gambar.
+- Dihantar melalui sambungan sulit (HTTPS).
+- Disimpan dalam fail data sebelah-pelayan pada mesin AI sekolah, bukan dalam pangkalan data sekolah.
+- Boleh diakses hanya oleh pentadbir sistem.
+
+Tindakan pentadbiran (pendaftaran, pembuangan, memulakan dan menghentikan AI, tandaan kehadiran, dan perubahan pengguna) direkodkan dalam log audit. Bacaan rutin data tidak direkodkan satu persatu.
 
 Kami mengikuti Standard Perlindungan Data Peribadi PDPA 2015 (keselamatan, pengekalan, integriti).
 
@@ -110,7 +113,7 @@ Anda mempunyai hak untuk:
 
 Untuk sebarang pertanyaan tentang Notis ini:
 
-- **Pegawai Perlindungan Data** (DPO sekolah): *untuk diisi oleh sekolah.*
+- **Pegawai Perlindungan Data**: Director of PRISM-AI, forprojectdump@gmail.com
 - **Pejabat Sekolah**: *(alamat, telefon)*
 
 Untuk aduan bebas:

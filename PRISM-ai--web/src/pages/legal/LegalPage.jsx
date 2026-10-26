@@ -1,5 +1,6 @@
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ArrowLeft, Globe } from 'lucide-react';
 import termsEn from '../../legal/terms.en.md?raw';
 import termsBm from '../../legal/terms.bm.md?raw';
@@ -59,6 +60,7 @@ export default function LegalPage({ kind }) {
 
       <article className="legal-card">
         <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
           components={{
             a: (linkProps) => {
               // node is react-markdown's AST element; never spread it onto DOM.
