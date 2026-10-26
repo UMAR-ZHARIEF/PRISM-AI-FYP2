@@ -73,7 +73,9 @@
   font-family: var(--display);
   font-size: 40px;
   font-weight: 900;
-  line-height: 1;
+  /* 1.1 so tall Fraunces digits ('91', '95.5%') keep clear of the tight
+     line box instead of reading as shaved at the card top. */
+  line-height: 1.1;
   margin: 0 0 4px;
 }
 .admin-page .stat-card .stat-info p {
@@ -88,7 +90,8 @@
    ========================================================================== */
 .admin-tabs {
   display: flex;
-  gap: 14px;
+  /* 12px so all five tabs fit one row at 1280px with the sidebar open. */
+  gap: 12px;
   margin: 30px 0 22px;
   flex-wrap: wrap;
   padding-bottom: 6px;
@@ -99,7 +102,9 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 22px;
+  /* 14px horizontal padding keeps the five labels inside the content
+     column at 1280px; the row still wraps below that. */
+  padding: 12px 14px;
   font-family: var(--body);
   font-size: 16px;
   font-weight: 700;
@@ -679,7 +684,7 @@
   font-family: var(--display);
   font-size: 40px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 1.1;
   margin: 0 0 4px;
 }
 .face-stats-row .stat-card .stat-info p {
@@ -735,7 +740,9 @@
 }
 .face-progress-row {
   display: grid;
-  grid-template-columns: 140px 1fr 60px 55px;
+  /* The two right columns must hold '100%' and '10/10' without squeezing;
+     the bar column absorbs the extra width. */
+  grid-template-columns: 140px 1fr 72px 64px;
   align-items: center;
   gap: 14px;
   padding: 8px 4px;
@@ -771,12 +778,14 @@
   font-size: 13px;
   color: var(--ink);
   text-align: right;
+  white-space: nowrap;
 }
 .face-progress-pct {
   font-size: 13px;
   font-weight: 700;
   color: var(--ink-soft);
   text-align: right;
+  white-space: nowrap;
 }
 .face-progress-pct.pct-full {
   color: var(--green);
@@ -1191,7 +1200,7 @@
     align-items: flex-start;
   }
   .face-progress-row {
-    grid-template-columns: 110px 1fr 50px 45px;
+    grid-template-columns: 110px 1fr 58px 52px;
     gap: 10px;
   }
   .face-student-grid {

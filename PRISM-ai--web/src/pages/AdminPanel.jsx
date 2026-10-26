@@ -400,7 +400,17 @@ export default function AdminPanel() {
           return;
         }
 
-        toast(`Invite sent to ${payload.email}. They'll set their password via the link.`, 'success');
+        // The server creates the account straight away and returns the password
+        // it generated, if it generated one. Surface it so the admin can hand
+        // it to the user.
+        const created = await res.json().catch(() => null);
+        const tempPassword = created?.temporary_password;
+        toast(
+          tempPassword
+            ? `User created. Temporary password: ${tempPassword}. Hand it to the user; they change it after signing in.`
+            : `User created for ${payload.email}.`,
+          'success'
+        );
         setShowModal(false);
         resetForm();
         refreshProfiles();
@@ -1360,7 +1370,9 @@ export default function AdminPanel() {
               <div className="empty-state admin-empty">No model accuracy data yet.</div>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={accuracyHistory}>
+                {/* Right margin keeps the last x-axis label ('30 JUN') clear of
+                    the card edge instead of clipping to '3 JU'. */}
+                <LineChart data={accuracyHistory} margin={{ top: 8, right: 28, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(31,26,18,0.18)" />
                   <XAxis dataKey="date" fontSize={12} stroke="#1F1A12" />
                   <YAxis fontSize={12} domain={accuracyDomain} stroke="#1F1A12" />
@@ -1673,8 +1685,9 @@ export default function AdminPanel() {
             )}
             {modalMode === 'add' && (
               <p className="user-form-note">
-                An invite email will be sent to the address above. The user sets their own
-                password via the link in the email.
+                The account is created straight away. After saving, a temporary
+                password is shown; hand it to the user so they can sign in and
+                set their own.
               </p>
             )}
             <div className="admin-modal-footer">
