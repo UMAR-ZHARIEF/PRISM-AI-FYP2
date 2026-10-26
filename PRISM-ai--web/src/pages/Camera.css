@@ -417,3 +417,53 @@
   .live-cam-detection-time { grid-area: time; justify-self: start; }
   .live-cam-detection-sim  { grid-area: sim;  justify-self: end; }
 }
+
+/* ----------- Phone (<=768px) — RS-D, mirrors Dashboard.css's phone block -----------
+   The Stage 3 390px sweep measured a 222px page overflow here. The squeeze
+   mechanism itself was the layout's margin-left:260px drawer (fixed in
+   DashboardLayout.css), but this page's own content did not shrink either:
+   the 64px h1 word-blocks (~282px for "Camera") and the fixed 28px side
+   padding left no slack under a 390px viewport, and the detection/status
+   rows below kept their desktop widths. Same treatment as the dashboard:
+   header stacks, h1 drops to 40px, the page clips its own rotation overhang
+   (tilted word-blocks + tape corners) instead of pushing the viewport, and
+   side padding follows .dashboard-content's 20px. */
+@media (max-width: 768px) {
+  .live-cam-page {
+    padding: 20px 20px 48px;
+    overflow-x: clip;
+  }
+  .live-cam-page .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .live-cam-page .page-header h1 { font-size: 40px; }
+}
+
+/* Very narrow phones: the 720px areas layout still needs ~434px of viewport
+   for avatar + badge + sim columns; below that its minmax(0,1fr) meta column
+   collapses (measured 8.7px at 390px, name clipped by the row's clip-path).
+   Restack: badge moves to its own row, time + sim share the last row, so the
+   meta column keeps >=130px at 390px. */
+@media (max-width: 480px) {
+  .live-cam-detection-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "avatar meta"
+      "avatar badge"
+      "time sim";
+    column-gap: 12px;
+    row-gap: 8px;
+  }
+  /* Badge now sits in the wide 1fr column — pin it left instead of stretching. */
+  .live-cam-detection-row .badge { justify-self: start; }
+  .live-cam-detection-time { align-self: center; }
+
+  /* Status keys + values (134px + 92px) and the Start/Stop button
+     (min-width 138px) + PID pair exceed a 360px phone's card inner width:
+     let them wrap instead of overflowing their cards. */
+  .live-cam-status-row { flex-wrap: wrap; gap: 4px 12px; }
+  .live-cam-ai-controls { flex-wrap: wrap; }
+  .live-cam-detections .card-header { flex-wrap: wrap; row-gap: 2px; }
+}

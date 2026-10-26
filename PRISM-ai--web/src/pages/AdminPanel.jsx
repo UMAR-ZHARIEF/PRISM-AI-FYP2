@@ -1000,6 +1000,12 @@ export default function AdminPanel() {
           ) : profilesError ? (
             <div className="empty-state admin-empty">Could not load users. Please try again.</div>
           ) : (
+            /* RS-C: the users table keeps its natural ~660px width at phone
+               sizes, which used to escape the ~302px card entirely. The
+               wrapper scrolls it inside the card instead — same pattern as
+               the Students and Dashboard tables — so the ACTION buttons stay
+               reachable via the in-card scroll. */
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -1056,6 +1062,7 @@ export default function AdminPanel() {
                 )}
               </tbody>
             </table>
+            </div>
           )}
           {!profilesLoading && !profilesError && totalUserPages > 1 && (
             <Pagination currentPage={userPage} totalPages={totalUserPages} onPageChange={setUserPage} />
