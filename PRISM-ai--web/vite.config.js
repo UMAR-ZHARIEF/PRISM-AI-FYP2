@@ -15,7 +15,8 @@ export default defineConfig({
       // ws:false is fine here since MJPEG is plain HTTP, but we disable any
       // proxy-level timeout so the stream doesn't drop after a minute.
       '/stream': {
-        target: 'http://localhost:5174',
+        // localhost resolves IPv6-first on some Windows stacks and can hit a squatter on [::1]:5174; the Python MJPEG server is IPv4-only.
+        target: 'http://127.0.0.1:5174',
         changeOrigin: true,
       },
     },
