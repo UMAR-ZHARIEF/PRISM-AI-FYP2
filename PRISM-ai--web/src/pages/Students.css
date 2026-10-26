@@ -271,10 +271,31 @@
 .students-page th.sortable { cursor: pointer; user-select: none; }
 .students-page th.sortable:hover { color: var(--red); }
 
+/* D13: ten columns overflow their card at narrow widths and used to clip the
+   ACTION column with no scrollbar. The wrapper scrolls the table's natural
+   width instead of clipping it (works at every viewport, not just phones). */
+.students-page .table-scroll { overflow-x: auto; }
+
+/* D13: one-line headers keep FACE/ATTENDANCE on the same row shape as their
+   cells, and middle alignment lines icons/badges up with the header text. */
+.students-page th { white-space: nowrap; }
+.students-page th,
+.students-page td { vertical-align: middle; }
+
+/* W3: at 1280px with the sidebar open the card leaves 884px for the table
+   (1280 - 260 sidebar - 72 content padding - 64 card padding). The global
+   14px cell gutters spend 280px of that on padding across ten columns, which
+   pushed the ACTION column about 118px into the D13 scrollbar. 8px side
+   gutters stay readable and hand ~120px back to the columns; font sizes,
+   headers and column order are untouched. Full budget:
+   .pi/work-reports/w3-actioncol.md */
+.students-page th,
+.students-page td { padding-left: 8px; padding-right: 8px; }
+
 .table-student-name {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px; /* W3: was 12, part of the 1280-open width budget */
   font-family: var(--body);
   font-size: 17px;
 }
@@ -290,7 +311,7 @@
   transform: rotate(-3deg);
 }
 
-.table-attendance { display: flex; align-items: center; gap: 10px; }
+.table-attendance { display: flex; align-items: center; gap: 8px; } /* W3: gap 10 -> 8 */
 .table-attendance-text {
   font-family: var(--mono);
   font-size: 13px;
@@ -298,7 +319,8 @@
   color: var(--ink);
 }
 .mini-progress {
-  width: 70px;
+  width: 56px; /* W3: was 70; the bar is decorative, the % text is untouched, and the column now fits its one-line header inside the 1280-open budget */
+  flex-shrink: 0; /* D13: the attendance track must never compress to a stub when its cell gets tight */
   height: 6px;
   background: var(--paper-deep);
   clip-path: var(--cut-pill);
@@ -306,8 +328,26 @@
 }
 .mini-fill { height: 100%; background: var(--green); }
 
-.table-actions { display: flex; gap: 6px; }
-.btn-sm-table { font-size: 13px; padding: 5px 12px; }
+/* D13: the label beside the track stays on one line so header and cell line up. */
+.table-attendance-text {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+/* D13: action buttons render whole (no 'Edi'/'Ed' truncation); the column is
+   at least as wide as the buttons row and the scroll wrapper below carries
+   any remaining overflow. W3: gap 6 -> 4 and button side padding 12 -> 10
+   (font still 13px) so the row fits the 1280-open width budget. */
+.table-actions { display: flex; flex-wrap: nowrap; gap: 4px; }
+.btn-sm-table { font-size: 13px; padding: 5px 10px; white-space: nowrap; }
+.students-page .col-actions { min-width: max-content; }
+
+/* W3: year badge pill only inside table cells; 14 -> 10 side padding keeps
+   the dot + label readable while fitting the 1280-open width budget. */
+.students-page td .badge { padding-left: 10px; padding-right: 10px; }
 
 /* === DETAIL MODAL ======================================== */
 .student-detail-modal { max-width: 640px; }
@@ -516,10 +556,17 @@
   .search-wrapper { width: 100%; min-width: 0; }
   .filter-class, .filter-face { max-width: unset; flex: 1; }
   .form-row-3 { grid-template-columns: 1fr; }
-  .students-page table { display: block; overflow-x: auto; }
+  /* D13: the old phone-only `table { display: block; overflow-x: auto }` hack
+     is superseded by the always-on .table-scroll wrapper. */
 }
 @media (max-width: 560px) {
   .students-grid { grid-template-columns: 1fr; }
+  /* D2: corner tapes hang 14px past the card edge; in the single-column
+     phone grid that overhang (plus card rotation) reaches the viewport edge
+     and opens a sideways scroll. Keep the bottom tapes inside the card —
+     top tapes (tl/tr) never poke horizontally, so they keep their look. */
+  .student-card .tape.br { right: 4px; }
+  .student-card .tape.bl { left: 4px; }
   .detail-info-grid { grid-template-columns: 1fr; }
   .detail-stats { grid-template-columns: 1fr 1fr; }
   .detail-top { flex-direction: column; text-align: center; }

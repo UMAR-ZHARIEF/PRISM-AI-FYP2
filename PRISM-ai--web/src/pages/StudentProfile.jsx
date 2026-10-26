@@ -27,6 +27,17 @@ const WORD_COLOR_MAP = {
 // Risk band chip label per API band value ('low' | 'watch' | 'high').
 const RISK_BAND_LABELS = { low: 'Low', watch: 'Watch', high: 'High' };
 
+// students.gender stores 'male'/'female' (the add/edit form's select values,
+// migration 0001, nullable). Exact-letter comparisons ('m'/'M') matched no
+// real row and rendered '—' even when gender data existed, so normalize like
+// Students.jsx: any M*/F* value gets a label, everything else renders '—'.
+function genderLabel(value) {
+  const g = String(value || '').trim().toUpperCase();
+  if (g.startsWith('M')) return 'Male';
+  if (g.startsWith('F')) return 'Female';
+  return '—';
+}
+
 // Short axis tick label for a trend day: "5 Mar" style, matching the en-GB
 // date usage elsewhere in the app. Unparseable dates fall back to the raw ISO
 // string so the axis never renders empty slots.
@@ -374,13 +385,19 @@ export default function StudentProfile() {
     if (deletingNote) return;
     if (!window.confirm('Delete this note? This cannot be undone.')) return;
     setDeletingNote(true);
-    const { error: deleteErr } = await supabase
+    // An RLS-blocked delete resolves with no error and zero affected rows, so
+    // the error object alone is not evidence the note is gone: ask for the
+    // deleted rows back (.select on the delete) and treat an empty result as
+    // a failed delete instead of silently refreshing an unchanged list.
+    const { data: deletedRows, error: deleteErr } = await supabase
       .from('teacher_notes')
       .delete()
-      .eq('id', note.id);
+      .eq('id', note.id)
+      .select('id');
     setDeletingNote(false);
-    if (deleteErr) {
-      if (toast) toast('Could not delete note.', 'error');
+    if (deleteErr || !deletedRows || deletedRows.length === 0) {
+      if (deleteErr) console.error('StudentProfile: note delete failed', deleteErr);
+      if (toast) toast('Could not delete the note.', 'error');
       return;
     }
     if (refreshNotes) refreshNotes();
@@ -614,13 +631,7 @@ export default function StudentProfile() {
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Gender</span>
-              <span className="sprofile-info-value">
-                {student.gender === 'm' || student.gender === 'M'
-                  ? 'Male'
-                  : student.gender === 'f' || student.gender === 'F'
-                    ? 'Female'
-                    : '—'}
-              </span>
+              <span className="sprofile-info-value">{genderLabel(student.gender)}</span>
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Year</span>
