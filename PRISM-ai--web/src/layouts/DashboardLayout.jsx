@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
+import useClassSections from '../hooks/useClassSections';
 import useNotifications from '../hooks/useNotifications';
 import { YearContext, ScopeContext } from './dashboardContexts';
 import './DashboardLayout.css';
@@ -59,10 +60,33 @@ export default function DashboardLayout() {
   const userRef = useRef(null);
 
   const { years, loading: yearsLoading } = useYears();
+  // R3: same class_sections source every page uses — needed to narrow the
+  // year options for teachers (see visibleYears below).
+  const { classSections } = useClassSections();
   const { notifications, unreadCount, markAllRead } = useNotifications();
   const { user, profile, signOut } = useAuth();
 
   const role = profile?.role;
+
+  // R3: teachers see only the years their own classes belong to; admins (and
+  // any other role) keep the full list. A teacher's classes are their
+  // homeroom assignments — the same client-side teacher-class link the
+  // Dashboard page uses for myClassSectionIds (the DB boundary is the RLS
+  // teacher_class_ids() helper; this picker filter is a view filter on top
+  // of it, not a security boundary). While class sections are still loading,
+  // or when a teacher has no homerooms at all, fall back to the full list so
+  // the picker never blanks out.
+  const visibleYears = useMemo(() => {
+    if (role !== 'teacher') return years;
+    const mine = new Set(
+      classSections
+        .filter(s => s.homeroom_teacher_id === profile?.id)
+        .map(s => s.year_num)
+        .filter(y => y != null)
+    );
+    if (mine.size === 0) return years;
+    return years.filter(y => mine.has(y.year_num));
+  }, [years, classSections, role, profile?.id]);
 
   // Shared view scope for the pages below (see ScopeContext above). The user's
   // explicit pick wins once made; until then the scope derives from the role:
@@ -182,7 +206,7 @@ export default function DashboardLayout() {
                 disabled={yearsLoading && years.length === 0}
               >
                 <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
-                {years.map(y => (
+                {visibleYears.map(y => (
                   <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
                 ))}
               </select>

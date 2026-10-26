@@ -272,7 +272,19 @@
   box-shadow: var(--shadow-card);
   animation: paper-rise 0.25s ease both;
 }
-.notif-panel { width: 380px; }
+.notif-panel {
+  /* D14: pin the open panel to the viewport just below the sticky topbar
+     (76px bar + 3px dashed border + clearance) instead of anchoring it to
+     the bell button. The button-anchored 380px panel started ~4px above the
+     topbar's bottom edge (its dashed border read as a dark bar on the
+     panel's top edge), swung left across the breadcrumb/title column on
+     narrow viewports, and poked past the viewport edge on phones, dragging
+     a horizontal scrollbar with it. */
+  position: fixed;
+  top: 88px;
+  right: 16px;
+  width: min(380px, calc(100vw - 32px));
+}
 .user-panel { width: 220px; padding: 10px 8px; }
 
 .dropdown-header {
@@ -340,6 +352,19 @@
 
 /* ============ CONTENT ============ */
 .dashboard-content { padding: 32px 36px; flex: 1; }
+
+/* W4 wide-screen stretch (continuous): the content column grows fluidly with
+   the window up to a 1920px ceiling, then caps and centers. The cap is
+   unconditional, so there is no breakpoint step: whenever the post-sidebar
+   area is under 1920px the viewport is narrower than the cap and the column
+   simply fills it (byte-identical layout to the old fluid behavior); once the
+   area would exceed the ceiling the max-width engages continuously and the
+   auto margins center the column. width:100% is required because the auto
+   centering margins disable the flex default align-self: stretch in the
+   column-flex .dashboard-main. Sidebar width is untouched (260px open / 72px
+   closed). Centered standalone pages (Landing/Login/ParentPortal) do not use
+   .dashboard-content and are unaffected. */
+.dashboard-content { width: 100%; max-width: 1920px; margin-inline: auto; }
 
 /* ============ FOOTER ============ */
 .dashboard-footer {
