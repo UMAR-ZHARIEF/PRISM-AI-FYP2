@@ -20,6 +20,11 @@ function useMarkAttendance() {
     setLoading(true);
     setError(null);
 
+    // No client marked_at (defect L8): the browser clock is not trustworthy,
+    // so the column's DB default (now()) stamps server time on insert. On a
+    // same-day re-mark the upsert leaves the original server timestamp in
+    // place. arrival_time/date are record data (not clock stamps) and stay;
+    // callers display the time from the returned DB row.
     const row = {
       student_id: studentId,
       date,
@@ -27,7 +32,6 @@ function useMarkAttendance() {
       arrival_time: arrivalTime ?? null,
       notes: notes ?? null,
       marked_by: user ? user.id : null,
-      marked_at: new Date().toISOString(),
     };
 
     const { data, error: upsertError } = await supabase

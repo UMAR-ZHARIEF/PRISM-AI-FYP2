@@ -22,6 +22,7 @@ const { spawn, exec } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 3001;
@@ -1447,10 +1448,16 @@ app.get('/api/engagement/trends', requireStaff, async (req, res) => {
 // the caller to be authenticated AND hold role==='admin'. Every successful
 // mutation appends an entry to audit_logs (fire-and-forget).
 
-// POST /api/admin/users — invite a new user by email.
-// Body: { email, full_name, role, phone? }
+// POST /api/admin/users — create a new user directly (defect S1).
+// Body: { email, full_name, role, phone?, password? }
+// The old inviteUserByEmail flow failed for every address because no SMTP is
+// configured on this project ('Email address ... is invalid'), so the user is
+// created directly instead: email confirmed at creation, password set here.
+// The password comes from the request body when supplied; otherwise a strong
+// random one is generated and returned once (temporary_password) so the admin
+// can hand it to the user.
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
-  const { email, full_name, role, phone } = req.body || {};
+  const { email, full_name, role, phone, password } = req.body || {};
 
   if (!email || typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
     return res.status(400).json({ error: 'Valid email is required' });
@@ -1464,34 +1471,46 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   if (phone != null && typeof phone !== 'string') {
     return res.status(400).json({ error: 'phone must be a string' });
   }
+  // Optional explicit password (Supabase's default minimum is 6 characters);
+  // validated here so a weak attempt fails fast with 400 instead of a
+  // Supabase error surfacing as 500.
+  if (password != null && (typeof password !== 'string' || password.length < 6)) {
+    return res.status(400).json({ error: 'password must be a string of at least 6 characters' });
+  }
 
   const cleanEmail = email.trim();
   const cleanName = full_name.trim();
+  const initialPassword = password || crypto.randomBytes(18).toString('base64url');
 
   try {
-    const { data: invited, error: inviteErr } =
-      await supabase.auth.admin.inviteUserByEmail(cleanEmail, {
-        data: { full_name: cleanName, role },
-      });
+    const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
+      password: initialPassword,
+      // Confirmed at creation: no invite email is ever sent (no SMTP on this
+      // project), so the user can sign in with the handed-over password right
+      // away.
+      email_confirm: true,
+      user_metadata: { full_name: cleanName, role },
+    });
 
-    if (inviteErr) {
-      const msg = (inviteErr.message || '').toLowerCase();
+    if (createErr) {
+      const msg = (createErr.message || '').toLowerCase();
       // Supabase surfaces duplicate-email cases via several phrasings — match liberally.
       if (
         msg.includes('already') ||
         msg.includes('registered') ||
         msg.includes('exists') ||
-        inviteErr.status === 422
+        createErr.status === 422
       ) {
         return res.status(409).json({ error: 'Email already in use' });
       }
-      console.error('[admin/users] invite failed:', inviteErr);
-      return res.status(500).json({ error: inviteErr.message || 'Invite failed' });
+      console.error('[admin/users] create failed:', createErr);
+      return res.status(500).json({ error: createErr.message || 'Create user failed' });
     }
 
-    const invitedUser = invited?.user;
-    if (!invitedUser?.id) {
-      return res.status(500).json({ error: 'Invite returned no user' });
+    const createdUser = created?.user;
+    if (!createdUser?.id) {
+      return res.status(500).json({ error: 'Create user returned no user' });
     }
 
     // The handle_new_user trigger has already inserted a profile row. If a phone
@@ -1500,20 +1519,23 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       const { error: phoneErr } = await supabase
         .from('profiles')
         .update({ phone: phone.trim() })
-        .eq('id', invitedUser.id);
+        .eq('id', createdUser.id);
       if (phoneErr) {
         console.warn('[admin/users] phone update failed:', phoneErr.message);
       }
     }
 
     res.status(201).json({
-      id: invitedUser.id,
-      email: invitedUser.email || cleanEmail,
+      id: createdUser.id,
+      email: createdUser.email || cleanEmail,
       full_name: cleanName,
       role,
+      // Echo the generated password back once, only when the server chose it
+      // (an admin-supplied password is already known to its owner).
+      ...(password ? {} : { temporary_password: initialPassword }),
     });
 
-    logAudit(req.actor.id, 'user.invite', invitedUser.id, {
+    logAudit(req.actor.id, 'user.invite', createdUser.id, {
       email: cleanEmail,
       full_name: cleanName,
       role,
@@ -2047,6 +2069,26 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
     .maybeSingle();
   if (error || !student) return res.status(404).json({ error: 'Student not found' });
 
+  // Server-side PDPA consent gate (defect L2: this legacy endpoint used to
+  // trust the client for this). Mirrors /api/ai/enroll/session exactly: the
+  // LATEST non-revoked biometric_consents row decides; a missing row counts
+  // as pending and is refused too.
+  const { data: consentRows, error: consentErr } = await supabase
+    .from('biometric_consents')
+    .select('granted')
+    .eq('student_id', student_id)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (consentErr) {
+    console.error('[ai/enroll] consent lookup failed:', consentErr.message);
+    return res.status(500).json({ error: 'Failed to check biometric consent' });
+  }
+  const consented = Array.isArray(consentRows) && consentRows.length > 0 && consentRows[0].granted === true;
+  if (!consented) {
+    return res.status(403).json({ error: 'Parent biometric consent not granted' });
+  }
+
   // Don't allow concurrent enrollments alongside the recognition script.
   // Both grab the same webcam (/dev/video0) and would deadlock.
   if (aiProcess && aiProcess.exitCode === null) {
@@ -2174,8 +2216,8 @@ app.post('/api/ai/enroll/session', requireAdmin, async (req, res) => {
     .maybeSingle();
   if (error || !student) return res.status(404).json({ error: 'Student not found' });
 
-  // Server-side PDPA consent gate (the CLI endpoint trusts the client for
-  // this; here it is enforced). Mirrors the client rule in AdminPanel.jsx
+  // Server-side PDPA consent gate (the legacy CLI endpoint /api/ai/enroll
+  // now enforces this identical gate). Mirrors the client rule in AdminPanel.jsx
   // (consentStatusFor(studentId) === 'granted'): the LATEST non-revoked
   // biometric_consents row decides; a missing row counts as pending and is
   // refused too.
@@ -2486,7 +2528,7 @@ app.listen(PORT, () => {
   console.log('    GET  /api/engagement/summary → Day engagement summaries (staff)');
   console.log('    GET  /api/engagement/risk    → Rolling risk scores (staff)');
   console.log('    GET  /api/engagement/trends  → Student risk trends (staff)');
-  console.log('    POST   /api/admin/users      → Invite user  (admin)');
+  console.log('    POST   /api/admin/users      → Create user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
   console.log('    GET    /api/admin/users/list → List users + emails (admin)');
