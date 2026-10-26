@@ -546,6 +546,11 @@ API_URL = "http://localhost:3001/api/attendance"
 # running this script (same value as server/.env — see server/.env.example);
 # if it is missing or wrong, the server answers 401 and no detections land.
 AI_BRIDGE_KEY = os.environ.get('AI_BRIDGE_KEY', '')
+# classroom_id stamped on every outgoing detection payload. --classroom
+# (fed from app_settings.classroom_label by server.js) overwrites this at
+# startup; the module default keeps standalone runs on the legacy 'CLASS_1A'
+# label the payload carried before the field became configurable.
+CLASSROOM_LABEL = "CLASS_1A"
 SEND_INTERVAL = 10  # Send data every 10 seconds
 
 # ── 60-second sustained-absence rule ─────────────────────────────────────────
@@ -685,7 +690,7 @@ def send_to_dashboard(recognized_list):
     """Send recognized student data to the local web dashboard."""
     payload = {
         "timestamp": datetime.datetime.now().isoformat(),
-        "classroom_id": "CLASS_1A",
+        "classroom_id": CLASSROOM_LABEL,
         "detections": recognized_list
     }
     try:
@@ -1175,8 +1180,15 @@ def main():
     parser.add_argument("--emotion-model", type=str, default=str(EMOTION_MODEL_PATH),
                         help="Path to the YOLOv8 emotion ONNX model "
                              "(default: best_v2.onnx next to this script)")
+    parser.add_argument("--classroom", type=str, default="CLASS_1A",
+                        help="label stamped on outgoing detections; matches app_settings.classroom_label")
 
+    global CLASSROOM_LABEL
     args = parser.parse_args()
+    # Startup override: server.js spawns this script with the admin-editable
+    # app_settings label (migration 0012). send_to_dashboard reads the module
+    # constant from its worker thread, so one assignment here covers it.
+    CLASSROOM_LABEL = args.classroom
     run_recognition(args)
 
 

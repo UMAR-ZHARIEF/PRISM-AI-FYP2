@@ -64,6 +64,10 @@ const SETTINGS_DEFAULTS = Object.freeze({
   late_cutoff: '08:00',
   det_size: 320,
   match_threshold: 0.40,
+  // Classroom label the Python edge stamps on outgoing detections
+  // (migration 0012). Default keeps the label the payload hardcoded
+  // before it became configurable, so existing data stays continuous.
+  classroom_label: 'CLASS_1A',
   // Crash auto-restart admin toggle (migration 0010). Default ON per user
   // decision 2026-10-21: a crashed recognizer respawns by itself unless an
   // admin turns it off here.
@@ -79,7 +83,7 @@ async function getAppSettings() {
   try {
     const { data, error } = await supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label')
       .eq('id', 1)
       .maybeSingle();
     if (error) throw error;
@@ -89,6 +93,7 @@ async function getAppSettings() {
         late_cutoff: data.late_cutoff ?? SETTINGS_DEFAULTS.late_cutoff,
         det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
         match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+        classroom_label: data.classroom_label ?? SETTINGS_DEFAULTS.classroom_label,
         autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
       };
     }
@@ -1831,6 +1836,7 @@ async function startAiProcess(req) {
     '--camera', '0',
     '--det-size', String(settings.det_size),
     '--threshold', String(settings.match_threshold),
+    '--classroom', String(settings.classroom_label),
   ], {
     cwd: aiDir,
     windowsHide: false, // let the OpenCV window be visible
