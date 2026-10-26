@@ -479,7 +479,8 @@ export default function Students() {
           <div className="toolbar-filters">
             <select className="search-input filter-class" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
               <option value="all">All Classes</option>
-              {filterClassSections.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+              {/* Class names repeat across years in class_sections — offer each once. */}
+              {[...new Set(filterClassSections.map(c => c.name))].map(name => <option key={name} value={name}>{name}</option>)}
             </select>
             <select className="search-input filter-face" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
               <option value="all">All Years</option>
