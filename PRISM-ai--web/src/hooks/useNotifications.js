@@ -53,6 +53,22 @@ function useNotifications() {
     };
   }, [userId, refreshTick]);
 
+  // Notifications are only fetched on mount (or manual refresh), so an
+  // alert inserted after mount (e.g. an at-risk alert written by the edge
+  // AI) would stay invisible until a full remount. Poll on an interval and
+  // refresh when the window regains focus so the bell stays live.
+  useEffect(function scheduleNotificationRefresh() {
+    if (!userId) return undefined;
+
+    const intervalId = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+
+    return function cleanupPolling() {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [userId, refresh]);
+
   // Broadcast rows (scope <> 'user') have no per-user read state under
   // Option B, so the unread badge only counts direct messages.
   const unreadCount = useMemo(function computeUnread() {

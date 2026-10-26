@@ -332,6 +332,8 @@
 .dot-danger  { background: var(--red); }
 .dot-info    { background: var(--blue); }
 .dot-success { background: var(--green); }
+.dot-attendance { background: var(--blue); }
+.dot-engagement { background: var(--orange); }
 
 .dropdown-item p { margin: 0; line-height: 1.4; color: var(--ink); }
 .dropdown-item small { color: var(--ink-soft); font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; }
