@@ -52,11 +52,15 @@
   --accent:  'Caveat', cursive;
   --mono:    'JetBrains Mono', ui-monospace, monospace;
 
-  /* Cut-paper clip-paths — each one is a slightly different scissor-edge irregularity */
-  --cut-1: polygon(0 6%, 8% 0, 92% 3%, 100% 12%, 98% 92%, 90% 100%, 4% 96%, 0 86%);
-  --cut-2: polygon(0 4%, 6% 0, 94% 6%, 100% 14%, 99% 88%, 94% 100%, 6% 96%, 1% 90%);
-  --cut-3: polygon(0 8%, 12% 0, 88% 4%, 100% 18%, 98% 90%, 92% 100%, 8% 95%, 0 85%);
-  --cut-4: polygon(2% 4%, 10% 0, 90% 6%, 100% 16%, 96% 90%, 88% 100%, 8% 96%, 0 88%);
+  /* Cut-paper clip-paths — each one is a slightly different scissor-edge irregularity.
+     Every wedge vertex is pixel-capped (min/% vs px): the scissors must never scale
+     with card size. On a tall card (e.g. 3830px Attendance panel) bare percentages
+     resolved to ~230px cuts that erased content; the caps bound any wedge depth to
+     8-32px while leaving small elements (where % is already small) pixel-identical. */
+  --cut-1: polygon(0 min(6%, 14px), min(8%, 22px) 0, calc(100% - min(8%, 22px)) min(3%, 12px), 100% min(12%, 28px), calc(100% - min(2%, 10px)) calc(100% - min(8%, 22px)), calc(100% - min(10%, 26px)) 100%, min(4%, 14px) calc(100% - min(4%, 14px)), 0 calc(100% - min(14%, 30px)));
+  --cut-2: polygon(0 min(4%, 14px), min(6%, 18px) 0, calc(100% - min(6%, 18px)) min(6%, 18px), 100% min(14%, 30px), calc(100% - min(1%, 8px)) calc(100% - min(12%, 28px)), calc(100% - min(6%, 18px)) 100%, min(6%, 18px) calc(100% - min(4%, 14px)), min(1%, 8px) calc(100% - min(10%, 26px)));
+  --cut-3: polygon(0 min(8%, 22px), min(12%, 28px) 0, calc(100% - min(12%, 28px)) min(4%, 14px), 100% min(18%, 32px), calc(100% - min(2%, 10px)) calc(100% - min(10%, 26px)), calc(100% - min(8%, 22px)) 100%, min(8%, 22px) calc(100% - min(5%, 16px)), 0 calc(100% - min(15%, 30px)));
+  --cut-4: polygon(min(2%, 10px) min(4%, 14px), min(10%, 26px) 0, calc(100% - min(10%, 26px)) min(6%, 18px), 100% min(16%, 30px), calc(100% - min(4%, 14px)) calc(100% - min(10%, 26px)), calc(100% - min(12%, 28px)) 100%, min(8%, 22px) calc(100% - min(4%, 14px)), 0 calc(100% - min(12%, 28px)));
   --cut-pill: polygon(0 14%, 8% 0, 94% 4%, 100% 20%, 98% 80%, 92% 100%, 6% 96%, 0 82%);
 }
 
