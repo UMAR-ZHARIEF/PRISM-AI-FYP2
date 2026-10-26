@@ -569,6 +569,10 @@ export default function Dashboard() {
     // that is the button's contract. Late status is only derived on the AI
     // camera path (checked against app_settings.late_cutoff); per-row fixes
     // go through the Edit modal instead.
+    // No client marked_at (defect L8, same rule as useMarkAttendance): the
+    // browser clock is not trustworthy, so the column's DB default (now())
+    // stamps server time on insert; an existing row keeps its original
+    // server timestamp.
     const rows = roster.map(s => ({
       student_id: s.id,
       date: today,
@@ -576,7 +580,6 @@ export default function Dashboard() {
       arrival_time: arrivalByStudent.get(s.id) ?? null, // keep any AI check-in time
       notes: 'Marked all present (bulk)',
       marked_by: user ? user.id : null,
-      marked_at: new Date().toISOString(),
     }));
 
     // Chunked upsert so one oversized payload can't fail the whole batch.
@@ -690,10 +693,12 @@ export default function Dashboard() {
     if (!editRecord || editSaving) return;
     setEditSaving(true);
     const prevStatus = editRecord.status;
+    // No client marked_at (defect L8, same rule as useMarkAttendance): the
+    // browser clock is not trusted, so the update leaves the row's existing
+    // server timestamp in place.
     const payload = {
       status: editStatus,
       marked_by: user ? user.id : null,
-      marked_at: new Date().toISOString(),
     };
     // Departure is optional: only write time_out when a value was provided,
     // so editing just the status never disturbs an existing checkout.
@@ -863,9 +868,16 @@ export default function Dashboard() {
               return (
                 <div key={c.id || i} className={`class-card class-card-${i % 4}`} style={{ '--cc': classColors[c.class] }}>
                   <div className="class-card-header">
-                    <Link to={`/dashboard/class/${linkYear}/${c.class}`} className="class-link" style={{ color: classColors[c.class] }}>
-                      <strong>{!selectedYear && c.year ? `Y${c.year} ` : ''}{c.class}</strong>
-                    </Link>
+                    {/* R5 (same family as the table below): only link when a
+                        real class name exists; an empty name would produce a
+                        /dashboard/class/N/ URL with an empty slug. */}
+                    {c.class ? (
+                      <Link to={`/dashboard/class/${linkYear}/${c.class}`} className="class-link" style={{ color: classColors[c.class] }}>
+                        <strong>{!selectedYear && c.year ? `Y${c.year} ` : ''}{c.class}</strong>
+                      </Link>
+                    ) : (
+                      <strong>&mdash;</strong>
+                    )}
                     <span className="class-rate mono">{rate}%</span>
                   </div>
                   <div className="class-counts">
@@ -1009,6 +1021,9 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+        {/* D1: the table scrolls inside this wrapper at phone width instead
+            of stretching the page past the viewport (see Dashboard.css). */}
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -1034,7 +1049,19 @@ export default function Dashboard() {
                       {a.name}
                     </div>
                   </td>
-                  <td><Link to={`/dashboard/class/${selectedYear || a.year || 1}/${a.class}`} className="class-link"><span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>{a.class}</span></Link></td>
+                  {/* R5: only link when a real class name exists — a blank
+                      class_section name built /dashboard/class/1/ with an
+                      empty slug (a guaranteed "Class Not Found"), so those
+                      rows render a plain chip instead. */}
+                  <td>
+                    {a.class ? (
+                      <Link to={`/dashboard/class/${selectedYear || a.year || 1}/${a.class}`} className="class-link">
+                        <span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>{a.class}</span>
+                      </Link>
+                    ) : (
+                      <span className="class-chip mono">&mdash;</span>
+                    )}
+                  </td>
                   <td><span className={`badge badge-${a.status}`}>{a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span></td>
                   <td className="mono">{a.timeIn}</td>
                   <td className="mono">{a.timeOut || '—'}</td>
@@ -1044,6 +1071,7 @@ export default function Dashboard() {
             })}
           </tbody>
         </table>
+        </div>
         <div className="table-footer mono">
           <span>Showing {filtered.length === 0 ? 0 : (page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} students</span>
         </div>

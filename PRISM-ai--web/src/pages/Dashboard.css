@@ -595,5 +595,14 @@
   .filter-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .filter-select { max-width: unset; }
   table { display: block; overflow-x: auto; }
+  /* D1: the attendance table scrolls inside its own wrapper instead of
+     stretching the card and the page past the viewport; min-width keeps the
+     six columns readable while the wrapper scrolls. */
+  .dashboard-table-card .table-scroll { overflow-x: auto; }
+  .dashboard-table-card .table-scroll table { display: table; min-width: 560px; }
+  /* D1: contain the tilted cards' rotation overhang (and tape corners) so a
+     full-width card can never push the page wider than the viewport. Clips
+     only what escapes the page box; vertical scroll is untouched. */
+  .dashboard-page { overflow-x: clip; }
   .dashboard-page .page-header h1 { font-size: 40px; }
 }

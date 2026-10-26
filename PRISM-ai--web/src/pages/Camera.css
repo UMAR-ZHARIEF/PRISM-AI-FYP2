@@ -6,9 +6,20 @@
 
 .live-cam-page {
   padding: 28px 28px 64px;
-  max-width: 1280px;
+  max-width: 1920px;
   margin: 0 auto;
 }
+
+/* W4 wide-screen stretch (continuous): the old 1280px base cap plus a 2181px
+   media-query exception is replaced by one unconditional 1920px cap shared
+   with the shell (.dashboard-content in DashboardLayout.css). There is no
+   breakpoint step: below a 1920px-wide column the page simply fills it (a
+   plain block fills its container up to max-width, and the old 1280px cap
+   only ever mattered on viewports wider than 1280px, where filling is the
+   intended new behavior); above it, margin: 0 auto keeps the page centered
+   whenever the cap still binds. The parent .dashboard-content column itself
+   caps at 1920px (1848px inner), so this page tracks its parent fluidly and
+   centers together with it. */
 
 .live-cam-page .page-header {
   align-items: flex-end;
