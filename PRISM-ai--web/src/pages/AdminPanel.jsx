@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
+import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classColors } from '../data/mockData';
 import useProfiles from '../hooks/useProfiles';
@@ -19,16 +19,32 @@ import './AdminPanel.css';
 
 const PER_PAGE = 8;
 
-// System Settings defaults — mirror the seeded values in migration
-// 0005_app_settings_and_checkout.sql (single app_settings row, id = 1).
+// System Settings defaults: mirror the seeded values in migrations
+// 0005_app_settings_and_checkout.sql and 0010_autorestart_setting.sql
+// (single app_settings row, id = 1).
 const SETTINGS_DEFAULTS = {
   school_name: 'PRISM-AI Primary School',
   late_cutoff: '08:00',
   det_size: 320,
   match_threshold: 0.4,
+  autorestart_ai: true,
 };
 // Face-detection input sizes the AI service accepts (pixels).
 const DET_SIZE_OPTIONS = [320, 640, 960, 1280];
+
+// Normalizes the GET /api/ai/process body for this panel. orphan/note flag
+// an unsupervised AI child that survived a server restart and still holds
+// the camera port (the force-stop control); autorestart_enabled and
+// autorestarts_recent back the AI tab status line. Fields an older server
+// does not send stay null so the UI can fall back to the settings row.
+const readAiProcDetail = (d) => ({
+  orphan: Boolean(d?.orphan),
+  note: typeof d?.note === 'string' ? d.note : '',
+  autorestartEnabled: typeof d?.autorestart_enabled === 'boolean' ? d.autorestart_enabled : null,
+  autorestartsRecent: Number.isFinite(Number(d?.autorestarts_recent))
+    ? Number(d.autorestarts_recent)
+    : null,
+});
 
 export default function AdminPanel() {
   const [tab, setTab] = useState('users');
@@ -119,13 +135,39 @@ export default function AdminPanel() {
   const [uptimeSeconds, setUptimeSeconds] = useState(null);
   // null = still checking, true = reachable, false = unreachable ('Offline').
   const [serverOnline, setServerOnline] = useState(null);
+  // Detail from the same GET /api/ai/process call (orphan force-stop control
+  // and the AI tab auto-restart status line).
+  const [aiProcDetail, setAiProcDetail] = useState({
+    orphan: false,
+    note: '',
+    autorestartEnabled: null,
+    autorestartsRecent: null,
+  });
+  // POST /api/ai/restart in flight: stop + start reloads the model, up to
+  // ~30s, so every card's Restart button stays disabled until it settles.
+  const [aiRestarting, setAiRestarting] = useState(false);
+  // DELETE /api/ai/process (orphan force stop) in flight.
+  const [killingOrphan, setKillingOrphan] = useState(false);
+  // Set by the AI tab's 'Re-enroll Faces' button: switch to the Face
+  // Registration tab first, then an effect scrolls to the enrollment card
+  // once it has mounted. A ref keeps this out of render state so the
+  // reset never counts as setState inside the effect.
+  const pendingEnrollScrollRef = useRef(false);
+  // Bumped after an orphan force stop so the AI tab refetches the process
+  // snapshot immediately instead of waiting for the next tab open.
+  const [procRefreshTick, setProcRefreshTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     const token = session?.access_token;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     fetch('/api/ai/process', { headers })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (!cancelled && d) setAiProcRunning(Boolean(d.running)); })
+      .then(d => {
+        if (!cancelled && d) {
+          setAiProcRunning(Boolean(d.running));
+          setAiProcDetail(readAiProcDetail(d));
+        }
+      })
       .catch(() => { /* server offline — card stays at 0 */ });
     fetch('/api/health', { headers })
       .then(r => (r.ok ? r.json() : null))
@@ -142,6 +184,26 @@ export default function AdminPanel() {
       });
     return () => { cancelled = true; };
   }, [session?.access_token]);
+
+  // AI tab opened (or an orphan force stop just ran): pull a fresh process
+  // snapshot so the status line and the orphan control reflect now, not
+  // page load. Same .then shape as the Overview fetch above; the setStates
+  // stay inside the callbacks so they are never synchronous effect work.
+  useEffect(() => {
+    if (tab !== 'ai' || !isAdmin) return;
+    let cancelled = false;
+    const token = session?.access_token;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch('/api/ai/process', { headers })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d) return;
+        setAiProcRunning(Boolean(d.running));
+        setAiProcDetail(readAiProcDetail(d));
+      })
+      .catch(() => { /* bridge offline: keep the last known detail */ });
+    return () => { cancelled = true; };
+  }, [tab, isAdmin, procRefreshTick, session?.access_token]);
 
   // Derived from /api/ai/enrolled (which reads enrolled_students.json on the
   // server). Maps student.id → true if their full_name (lowercased) appears
@@ -494,6 +556,23 @@ export default function AdminPanel() {
     toast(`${student.full_name} selected — click Start Enrollment when ready.`, 'info');
   };
 
+  // The model cards used to carry a 'Retrain' stub; no in-app retraining
+  // exists, so that button is gone. 'Re-enroll Faces' hands the operator to
+  // the real thing instead: the enrollment card on the Face Registration
+  // tab. The card only mounts with the tab, so the scroll is deferred: the
+  // effect above completes it after the switch has rendered (same
+  // scrollIntoView the Register Face buttons use).
+  const handleReenrollFaces = () => {
+    pendingEnrollScrollRef.current = true;
+    setTab('faces');
+  };
+
+  useEffect(() => {
+    if (!pendingEnrollScrollRef.current || tab !== 'faces') return;
+    pendingEnrollScrollRef.current = false;
+    enrollCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [tab]);
+
   // Delete the stored face embedding for a student (admin-only endpoint).
   // Re-enrolling afterwards is just the normal Register Face flow.
   const handleRemoveFace = async (student) => {
@@ -528,10 +607,91 @@ export default function AdminPanel() {
     }
   };
 
-  // Trigger the Python enrollment script for the selected student.
-  // Blocks for ~5–10s while the script captures faces. The Express endpoint
-  // only returns once the Python child exits, so the button stays disabled
-  // and a status banner is shown to the operator throughout.
+  // Start an in-browser enrollment session for the selected student.
+  // Consent stays a client-side check for instant feedback (the server
+  // enforces it too). On success the EnrollmentCamera component takes
+  // over and drives /api/ai/enroll/frame + /api/ai/enroll/complete.
+  // Error bodies carry operator-friendly messages (GPU offline, helper
+  // down, session already active), so prefer them for the toast.
+  const enrollErrorMessage = async (res) => {
+    try {
+      const body = await res.json();
+      return body?.message || body?.error || `Request failed (${res.status})`;
+    } catch {
+      return `Request failed (${res.status})`;
+    }
+  };
+
+  // Restart the single supervised AI process (stop + start = model reload,
+  // up to ~30s). Every model card carries a Restart button but they all
+  // drive the same one AI process; aiRestarting disables all of them until
+  // the request settles so a second click cannot double-fire it. Error
+  // bodies carry operator-facing text (GPU refusals, restart already in
+  // progress), so the toast repeats the server's words verbatim. The busy
+  // flag clears after the try/catch, never in a finally block: a setState
+  // in finally silently disables the React Compiler lint for this file.
+  const handleRestartAi = async () => {
+    if (aiRestarting) return;
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      return;
+    }
+    setAiRestarting(true);
+    try {
+      const res = await fetch('/api/ai/restart', {
+        method: 'POST',
+        headers: apiHeaders(),
+      });
+      if (res.ok) {
+        toast('AI service restarted', 'success');
+      } else {
+        const msg = await enrollErrorMessage(res);
+        toast(msg, 'error', 5000);
+      }
+    } catch (err) {
+      console.error('AI restart failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+    }
+    setAiRestarting(false);
+  };
+
+  // Force-stop an orphaned AI process. GET /api/ai/process sets orphan=true
+  // when port 5174 is held by an AI child the current server run does not
+  // supervise (one that survived a server restart); DELETE /api/ai/process
+  // stops whatever PID holds the port. Confirmed like remove-face, then the
+  // process snapshot refreshes so the control disappears with the orphan.
+  // No finally block here either (see handleRestartAi): the flag clears and
+  // the refresh runs after the try/catch on every path.
+  const handleForceStopOrphan = async () => {
+    if (killingOrphan) return;
+    if (!isAdmin || !session?.access_token) {
+      toast('Stopping the AI process is admin-only.', 'error');
+      return;
+    }
+    const ok = window.confirm(
+      'Force stop the orphaned AI process? The camera stays offline until the AI service is started again.',
+    );
+    if (!ok) return;
+    setKillingOrphan(true);
+    try {
+      const res = await fetch('/api/ai/process', {
+        method: 'DELETE',
+        headers: apiHeaders(),
+      });
+      if (res.ok) {
+        toast('Orphaned AI process stopped.', 'success');
+      } else {
+        const msg = await enrollErrorMessage(res);
+        toast(msg, 'error', 5000);
+      }
+    } catch (err) {
+      console.error('orphan force stop failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+    }
+    setKillingOrphan(false);
+    setProcRefreshTick(t => t + 1);
+  };
+
   const handleStartEnrollment = async () => {
     if (!enrollStudentId) {
       toast('Pick a student first.', 'error');
@@ -608,7 +768,7 @@ export default function AdminPanel() {
     let cancelled = false;
     supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data, error: queryError }) => {
@@ -624,6 +784,7 @@ export default function AdminPanel() {
             late_cutoff: (data.late_cutoff || SETTINGS_DEFAULTS.late_cutoff).slice(0, 5),
             det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
             match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+            autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
           });
         }
         // No row yet → keep the defaults in the form; saving will report
@@ -648,6 +809,7 @@ export default function AdminPanel() {
       late_cutoff: settingsForm.late_cutoff || SETTINGS_DEFAULTS.late_cutoff,
       det_size: Number(settingsForm.det_size),
       match_threshold: Number(settingsForm.match_threshold),
+      autorestart_ai: Boolean(settingsForm.autorestart_ai),
     };
     const { data, error: updateError } = await supabase
       .from('app_settings')
@@ -722,6 +884,12 @@ export default function AdminPanel() {
       Math.min(100, Math.ceil(Math.max(...values) + 2)),
     ];
   }, [accuracyHistory]);
+
+  // Auto-restart status for the AI tab line: prefer the live value from
+  // GET /api/ai/process; fall back to the settings row the toggle writes.
+  const autoRestartOn = aiProcDetail.autorestartEnabled != null
+    ? aiProcDetail.autorestartEnabled
+    : Boolean(settingsForm.autorestart_ai);
 
   const overviewStats = [
     { label: 'Total Users', value: profiles.length, icon: Users, variant: 's-blue', tape: 'tl' },
@@ -955,6 +1123,26 @@ export default function AdminPanel() {
                     </div>
                   </div>
                 </div>
+
+                <div className="settings-section">
+                  <h3>AI Service</h3>
+                  <div className="form-group">
+                    <label className="admin-check">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsForm.autorestart_ai)}
+                        onChange={e => setSettingsForm(f => ({ ...f, autorestart_ai: e.target.checked }))}
+                        disabled={!isAdmin || settingsSaving}
+                      />
+                      <span>Restart AI automatically after a crash</span>
+                    </label>
+                    <p className="admin-check-note">
+                      A crashed AI service is started again after 3 seconds.
+                      GPU refusals are never retried, and the server allows at
+                      most 5 restarts in any 10 minutes.
+                    </p>
+                  </div>
+                </div>
               </div>
               <p className="settings-hint">
                 Recognition settings apply the next time the AI service starts;
@@ -1075,6 +1263,29 @@ export default function AdminPanel() {
       )}
       {tab === 'ai' && isAdmin && (
         <div>
+          {/* Live AI process line (GET /api/ai/process): running state and
+              crash auto-restart status, plus the force-stop control when an
+              unsupervised AI child is holding the camera port. */}
+          <div className="card admin-card ai-process-card">
+            <span className="tape tl" />
+            <div className="ai-process-row">
+              <span className={`ai-status-indicator ${aiProcRunning ? '' : 'is-stopped'}`} />
+              <span className="ai-process-text">
+                AI process: <strong>{aiProcRunning ? 'Running' : 'Stopped'}</strong>
+              </span>
+              <span className="ai-process-status mono">
+                {`Auto-restart: ${autoRestartOn ? 'ON' : 'OFF'}${aiProcDetail.autorestartsRecent != null ? ` (${aiProcDetail.autorestartsRecent} recent)` : ''}`}
+              </span>
+              {aiProcDetail.orphan && (
+                <div className="ai-orphan-box">
+                  {aiProcDetail.note && <p className="ai-orphan-note">{aiProcDetail.note}</p>}
+                  <button className="btn btn-danger" onClick={handleForceStopOrphan} disabled={killingOrphan}>
+                    <Power size={14} /> {killingOrphan ? 'Stopping...' : 'Force stop orphaned AI'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           {modelsLoading ? (
             <div className="ai-status-grid">
               <div className="card admin-card"><div className="skeleton-line w-40" /><div className="skeleton-line w-60" /><div className="skeleton-line w-30" /></div>
@@ -1106,8 +1317,14 @@ export default function AdminPanel() {
                       </div>
                     )}
                     <div className="ai-actions">
-                      <button className="btn btn-outline" onClick={() => toast('Coming soon', 'info')}><Power size={14} /> Restart</button>
-                      <button className="btn btn-yellow" onClick={() => toast('Coming soon', 'info')}><RefreshCw size={14} /> Retrain</button>
+                      {/* Every card's Restart button drives the same single AI
+                          process; aiRestarting keeps them from double-firing. */}
+                      <button className="btn btn-outline" onClick={handleRestartAi} disabled={aiRestarting}>
+                        <Power size={14} /> {aiRestarting ? 'Restarting...' : 'Restart'}
+                      </button>
+                      <button className="btn btn-yellow" onClick={handleReenrollFaces}>
+                        <ScanFace size={14} /> Re-enroll Faces
+                      </button>
                     </div>
                   </div>
                 );

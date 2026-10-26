@@ -64,6 +64,10 @@ const SETTINGS_DEFAULTS = Object.freeze({
   late_cutoff: '08:00',
   det_size: 320,
   match_threshold: 0.40,
+  // Crash auto-restart admin toggle (migration 0010). Default ON per user
+  // decision 2026-10-21: a crashed recognizer respawns by itself unless an
+  // admin turns it off here.
+  autorestart_ai: true,
 });
 const SETTINGS_TTL_MS = 60 * 1000;
 const settingsCache = { values: { ...SETTINGS_DEFAULTS }, fetchedAt: 0 };
@@ -75,7 +79,7 @@ async function getAppSettings() {
   try {
     const { data, error } = await supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai')
       .eq('id', 1)
       .maybeSingle();
     if (error) throw error;
@@ -85,6 +89,7 @@ async function getAppSettings() {
         late_cutoff: data.late_cutoff ?? SETTINGS_DEFAULTS.late_cutoff,
         det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
         match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+        autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
       };
     }
   } catch (e) {
@@ -154,6 +159,80 @@ let aiLastError = null;
 // (must stay in sync with gpu_check.GPU_REQUIRED_MSG).
 const AI_EXIT_GPU_REQUIRED = 3;
 const GPU_REQUIRED_MSG = 'Incompatible hardware — GPU required';
+
+// ── Crash Auto-Restart State ─────────────────────────────────────────────────
+// When the Python child exits on its own (a crash), the server starts it
+// again after a short delay. Four gates decide, all checked in
+// scheduleCrashAutoRestart below: (i) the exit was not operator-driven
+// (aiIntentionalStop is latched by the stop/restart/force-kill paths and
+// consumed here), (ii) the exit code is not the GPU refusal (a respawn
+// would refuse the same way), (iii) app_settings.autorestart_ai is true
+// (default ON per user decision 2026-10-21), and (iv) the rolling-window
+// circuit breaker has room: at most AI_AUTORESTART_MAX auto-restarts in
+// any AI_AUTORESTART_WINDOW_MS.
+let aiIntentionalStop = false;   // latched before an operator-driven kill, consumed by the exit handler
+let aiRestartInProgress = false; // guards POST /api/ai/restart against concurrent restarts
+const aiAutoRestartTimes = [];   // timestamps of recent auto-restart attempts (rolling breaker window)
+const AI_AUTORESTART_DELAY_MS = 3 * 1000;
+const AI_AUTORESTART_WINDOW_MS = 10 * 60 * 1000;
+const AI_AUTORESTART_MAX = 5;
+
+// Drop breaker timestamps older than the window, then return the count that
+// still counts against the circuit breaker. GET /api/ai/process reports this
+// as autorestarts_recent so the UI can show how close the breaker is.
+function recentAutoRestartCount() {
+  const cutoff = Date.now() - AI_AUTORESTART_WINDOW_MS;
+  while (aiAutoRestartTimes.length > 0 && aiAutoRestartTimes[0] < cutoff) {
+    aiAutoRestartTimes.shift();
+  }
+  return aiAutoRestartTimes.length;
+}
+
+// Crash auto-restart: called from the AI child's exit handler for EVERY
+// exit; filters and schedules as described in the state block above. Never
+// throws: the whole body is guarded, and spawn failures are logged and
+// surfaced through aiLastError (which GET /api/ai/process reports).
+async function scheduleCrashAutoRestart(exitCode) {
+  try {
+    if (aiIntentionalStop) {
+      // Operator asked for this exit (stop/restart/force-kill): consume the
+      // latch exactly once so a genuine crash afterwards can still restart.
+      aiIntentionalStop = false;
+      console.log('[AI] Auto-restart skipped: exit was an explicit stop or restart');
+      return;
+    }
+    if (exitCode === AI_EXIT_GPU_REQUIRED) {
+      // Hardware refusal: the respawn would refuse the same way, never loop.
+      console.log('[AI] Auto-restart skipped: GPU-required exit (code 3), not retrying');
+      return;
+    }
+    const settings = await getAppSettings();
+    if (!settings.autorestart_ai) {
+      console.log('[AI] Auto-restart skipped: disabled by settings (autorestart_ai = false)');
+      return;
+    }
+    const recent = recentAutoRestartCount();
+    if (recent >= AI_AUTORESTART_MAX) {
+      aiLastError = `Auto-restart paused: circuit breaker tripped (${recent} auto-restarts in the last 10 minutes)`;
+      console.warn(`[AI] Auto-restart skipped: ${aiLastError}`);
+      return;
+    }
+    aiAutoRestartTimes.push(Date.now());
+    console.log(`[AI] Crash detected (exit code ${exitCode ?? 'unknown'}): auto-restarting in ${AI_AUTORESTART_DELAY_MS / 1000}s (attempt ${aiAutoRestartTimes.length} of ${AI_AUTORESTART_MAX} per 10-minute window)`);
+    setTimeout(() => {
+      startAiProcess(null) // no req: there is no caller to audit
+        .then(({ pid }) => {
+          console.log(`[AI] Auto-restart succeeded: new AI child pid ${pid}`);
+        })
+        .catch((e) => {
+          console.error('[AI] Auto-restart failed:', e.message);
+          if (!aiLastError) aiLastError = `Auto-restart failed: ${e.message}`;
+        });
+    }, AI_AUTORESTART_DELAY_MS);
+  } catch (e) {
+    console.error('[AI] Auto-restart scheduling failed:', e);
+  }
+}
 
 function aiPaths() {
   const aiDir = path.join(__dirname, '..', 'ai-service', 'edge');
@@ -1237,13 +1316,18 @@ app.get('/api/admin/users/list', requireAdmin, async (req, res) => {
 // If our own child is gone but port 5174 is still occupied, Python survived a
 // server restart (orphan) — report running:true with an explanatory note so
 // the UI can offer the force-kill endpoint instead of a dead "Start" button.
-app.get('/api/ai/process', requireStaff, (req, res) => {
+app.get('/api/ai/process', requireStaff, async (req, res) => {
   const running = !!(aiProcess && aiProcess.exitCode === null);
+  const settings = await getAppSettings(); // cached, fail-safe defaults
   const baseState = {
     startedAt: aiStartedAt,
     lastExitCode: aiLastExitCode,
     lastExitAt: aiLastExitAt,
     lastError: aiLastError,
+    // Crash auto-restart state: the admin toggle plus how many auto-restart
+    // attempts still count against the circuit breaker's rolling window.
+    autorestart_enabled: !!settings.autorestart_ai,
+    autorestarts_recent: recentAutoRestartCount(),
   };
   if (running) {
     return res.json({ running, orphan: false, pid: aiProcess.pid, ...baseState });
@@ -1320,96 +1404,183 @@ app.delete('/api/ai/enrolled/:name', requireAdmin, (req, res) => {
   }
 });
 
-// POST /api/ai/start — spawn the Python face-recognition service.
-app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
+// Shared spawn path for the AI child: POST /api/ai/start, POST /api/ai/restart
+// and the crash auto-restart all go through this one function, so there is a
+// single source of truth for the settings read, the spawn args, the ai.pid
+// write, the stdout/stderr GPU scan and the exit handler. `req` is optional:
+// HTTP callers pass it (the audit log needs req.actor), the auto-restart
+// passes null. Throws an Error tagged with .status (and .pid when already
+// running) so HTTP callers can reply with exactly the response shapes
+// /api/ai/start has always produced: 409 already running, 500 missing
+// venv/script. Resolves { pid, startedAt } on success.
+async function startAiProcess(req) {
   if (aiProcess && aiProcess.exitCode === null) {
-    return res.status(409).json({
-      error: 'AI service already running',
-      pid: aiProcess.pid,
-    });
+    const err = new Error('AI service already running');
+    err.status = 409;
+    err.pid = aiProcess.pid;
+    throw err;
   }
+  const { aiDir, pythonExe, script } = aiPaths();
+  if (!fs.existsSync(pythonExe)) {
+    const err = new Error(`Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`);
+    err.status = 500;
+    throw err;
+  }
+  if (!fs.existsSync(script)) {
+    const err = new Error(`Script not found at ${script}`);
+    err.status = 500;
+    throw err;
+  }
+
+  // Detection size + match threshold come from the Admin Panel's settings
+  // row (cached, fail-safe defaults), so the admin tunes them without code.
+  const settings = await getAppSettings();
+  console.log(`[AI] start: det_size=${settings.det_size} threshold=${settings.match_threshold}`);
+
+  const child = spawn(pythonExe, [
+    '-u', script,
+    '--camera', '0',
+    '--det-size', String(settings.det_size),
+    '--threshold', String(settings.match_threshold),
+  ], {
+    cwd: aiDir,
+    windowsHide: false, // let the OpenCV window be visible
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      // Force UTF-8 stdout so Python doesn't crash trying to print
+      // unicode arrows / em-dashes on Windows' default cp1252 codepage.
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+    },
+  });
+
+  aiProcess = child;
+  aiStartedAt = new Date().toISOString();
+  aiLastExitCode = null;
+  aiLastExitAt = null;
+  aiLastError = null;
+
+  // Persist the child PID so the NEXT server run can recognize (and reap)
+  // this Python process if this Express process dies first (#15 zombies).
   try {
-    const { aiDir, pythonExe, script } = aiPaths();
-    if (!fs.existsSync(pythonExe)) {
-      return res.status(500).json({
-        error: `Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`,
-      });
-    }
-    if (!fs.existsSync(script)) {
-      return res.status(500).json({
-        error: `Script not found at ${script}`,
-      });
-    }
-
-    // Detection size + match threshold come from the Admin Panel's settings
-    // row (cached, fail-safe defaults) — the admin tunes them without code.
-    const settings = await getAppSettings();
-    console.log(`[AI] start: det_size=${settings.det_size} threshold=${settings.match_threshold}`);
-
-    const child = spawn(pythonExe, [
-      '-u', script,
-      '--camera', '0',
-      '--det-size', String(settings.det_size),
-      '--threshold', String(settings.match_threshold),
-    ], {
-      cwd: aiDir,
-      windowsHide: false, // let the OpenCV window be visible
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        // Force UTF-8 stdout so Python doesn't crash trying to print
-        // unicode arrows / em-dashes on Windows' default cp1252 codepage.
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONUTF8: '1',
-      },
-    });
-
-    aiProcess = child;
-    aiStartedAt = new Date().toISOString();
-    aiLastExitCode = null;
-    aiLastExitAt = null;
-    aiLastError = null;
-
-    // Persist the child PID so the NEXT server run can recognize (and reap)
-    // this Python process if this Express process dies first (#15 zombies).
-    try {
-      fs.writeFileSync(aiPaths().pidPath, String(child.pid), 'utf-8');
-    } catch (e) {
-      console.warn('[AI] Could not write ai.pid:', e.message);
-    }
-
-    child.stdout.on('data', (chunk) => {
-      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      lines.forEach((l) => {
-        console.log(`[AI:stdout] ${l}`);
-        if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
-      });
-    });
-    child.stderr.on('data', (chunk) => {
-      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      lines.forEach((l) => {
-        console.warn(`[AI:stderr] ${l}`);
-        if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
-      });
-    });
-    child.on('exit', (code, signal) => {
-      console.log(`[AI] Python child exited code=${code} signal=${signal}`);
-      aiLastExitCode = code;
-      aiLastExitAt = new Date().toISOString();
-      if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
-      if (aiProcess === child) aiProcess = null;
-      clearAiPid(); // child is gone — the recorded PID is stale now
-    });
-    child.on('error', (err) => {
-      console.error('[AI] Spawn error:', err);
-      if (aiProcess === child) aiProcess = null;
-    });
-
-    logAudit(req.actor.id, 'ai.start', null, { pid: child.pid });
-    return res.json({ success: true, pid: child.pid, startedAt: aiStartedAt });
+    fs.writeFileSync(aiPaths().pidPath, String(child.pid), 'utf-8');
   } catch (e) {
+    console.warn('[AI] Could not write ai.pid:', e.message);
+  }
+
+  child.stdout.on('data', (chunk) => {
+    const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+    lines.forEach((l) => {
+      console.log(`[AI:stdout] ${l}`);
+      if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
+    });
+  });
+  child.stderr.on('data', (chunk) => {
+    const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+    lines.forEach((l) => {
+      console.warn(`[AI:stderr] ${l}`);
+      if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
+    });
+  });
+  child.on('exit', (code, signal) => {
+    console.log(`[AI] Python child exited code=${code} signal=${signal}`);
+    aiLastExitCode = code;
+    aiLastExitAt = new Date().toISOString();
+    if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
+    if (aiProcess === child) aiProcess = null;
+    clearAiPid(); // child is gone — the recorded PID is stale now
+    // Crash auto-restart evaluates every exit; operator-driven exits are
+    // filtered out inside (see scheduleCrashAutoRestart).
+    scheduleCrashAutoRestart(code);
+  });
+  child.on('error', (err) => {
+    console.error('[AI] Spawn error:', err);
+    if (aiProcess === child) aiProcess = null;
+  });
+
+  if (req) logAudit(req.actor.id, 'ai.start', null, { pid: child.pid });
+  return { pid: child.pid, startedAt: aiStartedAt };
+}
+
+// POST /api/ai/start — spawn the Python face-recognition service.
+// The spawn itself lives in the shared startAiProcess() above, which the
+// restart endpoint and the crash auto-restart reuse.
+app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
+  try {
+    const { pid, startedAt } = await startAiProcess(req);
+    return res.json({ success: true, pid, startedAt });
+  } catch (e) {
+    // Deliberate failures carry .status: reply with the same shapes as before
+    // the shared-function refactor (409 already running, 500 missing files).
+    if (e.status) return res.status(e.status).json(e.pid ? { error: e.message, pid: e.pid } : { error: e.message });
     console.error('[AI start] failed:', e);
     return res.status(500).json({ error: e.message || 'Failed to start AI service' });
+  }
+});
+
+// Stop the supervised child and resolve once its exit handler has actually
+// run. /api/ai/stop is fire-and-forget, but the restart flow must not spawn
+// the replacement while the old child still holds the webcam and the stream
+// port, so this waits for the real exit. Latches aiIntentionalStop first so
+// the exit is never mistaken for a crash. Resolves false when nothing is
+// running or the child ignored the kill for AI_STOP_GRACE_MS.
+const AI_STOP_GRACE_MS = 10 * 1000;
+function stopAiProcessAndWait() {
+  return new Promise((resolve) => {
+    if (!aiProcess || aiProcess.exitCode !== null) return resolve(false);
+    const child = aiProcess;
+    aiIntentionalStop = true; // consumed by the exit handler
+    let settled = false;
+    const finish = (stopped) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(grace);
+      resolve(stopped);
+    };
+    const grace = setTimeout(() => finish(false), AI_STOP_GRACE_MS);
+    // The shared spawn registered its own exit handler first, so by the time
+    // this fires, aiProcess is already cleared and the pid file removed.
+    child.once('exit', () => finish(true));
+    try {
+      child.kill();
+    } catch (e) {
+      // The kill never landed: release the latch so a later crash can still
+      // auto-restart, and report failure.
+      aiIntentionalStop = false;
+      console.error('[AI] restart: stop failed:', e.message);
+      finish(false);
+    }
+  });
+}
+
+// POST /api/ai/restart — stop the running child (waiting for a real exit),
+// then start a fresh one through the shared spawn path. With no child
+// running it simply starts one: restart is an idempotent convenience.
+// Admin/teacher, like start/stop.
+app.post('/api/ai/restart', requireAdminOrTeacher, async (req, res) => {
+  if (aiRestartInProgress) {
+    return res.status(409).json({ error: 'A restart is already in progress' });
+  }
+  aiRestartInProgress = true;
+  try {
+    if (aiProcess && aiProcess.exitCode === null) {
+      const stopped = await stopAiProcessAndWait();
+      if (!stopped) {
+        return res.status(500).json({ error: 'Existing AI process did not exit; try POST /api/ai/stop or DELETE /api/ai/process' });
+      }
+    }
+    const { pid } = await startAiProcess(req);
+    logAudit(req.actor.id, 'ai.restart', null, { pid });
+    return res.json({ restarted: true, pid });
+  } catch (e) {
+    // startAiProcess tags its deliberate failures (.status), so restart
+    // answers with the same shapes start would (409 running, 500 venv).
+    if (e.status) return res.status(e.status).json(e.pid ? { error: e.message, pid: e.pid } : { error: e.message });
+    console.error('[AI restart] failed:', e);
+    return res.status(500).json({ error: e.message || 'Failed to restart AI service' });
+  } finally {
+    aiRestartInProgress = false;
   }
 });
 
@@ -1419,6 +1590,7 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
     return res.status(404).json({ error: 'AI service is not running' });
   }
   const pid = aiProcess.pid;
+  aiIntentionalStop = true; // the exit handler consumes this: an explicit stop never auto-restarts
   try {
     // On Windows, SIGTERM is mapped to a terminate; this typically works.
     // For really stuck cases the admin can fall back to the force-kill below.
@@ -1427,6 +1599,7 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
     logAudit(req.actor.id, 'ai.stop', null, { pid });
     return res.json({ success: true, pid });
   } catch (e) {
+    aiIntentionalStop = false; // kill never landed: a later crash may still auto-restart
     console.error('[AI stop] failed:', e);
     return res.status(500).json({ error: e.message || 'Failed to stop AI service' });
   }
@@ -1444,6 +1617,13 @@ app.delete('/api/ai/process', requireAdmin, (req, res) => {
       return res.status(404).json({ error: `No process found listening on port ${AI_PORT}` });
     }
     try {
+      // When the target is our own supervised child, latch the intentional
+      // stop first so its exit handler does not mistake this operator-driven
+      // kill for a crash and respawn the process the admin just killed.
+      // Orphans keep the flag untouched (no exit handler will fire for them).
+      if (aiProcess && aiProcess.exitCode === null && aiProcess.pid === portPid) {
+        aiIntentionalStop = true;
+      }
       process.kill(portPid, 'SIGTERM');
       console.log(`[AI] Force-killed PID ${portPid} holding port ${AI_PORT} (by admin ${req.actor.id})`);
       logAudit(req.actor.id, 'ai.force_kill', null, { pid: portPid, port: AI_PORT });
@@ -1918,6 +2098,7 @@ app.listen(PORT, () => {
   console.log('    GET    /api/ai/enrolled      → Face-enrollment list (staff)');
   console.log('    POST   /api/ai/start         → Start Python AI (admin/teacher)');
   console.log('    POST   /api/ai/stop          → Stop Python AI  (admin/teacher)');
+  console.log('    POST   /api/ai/restart       → Restart Python AI (admin/teacher)');
   console.log('    POST   /api/ai/enroll        → Enroll a face   (admin)');
   console.log('    POST   /api/ai/enroll/session → Start browser enroll (admin)');
   console.log('    POST   /api/ai/enroll/frame   → Browser enroll frame (admin)');
