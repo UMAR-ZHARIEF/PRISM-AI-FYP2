@@ -14,6 +14,7 @@ import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { SkeletonTable } from '../components/Skeleton';
 import Pagination from '../components/Pagination';
+import EnrollmentCamera from '../components/EnrollmentCamera';
 import './AdminPanel.css';
 
 const PER_PAGE = 8;
@@ -77,7 +78,15 @@ export default function AdminPanel() {
   // Face enrollment state (admin-only panel)
   const [enrollStudentId, setEnrollStudentId] = useState('');
   const [enrolling, setEnrolling] = useState(false);
-  const [enrollStatus, setEnrollStatus] = useState(null);
+  // Active browser-camera enrollment session (null when idle):
+  // { sessionId, studentName, requiredCaptures }. Set once
+  // POST /api/ai/enroll/session succeeds; the EnrollmentCamera
+  // component rendered in the card takes over from there.
+  const [enrollSession, setEnrollSession] = useState(null);
+  // Inline reason a session could not start (no consent, session
+  // already active, GPU offline, helper down). Toasted and shown
+  // under the picker.
+  const [enrollNotice, setEnrollNotice] = useState(null);
   // Lets the per-card "Register Face" buttons scroll the operator up to the
   // enrollment card after preselecting the student in its picker.
   const enrollCardRef = useRef(null);
@@ -538,33 +547,49 @@ export default function AdminPanel() {
     }
     const target = studentList.find(s => s.id === enrollStudentId);
     setEnrolling(true);
-    setEnrollStatus('Python is opening the camera. Look at the camera and stay still for ~5 seconds. The window will close when capture is complete.');
+    setEnrollNotice(null);
     try {
-      const res = await fetch('/api/ai/enroll', {
+      const res = await fetch('/api/ai/enroll/session', {
         method: 'POST',
         headers: apiHeaders(),
         body: JSON.stringify({ student_id: enrollStudentId }),
       });
       if (!res.ok) {
-        const msg = await parseApiError(res);
+        const msg = await enrollErrorMessage(res);
         toast(msg, 'error', 5000);
-        setEnrollStatus(null);
+        setEnrollNotice(msg);
         setEnrolling(false);
         return;
       }
       const body = await res.json().catch(() => ({}));
-      toast(body.message || `Enrolled ${target?.full_name || 'student'}`, 'success');
-      setEnrollStatus(null);
+      setEnrollSession({
+        sessionId: body.session_id,
+        studentName: body.student_name || target?.full_name || 'student',
+        requiredCaptures: body.required_captures || 5,
+      });
       setEnrolling(false);
-      // Refresh the enrolled set so the just-enrolled student flips to
-      // "Registered" in the grid without waiting for the 30s poll.
-      refreshEnrolledFaces();
     } catch (err) {
-      console.error('enroll failed', err);
-      toast('Could not reach the server. Is the API running?', 'error');
-      setEnrollStatus(null);
+      console.error('enroll session failed', err);
+      const msg = 'Could not reach the server. Is the API running?';
+      toast(msg, 'error');
+      setEnrollNotice(msg);
       setEnrolling(false);
     }
+  };
+
+  // The camera component finished a full capture set: the server has
+  // already replaced the stored face, so refresh the enrolled set and
+  // return the card to its idle picker state.
+  const handleEnrollSuccess = (message) => {
+    setEnrollSession(null);
+    setEnrollNotice(null);
+    toast(message || `Enrolled ${enrollSession?.studentName || 'student'}.`, 'success', 5000);
+    refreshEnrolledFaces();
+  };
+
+  const handleEnrollCancel = () => {
+    setEnrollSession(null);
+    toast('Enrollment cancelled.', 'info');
   };
 
   const classColorMap = { Bestari: 'b', Bijak: 'r', Cerdik: 'g', Cerdas: 'o', Pandai: 'y' };
@@ -1143,16 +1168,16 @@ export default function AdminPanel() {
                   </div>
                   <p className="face-enroll-blurb">
                     Pick a student, then click <strong>Start Enrollment</strong>.
-                    A Python window will open the camera and capture five
-                    frames. Keep the student facing the camera and still until
-                    the window closes.
+                    Your browser opens the camera and captures five frames.
+                    Keep the student facing the camera and still until the
+                    captures finish.
                   </p>
                   <div className="face-enroll-row">
                     <select
                       className="face-enroll-select"
                       value={enrollStudentId}
                       onChange={e => setEnrollStudentId(e.target.value)}
-                      disabled={enrolling}
+                      disabled={enrolling || Boolean(enrollSession)}
                     >
                       <option value="">— Pick a student —</option>
                       {studentList
@@ -1168,15 +1193,24 @@ export default function AdminPanel() {
                     <button
                       className="btn btn-green"
                       onClick={handleStartEnrollment}
-                      disabled={enrolling || !enrollStudentId}
+                      disabled={enrolling || !enrollStudentId || Boolean(enrollSession)}
                     >
-                      <Camera size={16} /> {enrolling ? 'Enrolling…' : 'Start Enrollment'}
+                      <Camera size={16} /> {enrolling ? 'Starting…' : 'Start Enrollment'}
                     </button>
                   </div>
-                  {enrollStatus && (
+                  {enrollNotice && !enrollSession && (
                     <div className="face-enroll-status">
-                      <ScanFace size={18} /> {enrollStatus}
+                      <ScanFace size={18} /> {enrollNotice}
                     </div>
+                  )}
+                  {enrollSession && (
+                    <EnrollmentCamera
+                      sessionId={enrollSession.sessionId}
+                      studentName={enrollSession.studentName}
+                      requiredCaptures={enrollSession.requiredCaptures}
+                      onSuccess={handleEnrollSuccess}
+                      onCancel={handleEnrollCancel}
+                    />
                   )}
                 </div>
               )}
