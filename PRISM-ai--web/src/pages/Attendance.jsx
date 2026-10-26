@@ -2,7 +2,7 @@ import { useState, useMemo, useContext } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Check, X, Clock, ClipboardCheck, Users, ChevronRight } from 'lucide-react';
 import { classColors } from '../data/mockData';
-import { YearContext } from '../layouts/DashboardLayout';
+import { YearContext } from '../layouts/dashboardContexts';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
 import { SkeletonCard } from '../components/Skeleton';

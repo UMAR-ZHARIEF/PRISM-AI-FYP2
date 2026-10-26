@@ -45,6 +45,8 @@ export function ToastProvider({ children }) {
   );
 }
 
+// Dev-only HMR rule: moving useToast into its own file would churn many importers late in the round, so the suppression is deliberate.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast() {
   return useContext(ToastContext);
 }

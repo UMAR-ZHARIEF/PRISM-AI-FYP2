@@ -70,7 +70,7 @@ export default function AdminPanel() {
   const [formRole, setFormRole] = useState('teacher');
   const [formPhone, setFormPhone] = useState('');
   const [formAvatarUrl, setFormAvatarUrl] = useState('');
-  const [formClass, setFormClass] = useState('');
+  const [, setFormClass] = useState(''); // formClass value is unused; only the setter resets the field
   const [formErrors, setFormErrors] = useState({});
   const [formSubmitting, setFormSubmitting] = useState(false);
 
@@ -293,8 +293,8 @@ export default function AdminPanel() {
     setUserPage(1);
   };
 
-  // Sort indicator
-  const SortIcon = ({ col }) => {
+  // Sort indicator (plain render function, not a component, so it is not recreated during render)
+  const renderSortIcon = (col) => {
     if (sortCol !== col) return null;
     return sortDir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
@@ -502,7 +502,8 @@ export default function AdminPanel() {
   // class sections from Supabase (P7) — groups with no students are skipped.
   const getProgressData = () => {
     const filteredYears = faceYearFilter === 'all' ? years.map(y => y.year_num) : [Number(faceYearFilter)];
-    const filteredClasses = faceClassFilter === 'all' ? classSections.map(c => c.name) : [faceClassFilter];
+    // class_sections holds one row per section, so class names repeat across years; dedupe them.
+    const filteredClasses = faceClassFilter === 'all' ? [...new Set(classSections.map(c => c.name))] : [faceClassFilter];
     const groups = [];
     filteredYears.forEach(y => {
       filteredClasses.forEach(c => {
@@ -989,8 +990,8 @@ export default function AdminPanel() {
             <table>
               <thead>
                 <tr>
-                  <th className="sortable" onClick={() => handleSort('full_name')}>User <SortIcon col="full_name" /></th>
-                  <th className="sortable" onClick={() => handleSort('role')}>Role <SortIcon col="role" /></th>
+                  <th className="sortable" onClick={() => handleSort('full_name')}>User {renderSortIcon('full_name')}</th>
+                  <th className="sortable" onClick={() => handleSort('role')}>Role {renderSortIcon('role')}</th>
                   <th>Phone</th>
                   <th>Email</th>
                   {isAdmin && <th>Actions</th>}

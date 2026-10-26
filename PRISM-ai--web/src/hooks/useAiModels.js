@@ -13,11 +13,20 @@ function useAiModels() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
 
-  useEffect(function fetchAiModels() {
-    let cancelled = false;
+  // Reset the fetch state during render whenever isAdmin changes, instead of
+  // inside the effect (per react-hooks/set-state-in-effect). Mount is already
+  // covered by the initial state (loading starts true, error/denied start
+  // falsy), matching the old effect-start resets.
+  const [fetchKey, setFetchKey] = useState({ isAdmin });
+  if (fetchKey.isAdmin !== isAdmin) {
+    setFetchKey({ isAdmin });
     setLoading(true);
     setError(null);
     setDenied(false);
+  }
+
+  useEffect(function fetchAiModels() {
+    let cancelled = false;
 
     supabase
       .from('ai_models')

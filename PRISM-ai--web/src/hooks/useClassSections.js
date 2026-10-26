@@ -6,10 +6,20 @@ function useClassSections({ year } = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(function fetchClassSections() {
-    let cancelled = false;
+  // Reset the fetch state during render whenever year changes, instead of
+  // inside the effect (per react-hooks/set-state-in-effect). Mount is already
+  // covered by the initial state (loading starts true, error starts null),
+  // matching the old effect-start resets. classSections is deliberately left
+  // stale until the new query resolves, exactly as before.
+  const [fetchKey, setFetchKey] = useState({ year });
+  if (fetchKey.year !== year) {
+    setFetchKey({ year });
     setLoading(true);
     setError(null);
+  }
+
+  useEffect(function fetchClassSections() {
+    let cancelled = false;
 
     let query = supabase
       .from('class_sections')

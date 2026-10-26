@@ -6,10 +6,20 @@ function useAuditLogs({ limit = 100, actorId } = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(function fetchAuditLogs() {
-    let cancelled = false;
+  // Reset the fetch state during render whenever limit/actorId change,
+  // instead of inside the effect (per react-hooks/set-state-in-effect).
+  // Mount is already covered by the initial state (loading starts true, error
+  // starts null), matching the old effect-start resets. logs is deliberately
+  // left stale until the new query resolves, exactly as before.
+  const [fetchKey, setFetchKey] = useState({ limit, actorId });
+  if (fetchKey.limit !== limit || fetchKey.actorId !== actorId) {
+    setFetchKey({ limit, actorId });
     setLoading(true);
     setError(null);
+  }
+
+  useEffect(function fetchAuditLogs() {
+    let cancelled = false;
 
     let query = supabase
       .from('audit_logs')

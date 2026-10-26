@@ -6,10 +6,19 @@ function useSchoolEvents({ fromDate, toDate } = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(function fetchSchoolEvents() {
-    let cancelled = false;
+  // Re-enter the loading state synchronously whenever the date range
+  // changes, during render instead of inside the effect (per
+  // react-hooks/set-state-in-effect), so the spinner-while-refetching
+  // behaviour stays identical to the old effect-body reset.
+  const [fetchKey, setFetchKey] = useState({ fromDate, toDate });
+  if (fetchKey.fromDate !== fromDate || fetchKey.toDate !== toDate) {
+    setFetchKey({ fromDate, toDate });
     setLoading(true);
     setError(null);
+  }
+
+  useEffect(function fetchSchoolEvents() {
+    let cancelled = false;
 
     let query = supabase
       .from('school_events')

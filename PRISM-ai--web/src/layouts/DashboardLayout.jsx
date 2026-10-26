@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
@@ -7,16 +7,8 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
 import useNotifications from '../hooks/useNotifications';
+import { YearContext, ScopeContext } from './dashboardContexts';
 import './DashboardLayout.css';
-
-export const YearContext = createContext();
-export const useYear = () => useContext(YearContext);
-
-// Shared view scope ("My Classes" vs "All School"). Lives at the layout level
-// so the teacher's choice survives navigation between Dashboard, Reports and
-// Compare Classes. Defaults: 'mine' for teachers, 'all' for admins.
-export const ScopeContext = createContext();
-export const useScope = () => useContext(ScopeContext);
 
 const sidebarSections = [
   {
