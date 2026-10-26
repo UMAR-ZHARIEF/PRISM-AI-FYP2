@@ -13,7 +13,7 @@ If you do not agree, do not use PRISM-AI. You may close the account at any time 
 PRISM-AI accounts are issued by the school. Only the following people may use the system:
 
 - **Administrators** appointed by the school principal.
-- **Teachers and assistants** employed by the school.
+- **Teachers** employed by the school.
 - **Parents or legal guardians** of enrolled pupils.
 
 **Children do not have their own accounts.** Parents access information on the child's behalf. This is required by Malaysian law because children below 18 cannot give legally binding consent on their own [Contracts Act 1950, Sections 10-11; Age of Majority Act 1971].

@@ -2,7 +2,7 @@
 
 **Version 1.0.0 — Effective from 19 May 2026**
 
-This notice is for all teachers, administrators, and assistants who use PRISM-AI. It explains your duties when handling pupil and parent data.
+This notice is for all teachers and administrators who use PRISM-AI. It explains your duties when handling pupil and parent data.
 
 ---
 
@@ -68,7 +68,7 @@ When you leave the school's employment:
 If you are unsure whether something is allowed:
 
 - **Ask first**, do not act first.
-- **DPO email**: *(school to fill in)*
+- **DPO email**: forprojectdump@gmail.com (Director of PRISM-AI)
 - **School admin**: *(school to fill in)*
 
 ---
@@ -77,7 +77,7 @@ If you are unsure whether something is allowed:
 
 **Versi 1.0.0 — Berkuat kuasa dari 19 Mei 2026**
 
-Notis ini adalah untuk semua guru, pentadbir, dan pembantu yang menggunakan PRISM-AI. Ia menjelaskan tugas anda apabila mengendalikan data murid dan ibu bapa.
+Notis ini adalah untuk semua guru dan pentadbir yang menggunakan PRISM-AI. Ia menjelaskan tugas anda apabila mengendalikan data murid dan ibu bapa.
 
 ---
 
@@ -143,5 +143,5 @@ Apabila anda meninggalkan pekerjaan sekolah:
 Jika anda tidak pasti sama ada sesuatu dibenarkan:
 
 - **Tanya dahulu**, jangan bertindak dahulu.
-- **E-mel DPO**: *(untuk diisi oleh sekolah)*
+- **E-mel DPO**: forprojectdump@gmail.com (Director of PRISM-AI)
 - **Pentadbir sekolah**: *(untuk diisi oleh sekolah)*
