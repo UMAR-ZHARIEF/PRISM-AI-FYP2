@@ -1,6 +1,7 @@
 import './ProtectedRoute.css';
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
+import { X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './Toast';
 import LegalGate from './LegalGate';
@@ -21,6 +22,7 @@ export default function ProtectedRoute({ children, requireRole }) {
   } = useAuth();
   const addToast = useToast();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Once we've decided to bounce the user out, flip this so the render
   // returns <Navigate />. We delay 2s after the toast appears.
@@ -90,7 +92,7 @@ export default function ProtectedRoute({ children, requireRole }) {
     if (roleDeniedRef.current) return;
     roleDeniedRef.current = true;
     if (addToast) {
-      addToast("You don't have access to that page.", 'error', 4000);
+      addToast('That area is not available for your role.', 'error', 4000);
     }
   }, [session, profile, loading, requireRole, addToast]);
 
@@ -124,5 +126,35 @@ export default function ProtectedRoute({ children, requireRole }) {
     }
   }
 
-  return <LegalGate>{children}</LegalGate>;
+  // Login.jsx appends ?denied=1 when it bounces a signed-in user off a saved
+  // destination their role can't view. While the flag is present we show a
+  // small dismissible notice above the destination page, so the redirect
+  // lands with an explanation instead of a silent swap. Dismissal just
+  // clears the flag from the URL.
+  const roleDeniedNotice = searchParams.get('denied') === '1';
+
+  function dismissRoleDeniedNotice() {
+    const next = new URLSearchParams(searchParams);
+    next.delete('denied');
+    setSearchParams(next, { replace: true });
+  }
+
+  return (
+    <>
+      {roleDeniedNotice && (
+        <div className="role-denied-notice" role="status">
+          <span>That area is not available for your role.</span>
+          <button
+            type="button"
+            className="role-denied-notice-close"
+            onClick={dismissRoleDeniedNotice}
+            aria-label="Dismiss notice"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      <LegalGate>{children}</LegalGate>
+    </>
+  );
 }

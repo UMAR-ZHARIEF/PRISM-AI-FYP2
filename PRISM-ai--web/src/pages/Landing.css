@@ -489,3 +489,16 @@
   .footer-container { grid-template-columns: 1fr; gap: 32px; }
   .features-list { grid-template-columns: 1fr; }
 }
+
+/* D17 (phone): give the hero breathing room. The 56px display-type floor
+   makes headline words run nearly to the right edge and pushes the CTA
+   onto the viewport fold on phones, so scale the headline to the viewport,
+   widen the hero side margins, and trim the deck spacing so the buttons
+   sit clear of the fold. Nav padding moves with the hero so the logo and
+   the headline share one left edge. */
+@media (max-width: 480px) {
+  .hero { padding: 44px 36px 96px; }
+  .nav-container { padding: 0 36px; }
+  .hero-headline { font-size: clamp(38px, 11vw, 56px); margin-bottom: 20px; }
+  .hero-deck { font-size: 18px; margin-bottom: 28px; }
+}

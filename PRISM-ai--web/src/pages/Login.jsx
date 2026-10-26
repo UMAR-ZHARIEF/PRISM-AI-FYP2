@@ -63,7 +63,13 @@ export default function Login() {
     if (!session || !profile) return;
     const home = ROLE_HOME[profile.role];
     if (!home) return;
-    navigate(destinationForRole(fromPathname, profile.role), { replace: true });
+    const destination = destinationForRole(fromPathname, profile.role);
+    // A saved destination that this role can't view means the user was just
+    // bounced off a route (e.g. teacher -> /dashboard/admin). Land with
+    // ?denied=1 so the destination's ProtectedRoute can show the
+    // "not available for your role" notice instead of a silent swap.
+    const bounced = fromPathname != null && destination !== fromPathname;
+    navigate(destination + (bounced ? '?denied=1' : ''), { replace: true });
   }, [session, profile, navigate, fromPathname]);
 
   const handleSubmit = async (e) => {

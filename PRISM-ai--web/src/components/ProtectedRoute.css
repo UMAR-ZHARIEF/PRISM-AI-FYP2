@@ -10,3 +10,32 @@
   font-size: 1.5rem;
   letter-spacing: 0.02em;
 }
+
+/* Role-block notice: shown above the destination page while ?denied=1 is in
+   the URL (set by Login when it bounces a user off a route their role can't
+   view). Paper/ink, same family as the toast + loading card. */
+.role-denied-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 1216px;
+  margin: 16px auto 0;
+  padding: 10px 18px;
+  border: 3px solid var(--ink, #1F1A12);
+  background: var(--paper-light, #FAF6EE);
+  box-shadow: 4px 4px 0 rgba(31, 26, 18, 0.18);
+  font-family: 'Patrick Hand', cursive;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  color: var(--ink, #1F1A12);
+}
+.role-denied-notice-close {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  color: var(--ink, #1F1A12);
+  background: none;
+  flex-shrink: 0;
+}
+.role-denied-notice-close:hover { color: var(--red, #E04A3F); }
