@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { RefreshCw, Activity } from 'lucide-react';
 import useEngagement, { computeEngagementStats } from '../hooks/useEngagement';
+import useEngagementRisk, { computeRiskStats } from '../hooks/useEngagementRisk';
 import { SkeletonCard, SkeletonTable } from '../components/Skeleton';
 import './Engagement.css';
 
@@ -31,13 +33,56 @@ const EMOTION_TONES = {
 
 const AVA_COLORS = ['r', 'y', 'g', 'o', 'k'];
 
+// First two initials of a name, for avatar circles. Shared by the table and
+// the risk heatmap so both spell the concept one way.
+function initialsFor(name) {
+  return String(name).split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('').toUpperCase();
+}
+
+// One heatmap group per class label, tiles inside sorted by risk score
+// descending (students without a score sink to the end of their class).
+function groupRiskByClass(rows) {
+  const groups = new Map();
+  rows.forEach(function place(r) {
+    const label = r.className || 'No class';
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(r);
+  });
+  return Array.from(groups.entries())
+    .map(function toGroup(entry) {
+      return {
+        className: entry[0],
+        students: [...entry[1]].sort(function byScoreDesc(a, b) {
+          const sa = typeof a.score === 'number' ? a.score : -1;
+          const sb = typeof b.score === 'number' ? b.score : -1;
+          return sb - sa;
+        }),
+      };
+    })
+    .sort(function byClassLabel(a, b) {
+      return a.className.localeCompare(b.className, undefined, { sensitivity: 'base' });
+    });
+}
+
 export default function Engagement() {
   const [date, setDate] = useState(() => isoDate(new Date()));
   const today = useMemo(() => isoDate(new Date()), []);
   const { summaries, loading, error, refresh } = useEngagement(date);
+  const { risks, loading: riskLoading, error: riskError, refresh: refreshRisk } = useEngagementRisk(date);
 
   const stats = computeEngagementStats(summaries);
   const tone = toneForPct(stats.attentiveAvg);
+  const riskStats = computeRiskStats(risks);
+  const riskGroups = useMemo(function buildRiskGroups() {
+    return groupRiskByClass(risks);
+  }, [risks]);
+
+  // One handler refreshes both fetches; the date picker drives both because
+  // they share the same date state.
+  function refreshAll() {
+    refresh();
+    refreshRisk();
+  }
 
   const sorted = useMemo(function sortByName() {
     return [...summaries].sort(function byName(a, b) {
@@ -69,7 +114,7 @@ export default function Engagement() {
               onChange={e => setDate(e.target.value || today)}
             />
           </label>
-          <button type="button" className="btn btn-outline" onClick={refresh} disabled={loading}>
+          <button type="button" className="btn btn-outline" onClick={refreshAll} disabled={loading || riskLoading}>
             <RefreshCw size={16} /> Refresh
           </button>
         </div>
@@ -142,6 +187,65 @@ export default function Engagement() {
             </div>
           </div>
 
+          {/* RISK OVERVIEW: BAND CHIPS + CLASS HEATMAP */}
+          {!riskError && (
+            <div className="card section-gap risk-overview-card">
+              <span className="tape bl" />
+              <div className="card-header">
+                <h2>Risk Overview</h2>
+                <span className="tag-mono">{date}</span>
+              </div>
+              {riskLoading ? (
+                <SkeletonCard />
+              ) : (
+                <>
+                  <div className="risk-chips">
+                    <span className="risk-chip band-low">
+                      <span className="risk-chip-label">Low</span>
+                      <span className="risk-chip-count mono">{riskStats.lowCount}</span>
+                    </span>
+                    <span className="risk-chip band-watch">
+                      <span className="risk-chip-label">Watch</span>
+                      <span className="risk-chip-count mono">{riskStats.watchCount}</span>
+                    </span>
+                    <span className="risk-chip band-high">
+                      <span className="risk-chip-label">High</span>
+                      <span className="risk-chip-count mono">{riskStats.highCount}</span>
+                    </span>
+                  </div>
+                  {risks.length === 0 ? (
+                    <div className="empty-state">Not enough engagement history yet.</div>
+                  ) : (
+                    <div className="risk-board">
+                      {riskGroups.map(group => (
+                        <div className="risk-class-group" key={group.className}>
+                          <span className="eyebrow risk-class-label">{group.className}</span>
+                          <div className="risk-tiles">
+                            {group.students.map((r, i) => (
+                              <Link
+                                key={r.id}
+                                to={`/dashboard/students/${r.id}`}
+                                className={`risk-tile band-${r.band}`}
+                              >
+                                <span className={`avatar ${AVA_COLORS[i % AVA_COLORS.length]} risk-tile-avatar`}>
+                                  {initialsFor(r.name)}
+                                </span>
+                                <span className="risk-tile-name">{r.name}</span>
+                                <span className="risk-tile-score mono">
+                                  {typeof r.score === 'number' ? r.score : 'n/a'}
+                                </span>
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
           {/* PER-STUDENT TABLE */}
           <div className="card section-gap engagement-table-card">
             <span className="tape bl" />
@@ -167,14 +271,13 @@ export default function Engagement() {
                 <tbody>
                   {sorted.map((s, i) => {
                     const avatarColor = AVA_COLORS[i % AVA_COLORS.length];
-                    const initials = s.name.split(' ').filter(Boolean).map(n => n[0]).slice(0, 2).join('').toUpperCase();
                     const emotionKey = (s.dominantEmotion || '').toLowerCase();
                     const emotionTone = EMOTION_TONES[emotionKey] || 'k';
                     return (
                       <tr key={s.id}>
                         <td>
                           <div className="eng-student-cell">
-                            <div className={`avatar ${avatarColor}`}>{initials}</div>
+                            <div className={`avatar ${avatarColor}`}>{initialsFor(s.name)}</div>
                             <span className="eng-student-name">{s.name}</span>
                           </div>
                         </td>

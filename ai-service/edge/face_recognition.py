@@ -548,6 +548,139 @@ API_URL = "http://localhost:3001/api/attendance"
 AI_BRIDGE_KEY = os.environ.get('AI_BRIDGE_KEY', '')
 SEND_INTERVAL = 10  # Send data every 10 seconds
 
+# ── 60-second sustained-absence rule ─────────────────────────────────────────
+# Project decision: a recognized student whose face disappears for 60
+# continuous seconds is sampled as NOT ENGAGED while they are absent (the
+# note-taking rule: a student may look away from the camera for a minute to
+# write, and that stretch must still land in the engagement record instead of
+# silently vanishing between detections). The edge service remembers the last
+# known state of every matched identity and, once an identity has been gone
+# for ABSENCE_SYNTHETIC_THRESHOLD seconds, appends one synthetic 'no_face'
+# detection per absent identity per dashboard tick. These rows carry
+# engagement_only: true, so the server skips them for attendance but still
+# counts them for engagement.
+ABSENCE_SYNTHETIC_THRESHOLD = 60.0  # seconds of continuous absence before rows emit
+# Sanity bound: a payload never carries more than this many synthetic rows.
+# The map below is roster-bounded, so hitting the cap means something unusual
+# (camera covered, whole class away); one giant payload should not be built
+# from that. Longest-absent identities fill the budget first.
+ABSENCE_MAX_ROWS = 30
+
+# The 10 emotion labels the engine can emit (see FALLBACK_EMOTION_CLASSES),
+# compared lowercased ('neutral' is lowercase in the checkpoint). A
+# detection's emotion is remembered as an absent identity's last known
+# emotion only when it is one of these labels; anything else counts as "no
+# emotion this pass" and never overwrites a good stored label.
+VALID_EMOTION_LABELS = {c.strip().lower() for c in FALLBACK_EMOTION_CLASSES}
+
+# Session-lifetime "last seen" map for the sustained-absence rule.
+# Key: student_uuid when the enrollment record has one, else the matched name
+# string ("Name (Class)"). Value: last_seen_monotonic plus the last known
+# display name, class and emotion. Bounded by the roster size: at most one
+# entry per enrolled identity that was ever matched this session, never one
+# per detection or per frame. Written only by the AI worker thread; the
+# display thread reads a copied snapshot when it builds the payload.
+_absence_lock = threading.Lock()
+_last_seen_map = {}  # identity_key -> last-seen entry dict (see note_identity_seen)
+
+
+def split_display_name(full_name):
+    """Split a matched name "Name (Class)" into (student_name, student_class).
+
+    Single copy of the parsing the dashboard payload has always used, so live
+    rows and synthetic absence rows spell name and class identically.
+    """
+    student_name = full_name
+    student_class = "Bestari"
+    if "(" in full_name and ")" in full_name:
+        student_name = full_name.split("(")[0].strip()
+        student_class = full_name.split("(")[1].replace(")", "").strip()
+    return student_name, student_class
+
+
+def note_identity_seen(full_name, student_uuid, emotion, now_monotonic=None):
+    """Record that a recognized identity was just matched (absence map).
+
+    Called once per matched identity on each AI pass. This single update is
+    the whole reset mechanism of the 60-second rule: while a face keeps
+    matching, last_seen keeps moving and no synthetic row can fire; the
+    moment matching stops, last_seen stops moving and the absence starts
+    aging. `emotion` is stored only when it is one of the 10 valid labels,
+    so an unclassified pass never erases the last known emotion.
+    """
+    if now_monotonic is None:
+        now_monotonic = time.monotonic()
+    identity_key = student_uuid if student_uuid else full_name
+    student_name, student_class = split_display_name(full_name)
+    last_emotion = emotion if (
+        emotion and str(emotion).strip().lower() in VALID_EMOTION_LABELS
+    ) else None
+    with _absence_lock:
+        entry = _last_seen_map.get(identity_key)
+        if entry is None:
+            # Roster-bounded: one entry per enrolled identity ever matched.
+            _last_seen_map[identity_key] = {
+                "last_seen_monotonic": now_monotonic,
+                "student_name": student_name,
+                "last_class": student_class,
+                "last_emotion": last_emotion,
+                "student_uuid": student_uuid,
+            }
+        else:
+            entry["last_seen_monotonic"] = now_monotonic
+            if last_emotion is not None:
+                entry["last_emotion"] = last_emotion
+
+
+def build_absent_rows(seen_snapshot, now_monotonic,
+                      absence_threshold=ABSENCE_SYNTHETIC_THRESHOLD,
+                      max_rows=ABSENCE_MAX_ROWS):
+    """Build synthetic 'no_face' rows for identities absent long enough.
+
+    Pure function over a caller-provided snapshot of the last-seen map
+    (copied entries, never the live map) so the 60-second rule is testable
+    without a camera or threads. An identity earns one row per dashboard tick
+    once now_monotonic - last_seen_monotonic >= absence_threshold; an
+    identity never matched this session is not in the map and can never be
+    emitted.
+
+    Rows are payload-only: they are appended to the dashboard payload and
+    never to annotation_cache, so an absent identity can never appear in the
+    live overlay or the MJPEG stream. emotion falls back to 'Neutral'
+    because the database CHECK constraint requires one of the 10 labels.
+    """
+    rows = []
+    # Longest-absent first, so when the sanity cap bites it drops the
+    # identities that were seen most recently.
+    ordered = sorted(seen_snapshot.items(),
+                     key=lambda kv: kv[1]["last_seen_monotonic"])
+    for identity_key, info in ordered:
+        if now_monotonic - info["last_seen_monotonic"] < absence_threshold:
+            continue
+        emotion = info.get("last_emotion")
+        if not emotion or str(emotion).strip().lower() not in VALID_EMOTION_LABELS:
+            emotion = "Neutral"
+        rows.append({
+            "student_name": info.get("student_name") or identity_key,
+            "student_class": info.get("last_class"),
+            "student_uuid": info.get("student_uuid"),
+            # No face is on camera, so there is no fresh similarity score.
+            "similarity_score": None,
+            # Attendance is decided by the server, which skips engagement_only
+            # rows entirely; the value only keeps the row shape uniform.
+            "status": "Present",
+            "emotion": emotion,
+            "engagement_state": "no_face",
+            "emotion_confidence": None,
+            # The flag the server keys on: skip for attendance, count for
+            # engagement as a sustained-absence sample.
+            "engagement_only": True,
+        })
+        if len(rows) >= max_rows:
+            break
+    return rows
+
+
 def send_to_dashboard(recognized_list):
     """Send recognized student data to the local web dashboard."""
     payload = {
@@ -702,6 +835,16 @@ def ai_worker_loop(app_holder, emotion_engine, db_holder, threshold, stop_event)
                 entry["emotion"] = emotion
                 entry["emotion_confidence"] = conf
                 entry["engagement_state"] = engagement_state_for(emotion)
+
+        # ── 60-second sustained-absence map update ──
+        # Every identity matched THIS pass refreshes its last_seen timestamp,
+        # which is what both arms of the rule hang on: a face that keeps
+        # matching never ages out, and a face that stops matching starts
+        # aging immediately. No separate reset state is needed.
+        for entry in results:
+            if entry["name"] != UNKNOWN_LABEL:
+                note_identity_seen(entry["name"], entry.get("student_uuid"),
+                                   entry.get("emotion"))
 
         # ── Publish the new cache snapshot ──
         with _cache_lock:
@@ -923,13 +1066,9 @@ def run_recognition(args):
                 recognized_students = []
                 for r in results:
                     if r["name"] != UNKNOWN_LABEL:
-                        # Parse name and class from "Name (Class)" format
-                        full_name = r["name"]
-                        student_name = full_name
-                        student_class = "Bestari"
-                        if "(" in full_name and ")" in full_name:
-                            student_name = full_name.split("(")[0].strip()
-                            student_class = full_name.split("(")[1].replace(")", "").strip()
+                        # Name and class from "Name (Class)" format via the
+                        # same helper the synthetic absence rows use.
+                        student_name, student_class = split_display_name(r["name"])
 
                         emotion_conf = r.get("emotion_confidence")
                         recognized_students.append({
@@ -952,8 +1091,19 @@ def run_recognition(args):
                             ),
                         })
 
-                if recognized_students:
-                    send_to_dashboard(recognized_students)
+                # ── 60-second sustained-absence rows (payload-only) ──
+                # Snapshot the last-seen map under its lock (entries copied),
+                # then let the pure builder decide who has been gone for
+                # ABSENCE_SYNTHETIC_THRESHOLD continuous seconds. These rows
+                # never touch annotation_cache, so the display overlay and
+                # the MJPEG stream cannot show absent identities.
+                with _absence_lock:
+                    seen_snapshot = {k: dict(v) for k, v in _last_seen_map.items()}
+                absent_rows = build_absent_rows(seen_snapshot, time.monotonic())
+
+                payload_rows = recognized_students + absent_rows
+                if payload_rows:
+                    send_to_dashboard(payload_rows)
                 last_send_time = time.time()
 
             # ── FPS Calculation ──

@@ -474,6 +474,70 @@
 .notif-success { background: var(--green);   color: var(--paper-light); }
 .notif-success > svg, .notif-success small { color: var(--paper-light); }
 
+/* ---------- Engagement watchlist (GET /api/engagement/risk, today) ---------- */
+.watchlist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.watchlist-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--paper);
+  clip-path: var(--cut-3);
+  text-decoration: none;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.watchlist-row:nth-child(odd)  { transform: rotate(-0.5deg); }
+.watchlist-row:nth-child(even) { transform: rotate(0.4deg); }
+.watchlist-row:hover {
+  transform: translateY(-2px) rotate(0deg);
+  background: var(--paper-deep);
+}
+.watchlist-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.watchlist-class {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.watchlist-score {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--paper-light);
+  padding: 2px 10px;
+  clip-path: var(--cut-pill);
+}
+.watchlist .badge {
+  flex-shrink: 0;
+  font-size: 13px;
+  padding: 2px 10px;
+}
+.watchlist-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 0;
+}
+
 /* ---------- Recharts polish (local) ---------- */
 .dashboard-page .recharts-text { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; }
 
