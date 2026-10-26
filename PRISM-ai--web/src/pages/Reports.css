@@ -307,11 +307,28 @@
 .reports-page .card.list-card {
   position: relative;
   border: 2px solid var(--ink);
-  clip-path: var(--cut-3);
+  /* Height-proof variant of var(--cut-3): the global token is percentage
+     based, so on a tall panel its corner cuts scale with the card and slice
+     straight through the title. These pixel-bounded cuts keep the same
+     scissor-edge look at any height. */
+  clip-path: polygon(
+    0 20px,
+    20px 0,
+    calc(100% - 70px) 6px,
+    100% 30px,
+    calc(100% - 8px) calc(100% - 22px),
+    calc(100% - 26px) 100%,
+    12px calc(100% - 14px),
+    0 calc(100% - 26px)
+  );
   box-shadow: var(--shadow-paper);
   padding: 24px 22px 20px;
   overflow: visible;
 }
+
+/* Summary panels size to their own content; never stretch to the twin
+   column (grid default align-items: stretch caused the huge empty panel). */
+.report-list-grid { align-items: start; }
 
 .reports-page .card.list-attention {
   background: #FBE4E1; /* terracotta tinted paper */
