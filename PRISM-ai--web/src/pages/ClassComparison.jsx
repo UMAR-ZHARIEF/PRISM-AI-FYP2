@@ -25,6 +25,19 @@ function toLocalISODate(d) {
   return `${y}-${m}-${day}`;
 }
 
+// Perceived luminance (Rec. 601) of a #rrggbb color. Class colors like
+// Pandai yellow (#F2C744) or Cerdas orange (#EA8534) cannot carry pale-cream
+// text; those get ink text instead.
+function isLightHex(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
+}
+
 // Custom recharts tooltip, shared by both comparison charts. Declared at
 // module scope so it is not recreated (and does not reset) during render.
 function ClassTooltip({ active, payload, label }) {
@@ -181,15 +194,29 @@ export default function ClassComparison() {
     return age;
   };
 
-  /* ── Attendance rate bar data (last 30 days). Shared utility counts late
-     as attended; a null rate (no records) just renders no bar. ── */
+  /* ── Attendance rate bar data (last 30 days) — HONEST per-class rate.
+     Rule: every student enrolled in the class is expected present or late on
+     every school day the class has records for (a day with at least one
+     record for the class), and UNMARKED student-days count as ABSENT. So
+     rate = (present + late records) / (enrolled students × those school
+     days): 6 present of 91 enrolled on one day is 6/91 = 6.6% -> 7%, never
+     100%. A null rate (no enrolled students or no records) just renders no
+     bar. ── */
   const attendanceRateData = useMemo(() => {
     return activeClasses.map(cls => {
       const recs = recordsBySection.get(cls.id) || [];
-      const { rate } = attendanceRate(recs);
-      return { name: cls.name, rate: rate != null ? Math.round(rate) : null };
+      const enrolled = (studentsBySection.get(cls.id) || []).length;
+      const days = new Set(recs.map(r => r.date).filter(Boolean)).size;
+      // Numerator still comes from the shared utility, which counts late as
+      // attended. The denominator never drops below the marks actually taken,
+      // so marks whose student rows are missing from the enrollment list
+      // cannot push a rate past 100%.
+      const { present, late } = attendanceRate(recs);
+      const attended = present + late;
+      const denom = Math.max(enrolled * days, attended);
+      return { name: cls.name, rate: denom > 0 ? Math.round((attended / denom) * 100) : null };
     });
-  }, [activeClasses, recordsBySection]);
+  }, [activeClasses, studentsBySection, recordsBySection]);
 
   /* ── Today's attendance counts per class ── */
   const todayData = useMemo(() => {
@@ -229,8 +256,20 @@ export default function ClassComparison() {
       const present = todayRecs.filter(r => r.status === 'present').length;
       const absent = todayRecs.filter(r => r.status === 'absent').length;
       const late = todayRecs.filter(r => r.status === 'late').length;
-      // Shared utility formula ((present + late) / total); null = no records.
-      const { rate: avgRate } = attendanceRate(allRecs);
+      // HONEST attendance rate over the last 30 days, same rule as the bar
+      // chart above: UNMARKED students count as ABSENT — (present + late
+      // records) / (enrolled students × school days with records for the
+      // class). 6 of 91 enrolled = 6.6% -> 7%, never 100%. null (no enrolled
+      // students or no records) renders as an em dash in the rate column.
+      const enrolledCount = classStudents.length;
+      const schoolDaysCount = new Set(allRecs.map(r => r.date).filter(Boolean)).size;
+      const { present: presentMarks, late: lateMarks } = attendanceRate(allRecs);
+      const attendedMarks = presentMarks + lateMarks;
+      // Denominator never drops below the marks actually taken, so marks
+      // whose student rows are missing from the enrollment list cannot push
+      // a rate past 100%.
+      const rateDenom = Math.max(enrolledCount * schoolDaysCount, attendedMarks);
+      const avgRate = rateDenom > 0 ? Math.round((attendedMarks / rateDenom) * 100) : null;
       const ages = classStudents.map(s => ageFromDob(s.dob)).filter(a => a != null);
       const avgAge = ages.length > 0
         ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length * 10) / 10
@@ -367,11 +406,14 @@ export default function ClassComparison() {
                       style={{
                         '--tag-color': cc,
                         '--tag-bg': checked ? cc : 'var(--paper-light)',
-                        '--tag-text': checked ? '#FAF1DA' : cc,
+                        // Unselected tags always carry ink text: class colors
+                        // like yellow/orange are unreadable on the beige paper
+                        // (WCAG ~1.4:1). A small color dot keeps the identity.
+                        '--tag-text': checked ? (isLightHex(cc) ? 'var(--ink)' : 'var(--paper-light)') : 'var(--ink)',
                       }}
                       onClick={() => toggleClass(cls.id)}
                     >
-                      {checked && <Check size={14} />}
+                      {checked ? <Check size={14} /> : <span className="comparison-tag-dot" aria-hidden="true" />}
                       {cls.name}{yearNum == null ? ` · Y${cls.year_num}` : ''}
                     </button>
                   );
@@ -427,6 +469,11 @@ export default function ClassComparison() {
             <div className="chart-head">
               <h2><BarChart3 size={22} /> Attendance Rate Comparison</h2>
             </div>
+            {/* recharts silently renders axes with NO bars when every rate is
+                null (no records) — say so instead of drawing an empty chart. */}
+            {attendanceRateData.every(d => d.rate == null) ? (
+              <div className="comparison-empty">No attendance records in the last 30 days.</div>
+            ) : (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={attendanceRateData} barCategoryGap="20%">
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
@@ -440,6 +487,7 @@ export default function ClassComparison() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            )}
           </div>
 
           {/* ── TODAY'S ATTENDANCE STACKED BAR ── */}
@@ -448,6 +496,11 @@ export default function ClassComparison() {
             <div className="chart-head">
               <h2>Today's Attendance Breakdown</h2>
             </div>
+            {/* recharts 3.8 bug (#6235): an ALL-ZERO stacked bar chart renders
+                axes + legend but no bars at all. Guard with an honest note. */}
+            {todayData.every(d => d.Present + d.Absent + d.Late === 0) ? (
+              <div className="comparison-empty">No attendance taken today.</div>
+            ) : (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={todayData} barCategoryGap="20%">
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
@@ -460,6 +513,7 @@ export default function ClassComparison() {
                 <Bar dataKey="Absent" stackId="a" fill="#E04A3F" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            )}
           </div>
 
           {/* ── DEMOGRAPHICS ── */}

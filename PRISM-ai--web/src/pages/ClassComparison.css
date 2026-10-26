@@ -179,6 +179,18 @@
 .comparison-class-tag.is-checked svg {
   color: inherit;
 }
+
+/* Color swatch on UNSELECTED tags: the tag text is ink for contrast, the
+   dot keeps the class-color identity (ink-bordered so even the yellow
+   swatch reads on beige paper). */
+.comparison-tag-dot {
+  width: 11px;
+  height: 11px;
+  background: var(--tag-color);
+  border: 2px solid var(--ink);
+  clip-path: polygon(0 14%, 100% 0, 92% 100%, 6% 88%);
+  flex-shrink: 0;
+}
 .comparison-quick-btns {
   display: flex;
   gap: 8px;
@@ -236,6 +248,18 @@
 .comparison-chart-card.tilt-l { transform: rotate(-0.6deg); }
 .comparison-chart-card.tilt-r { transform: rotate(0.6deg); }
 .comparison-chart-card:hover  { transform: rotate(0); transition: transform 0.25s ease; }
+
+/* Honest empty state for the comparison charts (keeps the 300px chart
+   height so the card does not jump when data arrives). */
+.comparison-empty {
+  font-family: var(--accent);
+  font-size: 20px;
+  color: var(--ink);
+  opacity: 0.7;
+  text-align: center;
+  padding: 118px 12px;
+  height: 300px;
+}
 
 .comparison-chart-card .chart-head h2 {
   display: flex;
