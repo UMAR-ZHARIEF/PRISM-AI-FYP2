@@ -830,3 +830,43 @@
     flex: 1;
   }
 }
+
+/* ============================================================
+   ENGAGEMENT: risk band chip + disengagement trend chart
+   Data comes from the Express bridge (useStudentEngagementTrend);
+   the strip itself stays shared with Engagement.css.
+   ============================================================ */
+
+/* Band chip: one little colored paper tag next to the At-risk flag.
+   The parent <span> in eng-strip-meta supplies the accent-font label. */
+.eng-strip-meta .eng-risk-chip {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 2px 10px;
+  clip-path: var(--cut-pill);
+  vertical-align: 2px;
+}
+.eng-risk-chip.low  { background: var(--green);  color: var(--paper-light); }
+.eng-risk-chip.watch { background: var(--yellow); color: var(--ink); }
+.eng-risk-chip.high { background: var(--red);    color: var(--paper-light); }
+
+/* The bridge's trigger_reason sentence, small, directly under the meta row. */
+.eng-risk-reason {
+  margin: 8px 0 0;
+  font-family: var(--body);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+/* Disengagement trend chart under the 30-day strip. Tick/tooltip type stays
+   monospace via the global .recharts-text override in index.css; tabular
+   numerals keep the axis digits from jittering as the tooltip moves. */
+.eng-trend-chart {
+  margin-top: 18px;
+  font-variant-numeric: tabular-nums;
+}

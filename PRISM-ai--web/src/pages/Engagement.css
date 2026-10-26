@@ -127,6 +127,97 @@
   color: var(--ink-faint);
 }
 
+/* === RISK OVERVIEW: CHIPS + CLASS HEATMAP ================= */
+/* Tints are the palette colors (--green #4FA764, --yellow #F2C744,
+   --red #E04A3F) laid over paper, like the rgba hovers in Reports.css. */
+.risk-chips {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.risk-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 18px 10px;
+  border: 3px solid var(--ink);
+  box-shadow: var(--shadow-paper);
+  transform: rotate(-1deg);
+}
+.risk-chip.band-low  { background: rgba(79, 167, 100, 0.26); }
+.risk-chip.band-watch { background: rgba(242, 199, 68, 0.36); }
+.risk-chip.band-high { background: rgba(224, 74, 63, 0.24); }
+.risk-chip-label {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 21px;
+  color: var(--ink);
+}
+/* Counts render in Fraunces; .mono only marks the numeric figure. */
+.risk-chip-count {
+  font-family: var(--display);
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.risk-board {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.risk-class-label {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--ink-soft);
+}
+.risk-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.risk-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 8px;
+  border: 3px solid var(--ink);
+  background: var(--paper-light);
+  box-shadow: var(--shadow-paper);
+  color: var(--ink);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.risk-tile:hover {
+  transform: translate(-2px, -2px) rotate(-0.5deg);
+  box-shadow: 0 8px 0 rgba(31, 26, 18, 0.12);
+  color: var(--ink);
+}
+.risk-tile.band-low  { background: rgba(79, 167, 100, 0.18); }
+.risk-tile.band-watch { background: rgba(242, 199, 68, 0.30); }
+.risk-tile.band-high { background: rgba(224, 74, 63, 0.18); }
+.risk-tile-avatar {
+  width: 34px;
+  height: 34px;
+  font-size: 13px;
+  flex-shrink: 0;
+  clip-path: none;
+  border-radius: 50%;
+  transform: none;
+}
+.risk-tile-name {
+  font-family: var(--body);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.risk-tile-score {
+  margin-left: 4px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
 /* === TABLE ================================================= */
 .engagement-table-card { overflow: visible; }
 .eng-student-cell {

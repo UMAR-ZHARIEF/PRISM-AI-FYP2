@@ -49,6 +49,44 @@ function timeAgo(iso) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+// First non-empty string among the alias keys (watchlist rows).
+function pickFirstStr(row, keys) {
+  for (const key of keys) {
+    const raw = row[key];
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  }
+  return null;
+}
+
+// First numeric-ish value among the alias keys (watchlist rows); tolerates
+// "78%"-style strings the same way useEngagement's row reading does.
+function pickFirstNum(row, keys) {
+  for (const key of keys) {
+    const raw = row[key];
+    if (raw == null) continue;
+    const n = Number(String(raw).replace('%', '').trim());
+    if (!Number.isNaN(n)) return n;
+  }
+  return null;
+}
+
+// One /api/engagement/risk row -> { id, name, className, score, band },
+// snake/camel tolerant like useEngagement. Rows without a student id are
+// dropped: the card links to the profile by id, so an id-less row can only
+// render a dead link.
+function normalizeWatchRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = row.student_id ?? row.studentId ?? row.id;
+  if (id == null) return null;
+  return {
+    id: String(id),
+    name: pickFirstStr(row, ['full_name', 'name', 'student_name', 'studentName']) || 'Unknown student',
+    className: pickFirstStr(row, ['class', 'class_name', 'className', 'class_section']),
+    score: pickFirstNum(row, ['risk_score', 'riskScore', 'score']),
+    band: String(pickFirstStr(row, ['risk_band', 'riskBand', 'band']) || '').toLowerCase(),
+  };
+}
+
 export default function Dashboard() {
   const [search, setSearch] = useState('');
   const [filterClass, setFilterClass] = useState('all');
@@ -118,6 +156,15 @@ export default function Dashboard() {
   // Today's emotion-engine summary — powers the compact engagement card below
   // (green >70%, yellow 40-70%, red <40% class attentive average).
   const { summaries: engagementSummaries, loading: engagementLoading } = useEngagement(today);
+
+  // ── Engagement watchlist state (GET /api/engagement/risk, today) ──
+  // Local fetch + state on purpose: the shared risk hook belongs to the
+  // Engagement page (sibling package), and this card needs one unscoped read
+  // for today. Failure is silent: the card shows a quiet note, never an error
+  // banner on the dashboard.
+  const [watchlistRows, setWatchlistRows] = useState([]);
+  const [watchlistLoading, setWatchlistLoading] = useState(true);
+  const [watchlistError, setWatchlistError] = useState(null);
   const engagementStats = computeEngagementStats(engagementSummaries);
   const engagementTone = engagementStats.attentiveAvg == null ? ''
     : engagementStats.attentiveAvg > 70 ? 'g'
@@ -171,9 +218,58 @@ export default function Dashboard() {
   // ---------- View scope (My Classes vs All School) -----------------------
   // Admins always see all-school data; teachers (the only other role) default
   // to their homeroom(s) and can opt in to all-school via a toggle.
-  const { profile, user } = useAuth();
+  const { profile, user, session, loading: authLoading } = useAuth();
+  const watchToken = session?.access_token;
   const role = profile?.role;
   const isTeacher = role === 'teacher';
+
+  // Watchlist fetch: held until the auth session is known so the card never
+  // renders a false "unavailable" from a pre-session 401 (same rule the
+  // engagement hooks follow).
+  useEffect(function fetchWatchlist() {
+    if (authLoading) return undefined;
+
+    let cancelled = false;
+
+    async function load() {
+      setWatchlistLoading(true);
+      setWatchlistError(null);
+      try {
+        const res = await fetch(`/api/engagement/risk?date=${encodeURIComponent(today)}`, {
+          headers: watchToken ? { Authorization: `Bearer ${watchToken}` } : {},
+        });
+        if (!res.ok) throw new Error(`GET /api/engagement/risk responded ${res.status}`);
+        const body = await res.json();
+        if (cancelled) return;
+        const list = Array.isArray(body)
+          ? body
+          : ((body && (body.rows || body.data || body.summaries || body.students)) || []);
+        setWatchlistRows(list.map(normalizeWatchRow).filter(Boolean));
+        setWatchlistError(null);
+        setWatchlistLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('Dashboard: /api/engagement/risk fetch failed', err);
+        setWatchlistRows([]);
+        setWatchlistError(err);
+        setWatchlistLoading(false);
+      }
+    }
+
+    load();
+
+    return function cleanup() {
+      cancelled = true;
+    };
+  }, [authLoading, today, watchToken]);
+
+  // Up to five watch/high students, worst score first (null scores sort last).
+  const watchlist = useMemo(function rankWatchlist() {
+    return watchlistRows
+      .filter(function flagged(r) { return r.band === 'watch' || r.band === 'high'; })
+      .sort(function byScoreDesc(a, b) { return (b.score ?? -1) - (a.score ?? -1); })
+      .slice(0, 5);
+  }, [watchlistRows]);
 
   // null == "no client-side filter" (admin / non-teacher).
   // [] (empty array) == teacher with no homeroom assignment.
@@ -810,6 +906,40 @@ export default function Dashboard() {
                 )}
                 <Link to="/dashboard/engagement" className="eng-overview-link">View details</Link>
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* ENGAGEMENT WATCHLIST: today's risk model output, worst first.
+            Rows link straight to the student profile. */}
+        <div className="card tilt-r">
+          <span className="tape bl" />
+          <div className="card-header">
+            <h2>Watchlist</h2>
+            <AlertTriangle size={18} aria-hidden="true" />
+          </div>
+          {watchlistLoading ? (
+            <div className="watchlist-skeleton">
+              <div className="skeleton-line w-60" />
+              <div className="skeleton-line w-40" />
+              <div className="skeleton-line w-60" />
+            </div>
+          ) : watchlistError ? (
+            <p className="eng-overview-empty">Watchlist unavailable.</p>
+          ) : watchlist.length === 0 ? (
+            <p className="eng-overview-empty">No students at risk.</p>
+          ) : (
+            <div className="watchlist">
+              {watchlist.map((w) => (
+                <Link key={w.id} to={`/dashboard/students/${w.id}`} className="watchlist-row">
+                  <span className="watchlist-name">{w.name}</span>
+                  {w.className && <span className="watchlist-class mono">{w.className}</span>}
+                  {w.score != null && <span className="watchlist-score mono">{w.score}</span>}
+                  <span className={`badge ${w.band === 'high' ? 'badge-absent' : 'badge-yellow'}`}>
+                    {w.band === 'high' ? 'High' : 'Watch'}
+                  </span>
+                </Link>
+              ))}
             </div>
           )}
         </div>

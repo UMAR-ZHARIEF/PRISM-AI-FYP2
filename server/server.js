@@ -654,6 +654,165 @@ async function aggregateEngagementForStudent(studentId, dateStr) {
   }
 }
 
+// ── Rolling risk scoring (fire-and-forget) ──────────────────────────────────
+// Where the same-day summary answers "how did today go", the risk score
+// answers "where is this student heading": a two-week rolling view over
+// engagement_summaries, rebuilt on every tick right after the day
+// summary, that teachers read on the dashboard risk panel
+// (GET /api/engagement/risk, GET /api/engagement/trends).
+
+// Lookback window: the target date + the 13 days before it. The fewer
+// than 3 available days the data cannot support a trend, so the score
+// stays null until then (low band, reason text says why).
+const RISK_WINDOW_DAYS = 14;
+const RISK_MIN_DAYS = 3;
+// Band cutoffs. The 60 high cutoff is the same line the same-day
+// summary uses (engagement_at_risk_threshold defaults to 0.60 in the
+// 0008 migration), so "at risk today" and "high risk trend" mean the
+// same intensity of disengagement.
+const RISK_BAND_HIGH = 60;
+const RISK_BAND_WATCH = 35;
+
+// Pure math, no DB: build the risk columns from one student's ascending
+// engagement_summaries rows inside the window (days WITH data only).
+// Kept separate from the queries so the trends endpoint can reuse it
+// for its compute-on-demand path. *_pct inputs are 0-1 fractions, the
+// engagement_summaries storage scale.
+function computeRiskStats(windowRows) {
+  const n = windowRows.length;
+  if (n < RISK_MIN_DAYS) {
+    return {
+      rolling: null,
+      recent: null,
+      slope: null,
+      risk_score: null,
+      risk_band: 'low',
+      trigger_reason: `Not enough history yet (${n} day(s))`,
+    };
+  }
+
+  const mean = (arr) => arr.reduce((sum, v) => sum + v, 0) / arr.length;
+  const rolling = mean(windowRows.map((r) => Number(r.disengaged_pct) || 0));
+  const recent = mean(windowRows.slice(-3).map((r) => Number(r.disengaged_pct) || 0));
+
+  // Ordinary least squares slope of disengaged_pct against the day
+  // index (0, 1, 2, ...) over the available days: fraction per day.
+  const yMean = rolling;
+  const xMean = (n - 1) / 2;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    const y = Number(windowRows[i].disengaged_pct) || 0;
+    num += (i - xMean) * (y - yMean);
+    den += (i - xMean) * (i - xMean);
+  }
+  const slope = den === 0 ? 0 : num / den;
+
+  const level = 0.55 * rolling + 0.35 * recent;
+  const trendFactor = Math.max(-1, Math.min(1, slope * 10));
+  const riskScore = Math.round(Math.min(100, Math.max(0, level * 100 + 25 * trendFactor)));
+  const riskBand = riskScore >= RISK_BAND_HIGH ? 'high' : riskScore >= RISK_BAND_WATCH ? 'watch' : 'low';
+
+  const trendWord = slope > 0.005 ? 'worsening' : slope < -0.005 ? 'improving' : 'flat';
+  // Fractions -> human text: whole-number percents, slope in
+  // percentage points per day with 1 decimal.
+  const slopeText = (Math.round(slope * 1000) / 10).toFixed(1);
+  const triggerReason = `Two-week average ${Math.round(rolling * 100)}%, recent three days ${Math.round(recent * 100)}%, trend ${trendWord} (slope ${slopeText} points/day)`;
+
+  return {
+    rolling,
+    recent,
+    slope,
+    risk_score: riskScore,
+    risk_band: riskBand,
+    trigger_reason: triggerReason,
+  };
+}
+
+// Read one student's window, compute the stats and upsert today's row.
+// Returns the stats; throws on DB failure so each caller decides how to
+// degrade (the tick chain logs, the lazy loop skips, trends reports).
+async function computeRiskForStudent(studentId, dateStr) {
+  const start = new Date(`${dateStr}T00:00:00`);
+  start.setDate(start.getDate() - (RISK_WINDOW_DAYS - 1));
+
+  const { data: windowRows, error } = await supabase
+    .from('engagement_summaries')
+    .select('date, disengaged_pct')
+    .eq('student_id', studentId)
+    .gte('date', localDateStr(start))
+    .lte('date', dateStr)
+    .order('date', { ascending: true });
+  if (error) throw new Error(`risk window query failed: ${error.message}`);
+
+  const stats = computeRiskStats(windowRows || []);
+
+  const { error: upErr } = await supabase
+    .from('engagement_risk_scores')
+    .upsert({
+      student_id: studentId,
+      date: dateStr,
+      window_days: RISK_WINDOW_DAYS,
+      rolling_disengaged: stats.rolling,
+      recent_disengaged: stats.recent,
+      trend_slope: stats.slope,
+      risk_score: stats.risk_score,
+      risk_band: stats.risk_band,
+      trigger_reason: stats.trigger_reason,
+      computed_at: new Date().toISOString(),
+    }, { onConflict: 'student_id,date,window_days' });
+  if (upErr) throw new Error(`risk upsert failed: ${upErr.message}`);
+
+  return stats;
+}
+
+// Rolling risk score + the cross-day trend alert. Called from the bridge
+// tick chain right after aggregateEngagementForStudent, so it inherits
+// the same fire-and-forget discipline: it runs inside its own try/catch,
+// every failure logs, and nothing it does can reach the attendance
+// response.
+async function updateRiskScore(studentId, dateStr) {
+  try {
+    if (!supabase) return;
+    const stats = await computeRiskForStudent(studentId, dateStr);
+
+    // The alert marks the DAY the trend first crosses the high line: a
+    // watch -> high flip fires once, a high -> high day stays silent.
+    if (stats.risk_band !== 'high') return;
+    const { data: prior } = await supabase
+      .from('engagement_risk_scores')
+      .select('risk_band')
+      .eq('student_id', studentId)
+      .lt('date', dateStr)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (prior && prior.risk_band === 'high') return;
+
+    // Recipient is the homeroom teacher ONLY, never an admin copy
+    // (explicit user decision 2026-10-21).
+    const { data: student } = await supabase
+      .from('students')
+      .select('full_name, class_section:class_sections(homeroom_teacher_id)')
+      .eq('id', studentId)
+      .maybeSingle();
+    const teacherId = student?.class_section?.homeroom_teacher_id || null;
+    if (!teacherId) return; // no homeroom teacher on the section: skip silently
+
+    const name = student?.full_name || 'A student';
+    const { error: nErr } = await supabase.from('notifications').insert({
+      recipient_id: teacherId,
+      scope: 'user',
+      type: 'engagement',
+      title: `${name} at-risk trend`,
+      body: `${stats.trigger_reason}. Their two-week engagement trend has crossed the high-risk line.`,
+    });
+    if (nErr) console.warn('[risk] trend notification failed:', nErr.message);
+  } catch (e) {
+    console.error('[risk] updateRiskScore threw:', e);
+  }
+}
+
 // Sample one payload's emotion-carrying detections into engagement_records,
 // then aggregate every sampled student for the date. One record per student
 // per tick (a duplicated face match in the same payload must not double-
@@ -685,6 +844,10 @@ async function persistEngagementBatch(detections, classroomId, dateStr) {
     console.log(`[engagement] sampled ${sampled.size} student(s) for ${dateStr}`);
     for (const sid of sampled.keys()) {
       await aggregateEngagementForStudent(sid, dateStr);
+      // Rolling two-week risk + the cross-day trend alert, rebuilt on
+      // the same data the summary just landed. Fire-and-forget like the
+      // aggregation step: updateRiskScore catches everything itself.
+      await updateRiskScore(sid, dateStr);
     }
   } catch (e) {
     console.error('[engagement] batch persistence threw:', e);
@@ -747,6 +910,14 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
 
   for (const det of detections) {
     const studentKey = det.student_name;
+
+    // Synthetic engagement-only rows (engagement_only: true, emitted by
+    // the Python edge's 60-second absence rule) are NOT real camera
+    // sightings: they must never mark attendance or push a live-feed
+    // row. The engagement sampler below still reads them (their
+    // engagement_state 'no_face' is a real sample), so the skip lives
+    // ONLY in this attendance pass.
+    if (det.engagement_only === true) continue;
 
     // Skip if already marked present today
     if (presentToday.has(studentKey)) continue;
@@ -1044,6 +1215,224 @@ app.get('/api/engagement/summary', requireStaff, async (req, res) => {
     return res.json(summaries);
   } catch (e) {
     console.error('[engagement] summary endpoint threw:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/engagement/risk?date=YYYY-MM-DD: one day's rolling two-week
+// risk scores per student (computed by updateRiskScore in the tick
+// chain). Staff-only. Same service-key + teacher_class_ids + JS filter
+// scoping as /api/engagement/summary: the server queries with the
+// service key, so RLS cannot scope the rows. If no risk rows exist for
+// the date yet, they are built lazily for every student that has an
+// engagement summary that day: sequential, one student at a time, each
+// failure logged and skipped so one bad student cannot block a class.
+app.get('/api/engagement/risk', requireStaff, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  const dateStr = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : null;
+  if (req.query.date && !dateStr) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  }
+  const day = dateStr || localDateStr(new Date());
+
+  try {
+    const { data: existing, error: exErr } = await supabase
+      .from('engagement_risk_scores')
+      .select('id')
+      .eq('date', day)
+      .limit(1);
+    if (exErr) {
+      console.error('[risk] probe query failed:', exErr.message);
+      return res.status(500).json({ error: 'Failed to load risk scores' });
+    }
+
+    if (!existing || existing.length === 0) {
+      // First read of the day: score every student with an engagement
+      // summary for the date. Bounded by that day's roster, sequential
+      // by design (one query per student), failures skipped.
+      const { data: summaries, error: sumErr } = await supabase
+        .from('engagement_summaries')
+        .select('student_id')
+        .eq('date', day);
+      if (sumErr) {
+        console.error('[risk] summary lookup failed:', sumErr.message);
+        return res.status(500).json({ error: 'Failed to load engagement summaries' });
+      }
+      const studentIds = [...new Set((summaries || []).map((s) => s.student_id))];
+      for (const sid of studentIds) {
+        try {
+          await computeRiskForStudent(sid, day);
+        } catch (e) {
+          console.error(`[risk] lazy compute failed for ${sid}:`, e.message);
+        }
+      }
+    }
+
+    const { data: rows, error } = await supabase
+      .from('engagement_risk_scores')
+      .select('student_id, risk_score, risk_band, rolling_disengaged, recent_disengaged, trend_slope, student:students(full_name, class_section_id, class_section:class_sections(name))')
+      .eq('date', day);
+    if (error) {
+      console.error('[risk] query failed:', error.message);
+      return res.status(500).json({ error: 'Failed to load risk scores' });
+    }
+
+    let list = rows || [];
+
+    if (req.actor.role === 'teacher') {
+      // Service-key query: resolve the sections this teacher may see,
+      // then scope manually (RLS is bypassed by the service key).
+      const { data: classIds, error: tcErr } = await supabase
+        .rpc('teacher_class_ids', { uid: req.actor.id });
+      if (tcErr) {
+        console.error('[risk] teacher_class_ids failed:', tcErr.message);
+        return res.status(500).json({ error: 'Failed to resolve teacher classes' });
+      }
+      const ids = (Array.isArray(classIds) ? classIds : []).filter(Boolean);
+      if (ids.length === 0) return res.json([]); // teacher with no sections
+      list = list.filter((r) => ids.includes(r.student?.class_section_id));
+    }
+
+    // days_of_data is not a stored column: count the student's
+    // engagement summaries inside the same 14-day window (one grouped
+    // query for the whole response). A count failure only degrades this
+    // one field, so it logs instead of failing the endpoint.
+    const winStart = new Date(`${day}T00:00:00`);
+    winStart.setDate(winStart.getDate() - (RISK_WINDOW_DAYS - 1));
+    const { data: winRows, error: winErr } = await supabase
+      .from('engagement_summaries')
+      .select('student_id')
+      .gte('date', localDateStr(winStart))
+      .lte('date', day);
+    const dayCounts = new Map();
+    if (winErr) {
+      console.error('[risk] window count failed:', winErr.message);
+    } else {
+      for (const r of winRows || []) {
+        dayCounts.set(r.student_id, (dayCounts.get(r.student_id) || 0) + 1);
+      }
+    }
+
+    const out = list.map((row) => ({
+      student_id: row.student_id,
+      student_name: row.student?.full_name || null,
+      class_name: row.student?.class_section?.name || null,
+      risk_score: row.risk_score, // null while history is under 3 days
+      risk_band: row.risk_band,
+      // Response boundary: the DB stores 0-1 fractions and a
+      // fraction-per-day slope; the UI gets 0-100 integers and
+      // percentage points per day (same conversion as the summary
+      // endpoint, where a missing fraction reads as 0).
+      rolling_disengaged: Math.round((Number(row.rolling_disengaged) || 0) * 100),
+      recent_disengaged: Math.round((Number(row.recent_disengaged) || 0) * 100),
+      trend_slope: Math.round((Number(row.trend_slope) || 0) * 1000) / 10,
+      days_of_data: dayCounts.get(row.student_id) || 0,
+    }));
+    return res.json(out);
+  } catch (e) {
+    console.error('[risk] endpoint threw:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/engagement/trends?student_id=&days=30: one student's daily
+// disengagement line plus their latest risk verdict. Staff-only;
+// teachers only their own students (403 otherwise), admins unrestricted.
+app.get('/api/engagement/trends', requireStaff, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  const studentId = typeof req.query.student_id === 'string' ? req.query.student_id.trim() : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentId)) {
+    return res.status(400).json({ error: 'student_id must be a UUID' });
+  }
+
+  // days is clamped into 1..90 so a bad client cannot pull an
+  // unbounded history dump.
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
+
+  try {
+    if (req.actor.role === 'teacher') {
+      // Service key bypasses RLS, so the membership check the database
+      // would enforce on a teacher client is done by hand here.
+      const { data: classIds, error: tcErr } = await supabase
+        .rpc('teacher_class_ids', { uid: req.actor.id });
+      if (tcErr) {
+        console.error('[trends] teacher_class_ids failed:', tcErr.message);
+        return res.status(500).json({ error: 'Failed to resolve teacher classes' });
+      }
+      const ids = (Array.isArray(classIds) ? classIds : []).filter(Boolean);
+      const { data: stu, error: sErr } = await supabase
+        .from('students')
+        .select('class_section_id')
+        .eq('id', studentId)
+        .maybeSingle();
+      if (sErr) {
+        console.error('[trends] student lookup failed:', sErr.message);
+        return res.status(500).json({ error: 'Failed to load student' });
+      }
+      if (!stu || !ids.includes(stu.class_section_id)) {
+        return res.status(403).json({ error: 'Student not in your classes' });
+      }
+    }
+
+    const today = localDateStr(new Date());
+    const start = new Date(`${today}T00:00:00`);
+    start.setDate(start.getDate() - (days - 1));
+
+    const { data: rows, error } = await supabase
+      .from('engagement_summaries')
+      .select('date, disengaged_pct, at_risk')
+      .eq('student_id', studentId)
+      .gte('date', localDateStr(start))
+      .lte('date', today)
+      .order('date', { ascending: true });
+    if (error) {
+      console.error('[trends] summaries query failed:', error.message);
+      return res.status(500).json({ error: 'Failed to load engagement summaries' });
+    }
+
+    // Latest verdict: the most recent stored risk row wins. A student
+    // with no risk row at all (new to the pipeline) gets today's
+    // computed on demand so the panel is never blank while they are
+    // actively being sampled. No alert side effects here: the alert
+    // belongs to the tick chain only.
+    const { data: latestRow } = await supabase
+      .from('engagement_risk_scores')
+      .select('risk_score, risk_band, trigger_reason')
+      .eq('student_id', studentId)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let latest = latestRow || null;
+    if (!latest) {
+      try {
+        latest = await computeRiskForStudent(studentId, today);
+      } catch (e) {
+        console.error('[trends] on-demand risk compute failed:', e.message);
+      }
+    }
+
+    return res.json({
+      days: (rows || []).map((r) => ({
+        date: r.date,
+        // 0-1 fraction in the DB, 0-100 integer on the wire (same
+        // boundary conversion as the summary endpoint).
+        disengaged_pct: Math.round((Number(r.disengaged_pct) || 0) * 100),
+        at_risk: r.at_risk,
+      })),
+      latest: latest
+        ? {
+            risk_score: latest.risk_score,
+            risk_band: latest.risk_band,
+            trigger_reason: latest.trigger_reason,
+          }
+        : null,
+    });
+  } catch (e) {
+    console.error('[trends] endpoint threw:', e);
     return res.status(500).json({ error: 'Server error' });
   }
 });
@@ -2089,6 +2478,8 @@ app.listen(PORT, () => {
   console.log('    GET  /api/attendance         → All live data');
   console.log('    POST /api/attendance         → AI sends data');
   console.log('    GET  /api/engagement/summary → Day engagement summaries (staff)');
+  console.log('    GET  /api/engagement/risk    → Rolling risk scores (staff)');
+  console.log('    GET  /api/engagement/trends  → Student risk trends (staff)');
   console.log('    POST   /api/admin/users      → Invite user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
