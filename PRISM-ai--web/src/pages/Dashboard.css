@@ -13,33 +13,41 @@
 
 /* ---------- Page header ---------- */
 .dashboard-page .page-header {
-  align-items: flex-end;
-  margin-bottom: 28px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 .dashboard-page .page-header > div:first-child {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 .dashboard-page .page-header .eyebrow {
-  font-size: 22px;
-  margin-bottom: 4px;
+  font-size: 20px;
+  margin-bottom: 2px;
 }
 .dashboard-page .page-header h1 {
   font-family: var(--display);
   font-weight: 900;
-  font-size: clamp(40px, 5vw, 64px);
-  line-height: 0.95;
+  font-size: clamp(32px, 3.8vw, 46px);
+  line-height: 1.05;
   letter-spacing: -0.025em;
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 .dashboard-page .page-subtitle {
   font-family: var(--accent);
   font-weight: 700;
-  font-size: 22px;
+  font-size: 18px;
   color: var(--ink-soft);
-  margin: 4px 0 0;
-  transform: rotate(-1deg);
+  margin: 2px 0 0;
+  transform: rotate(-0.5deg);
   display: inline-block;
 }
 
@@ -47,6 +55,7 @@
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 /* ---------- Scope toggle (teachers: My Classes / All School) ---------- */
@@ -99,11 +108,12 @@
 }
 
 /* ---------- Layout helpers ---------- */
-.section-gap { margin-bottom: 32px; }
+.section-gap { margin-bottom: 28px; }
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 28px;
+  align-items: start;
 }
 
 /* ---------- Stat cards (tape decoration) ---------- */
@@ -129,9 +139,9 @@
 /* ---------- Card universals ---------- */
 .dashboard-page .card {
   background: var(--paper-light);
-  clip-path: var(--cut-2);
+  clip-path: polygon(0 14px, 14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px));
   box-shadow: var(--shadow-paper);
-  padding: 28px 28px 24px;
+  padding: 24px 26px 22px;
   position: relative;
   overflow: visible;
   transition: transform 0.3s cubic-bezier(0.2, 0.6, 0.2, 1);
@@ -145,12 +155,8 @@
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 18px;
-  /* Top/right padding keeps headings (and the right-side badge) clear of
-     the cut-2 diagonal that slopes into the panel's top-right corner.
-     The right inset must clear the shallow 94%->100% x wedge over the
-     header's first rows, which is deepest on short cards. */
-  padding: 12px 40px 12px 0;
+  margin-bottom: 16px;
+  padding: 4px 12px 12px 0;
   border-bottom: 2px dashed var(--ink);
 }
 .dashboard-page .card-header h2 {
@@ -162,8 +168,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  /* drop the glyphs a little further below the sloped top edge */
-  padding-top: 4px;
+  margin: 0;
 }
 
 /* ---------- Live Camera ---------- */
@@ -225,6 +230,20 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+.class-breakdown::-webkit-scrollbar {
+  width: 6px;
+}
+.class-breakdown::-webkit-scrollbar-track {
+  background: rgba(31, 26, 18, 0.06);
+  border-radius: 4px;
+}
+.class-breakdown::-webkit-scrollbar-thumb {
+  background: var(--ink-soft);
+  border-radius: 4px;
 }
 .class-card {
   --cc: var(--ink);
@@ -521,6 +540,13 @@
 }
 
 /* ---------- Admin AI & System Infrastructure card ---------- */
+.admin-system-card,
+.class-breakdown-card,
+.engagement-card,
+.watchlist-card {
+  clip-path: polygon(0 14px, 14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px)) !important;
+  transform: none !important;
+}
 .admin-system-card {
   display: flex;
   flex-direction: column;
