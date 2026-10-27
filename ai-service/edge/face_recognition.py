@@ -1079,7 +1079,7 @@ def run_recognition(args):
                         recognized_students.append({
                             "student_name": student_name,
                             "student_class": student_class,
-                            "student_year": 1,
+                            # year is re-derived server-side from the student record
                             # Exact-match attendance: Supabase UUID from the
                             # enrollment record (null → server falls back to
                             # name matching for old data).
