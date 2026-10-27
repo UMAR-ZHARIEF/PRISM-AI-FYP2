@@ -59,8 +59,19 @@ independent of each other, so alphabetical order works):
 12. `0011_risk_scores.sql` - `engagement_risk_scores`: rolling
     two-week per-student risk scores, bands, and trigger reasons
     computed server-side from the engagement history.
+13. `0012_classroom_label.sql` - adds the `classroom_label`
+    `app_settings` column: the string the Python edge stamps on every
+    detection as the payload's `classroom_id`, defaulting to
+    `CLASS_1A`.
+14. `0013_teacher_note_delete_own.sql` - lets a teacher delete their
+    own notes: the `teacher_notes_delete_own` DELETE policy alongside
+    the existing admin path, fixing the silent no-op delete (defect
+    D8).
+15. `0014_policy_privacy_v1_1_0.sql` - registers the privacy policy
+    version 1.1.0 row in `policy_documents` (effective 2026-10-26) so
+    re-consent and the login acceptance recorder can resolve it.
 
-All twelve files are idempotent and safe to re-run.
+All fifteen files are idempotent and safe to re-run.
 
 ## Applying to a hosted Supabase project
 
@@ -95,8 +106,8 @@ teachers / parents can log in), and creating `auth.users` rows safely
 needs the Supabase admin API or `service_role` key, which cannot be
 exercised from a plain SQL migration.
 
-Migrations are numbered sequentially (currently through
-`0011_risk_scores.sql`), so the bulk import will land as the next
-number in that sequence - a `0012_*.sql` file, or a Node script that
-uses `@supabase/supabase-js` with the service role key - once auth
+Migrations are numbered sequentially (fifteen files so far, currently
+through `0014_policy_privacy_v1_1_0.sql`), so the bulk import will
+land as the next number in that sequence, or as a Node script that
+uses `@supabase/supabase-js` with the service role key, once auth
 flows have been wired into the frontend.
