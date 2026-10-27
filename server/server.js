@@ -178,6 +178,7 @@ const GPU_REQUIRED_MSG = 'Incompatible hardware — GPU required';
 // any AI_AUTORESTART_WINDOW_MS.
 let aiIntentionalStop = false;   // latched before an operator-driven kill, consumed by the exit handler
 let aiRestartInProgress = false; // guards POST /api/ai/restart against concurrent restarts
+let aiAutoRestartTimer = null;   // handle to the pending crash auto-restart setTimeout (#2)
 const aiAutoRestartTimes = [];   // timestamps of recent auto-restart attempts (rolling breaker window)
 const AI_AUTORESTART_DELAY_MS = 3 * 1000;
 const AI_AUTORESTART_WINDOW_MS = 10 * 60 * 1000;
@@ -192,6 +193,19 @@ function recentAutoRestartCount() {
     aiAutoRestartTimes.shift();
   }
   return aiAutoRestartTimes.length;
+}
+
+// Cancel a pending crash auto-restart, if one is armed. Called from the
+// operator-driven stop / force-kill paths: an explicit stop during the 3s
+// window between a crash exit and its respawn must not be undone by the
+// still-armed timer (defect #2 — the aiIntentionalStop latch cannot cover
+// this, because at stop time there is no child exit left to consume it).
+function cancelPendingAutoRestart() {
+  if (aiAutoRestartTimer) {
+    clearTimeout(aiAutoRestartTimer);
+    aiAutoRestartTimer = null;
+    console.log('[AI] Pending crash auto-restart cancelled by explicit stop/force-kill');
+  }
 }
 
 // Crash auto-restart: called from the AI child's exit handler for EVERY
@@ -225,7 +239,8 @@ async function scheduleCrashAutoRestart(exitCode) {
     }
     aiAutoRestartTimes.push(Date.now());
     console.log(`[AI] Crash detected (exit code ${exitCode ?? 'unknown'}): auto-restarting in ${AI_AUTORESTART_DELAY_MS / 1000}s (attempt ${aiAutoRestartTimes.length} of ${AI_AUTORESTART_MAX} per 10-minute window)`);
-    setTimeout(() => {
+    aiAutoRestartTimer = setTimeout(() => {
+      aiAutoRestartTimer = null; // fired — the handle would otherwise point at a dead timer
       startAiProcess(null) // no req: there is no caller to audit
         .then(({ pid }) => {
           console.log(`[AI] Auto-restart succeeded: new AI child pid ${pid}`);
@@ -941,11 +956,11 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
       hour: '2-digit', minute: '2-digit', hour12: true
     });
 
-    // Year/class start null on purpose: the AI payload's student_year is
-    // hardcoded to 1 Python-side, so it is never trusted. The async DB
-    // resolution below patches the row with the real students.year_num +
-    // class_sections.name as soon as it lands (Camera renders empty until
-    // then, which is honest).
+    // Year/class start null on purpose: the AI payload carries no year at
+    // all (the old hardcoded student_year was removed Python-side), so the
+    // async DB resolution below patches the row with the real
+    // students.year_num + class_sections.name as soon as it lands (Camera
+    // renders empty until then, which is honest).
     liveData.attendanceToday.push({
       studentId: liveData.attendanceToday.length + 1,
       name: det.student_name,
@@ -972,12 +987,18 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
     totalPresent: presentToday.size,
   });
 
-  // ── Persist to Supabase (fire-and-forget) ────────────────────────────────
+  // ── Persist to Supabase (fire-and-forget) ────────────────────────────────────
   // Runs AFTER the response is sent so the Python POST returns fast. A failure
   // here only logs — it never crashes the response or the in-memory store.
-  if (!supabase || freshDetections.length === 0) return;
-
+  // NEG-1: the "nothing fresh to mark" early return used to live HERE, at
+  // handler level, which silently dropped the engagement capture below: after
+  // each student's first sighting of the day every later tick arrived with
+  // freshDetections empty and was discarded before sampling could run. The
+  // guard now lives inside the detached block, so it skips only the attendance
+  // persistence and the handler always falls through to the engagement block.
   (async () => {
+    if (!supabase || freshDetections.length === 0) return;
+
     for (const { det, status, now } of freshDetections) {
       try {
         // 1) Strip any trailing "(...)" suffix from the name. The Python script
@@ -1017,7 +1038,7 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
         // 3) Name-based fallback: look up the student by full_name
         //    (case-insensitive), together with the REAL year + class section —
         //    the DB row is the source of truth for both (the AI payload
-        //    hardcodes student_year to 1).
+        //    carries no year field at all).
         if (!student) {
           const { data: matches, error: lookupErr } = await supabase
             .from('students')
@@ -1125,7 +1146,7 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
             if (recipients.size > 0) {
               const title = `${ctx.full_name} marked ${status}`;
               const body = `AI face recognition detected ${ctx.full_name} at ${arrivalTime} on ${isoDate}.`;
-              const rows = Array.from(recipients).map((rid) => ({
+              let rows = Array.from(recipients).map((rid) => ({
                 recipient_id: rid,
                 scope: 'user',
                 type: 'attendance',
@@ -1133,9 +1154,44 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
                 body,
               }));
 
-              const { error: nErr } = await supabase.from('notifications').insert(rows);
-              if (nErr) {
-                console.warn('[notification fanout] insert failed:', nErr.message);
+              // Dedupe guard (#5): the presentToday gate above dies with the
+              // server process, so a resubmit after a restart re-fires this
+              // fanout for students already notified today. Skip recipients
+              // who already have an identical row (same type + title) created
+              // today. created_at is timestamptz, so compare against local
+              // midnight as ISO — a bare 'YYYY-MM-DD' would mean UTC midnight
+              // (08:00 MYT) and miss the early-morning window.
+              try {
+                const dayStartIso = new Date(
+                  now.getFullYear(), now.getMonth(), now.getDate()
+                ).toISOString();
+                const { data: existing, error: dupErr } = await supabase
+                  .from('notifications')
+                  .select('recipient_id')
+                  .in('recipient_id', Array.from(recipients))
+                  .eq('type', 'attendance')
+                  .eq('title', title)
+                  .gte('created_at', dayStartIso);
+                if (dupErr) {
+                  // Fail open: a transient lookup error must not suppress a
+                  // legitimate notification; a rare duplicate is the lesser
+                  // failure and is what this guard normally prevents.
+                  console.warn('[notification fanout] dedupe lookup failed, inserting anyway:', dupErr.message);
+                } else if (existing && existing.length > 0) {
+                  const already = new Set(existing.map((r) => r.recipient_id));
+                  rows = rows.filter((r) => !already.has(r.recipient_id));
+                }
+              } catch (e) {
+                console.warn('[notification fanout] dedupe check threw, inserting anyway:', e);
+              }
+
+              if (rows.length === 0) {
+                console.log('[notification fanout] skipped: identical notification already sent today');
+              } else {
+                const { error: nErr } = await supabase.from('notifications').insert(rows);
+                if (nErr) {
+                  console.warn('[notification fanout] insert failed:', nErr.message);
+                }
               }
             }
           }
@@ -1907,6 +1963,10 @@ async function startAiProcess(req) {
     if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
     if (aiProcess === child) aiProcess = null;
     clearAiPid(); // child is gone — the recorded PID is stale now
+    // The AI link is gone until the next child POSTs (#4): flip the health
+    // pill offline here so crashes, stops and force-kills all stop claiming
+    // 'AI Online'. A successful auto-restart flips it back on its first POST.
+    liveData.aiStatus = 'offline';
     // Crash auto-restart evaluates every exit; operator-driven exits are
     // filtered out inside (see scheduleCrashAutoRestart).
     scheduleCrashAutoRestart(code);
@@ -1945,6 +2005,10 @@ app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
 const AI_STOP_GRACE_MS = 10 * 1000;
 function stopAiProcessAndWait() {
   return new Promise((resolve) => {
+    // An armed crash auto-restart must not outlive an operator stop/restart:
+    // when no child is running this call is the ONLY thing standing between
+    // the still-armed timer and a respawn the operator just tried to prevent.
+    cancelPendingAutoRestart();
     if (!aiProcess || aiProcess.exitCode !== null) return resolve(false);
     const child = aiProcess;
     aiIntentionalStop = true; // consumed by the exit handler
@@ -2003,6 +2067,11 @@ app.post('/api/ai/restart', requireAdminOrTeacher, async (req, res) => {
 
 // POST /api/ai/stop — terminate the running Python child.
 app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
+  // Explicit operator intent: cancel any pending crash auto-restart first.
+  // Done before the not-running check on purpose — that branch is exactly
+  // the stop-vs-auto-restart race window (#2): child already dead, 3s timer
+  // still armed, operator clicking Stop must not be answered with a respawn.
+  cancelPendingAutoRestart();
   if (!aiProcess || aiProcess.exitCode !== null) {
     return res.status(404).json({ error: 'AI service is not running' });
   }
@@ -2013,6 +2082,7 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
     // For really stuck cases the admin can fall back to the force-kill below.
     aiProcess.kill();
     clearAiPid(); // the exit handler removes it too — belt and braces
+    liveData.aiStatus = 'offline'; // link is going down; the exit handler also flips it (#4)
     logAudit(req.actor.id, 'ai.stop', null, { pid });
     return res.json({ success: true, pid });
   } catch (e) {
@@ -2030,6 +2100,9 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
 // when it is the one being killed.
 app.delete('/api/ai/process', requireAdmin, (req, res) => {
   findPortPid(AI_PORT, (portPid) => {
+    // Operator force-kill: a pending crash auto-restart must not resurrect
+    // whatever we are about to kill (or re-arm after the 404 below) (#2).
+    cancelPendingAutoRestart();
     if (!portPid) {
       return res.status(404).json({ error: `No process found listening on port ${AI_PORT}` });
     }
@@ -2043,6 +2116,7 @@ app.delete('/api/ai/process', requireAdmin, (req, res) => {
       }
       process.kill(portPid, 'SIGTERM');
       console.log(`[AI] Force-killed PID ${portPid} holding port ${AI_PORT} (by admin ${req.actor.id})`);
+      liveData.aiStatus = 'offline'; // whatever POSTed is now dead (#4)
       logAudit(req.actor.id, 'ai.force_kill', null, { pid: portPid, port: AI_PORT });
       return res.json({ success: true, killed: portPid });
     } catch (e) {
