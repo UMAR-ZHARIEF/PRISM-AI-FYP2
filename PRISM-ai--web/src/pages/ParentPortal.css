@@ -274,6 +274,12 @@
   align-items: center;
   gap: 14px;
 }
+.pp-nav-logo-img {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  display: block;
+}
 .pp-nav-mark {
   width: 52px; height: 52px;
   background: var(--green);

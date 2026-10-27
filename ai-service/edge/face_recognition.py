@@ -967,9 +967,10 @@ def run_recognition(args):
     # MSMF (the same backend the Windows Camera app uses) works reliably.
     # Only force CAP_DSHOW if MSMF fails to open the device.
     if isinstance(camera_source, int):
-        cap = cv2.VideoCapture(camera_source)  # MSMF (default) — reliable
+        # Try DirectShow first on Windows for instant hardware response, fallback to default/MSMF
+        cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)  # fallback
+            cap = cv2.VideoCapture(camera_source)
     else:
         cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():
@@ -1129,22 +1130,23 @@ def run_recognition(args):
                           f"IDs: {names_found}")
 
             # ── Key handling ──
-            if show_debug:
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    break
-                elif key == ord('d'):
-                    show_debug = not show_debug
-                elif key == ord('r'):
-                    # Reload enrolled students (hot-reload); the AI worker
-                    # picks the new tuple up on its next cycle.
-                    print("[INFO] Reloading enrolled students...")
-                    db_holder[0] = load_enrolled_students()
-            else:
-                # Even without debug window, check for keyboard interrupt
-                # Add a minimal waitKey for non-debug mode
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+            try:
+                if show_debug:
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        break
+                    elif key == ord('d'):
+                        show_debug = not show_debug
+                    elif key == ord('r'):
+                        # Reload enrolled students (hot-reload); the AI worker
+                        # picks the new tuple up on its next cycle.
+                        print("[INFO] Reloading enrolled students...")
+                        db_holder[0] = load_enrolled_students()
+                else:
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+            except Exception:
+                time.sleep(0.001)
 
     except KeyboardInterrupt:
         print("\n[INFO] Interrupted by user.")
@@ -1153,7 +1155,10 @@ def run_recognition(args):
         stop_event.set()
         ai_thread.join(timeout=3.0)
         cap.release()
-        cv2.destroyAllWindows()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         print("[INFO] Camera released. Goodbye!")
 
     # ── PRIVACY GUARANTEE ──

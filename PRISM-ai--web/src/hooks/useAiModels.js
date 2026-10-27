@@ -12,7 +12,6 @@ function useAiModels() {
   // as `denied` instead of "no models exist".
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
-
   // Reset the fetch state during render whenever isAdmin changes, instead of
   // inside the effect (per react-hooks/set-state-in-effect). Mount is already
   // covered by the initial state (loading starts true, error/denied start

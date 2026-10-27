@@ -28,6 +28,7 @@ export default function Students() {
   const toast = useToast();
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
+  const isTeacher = profile?.role === 'teacher';
 
   // Year context (safe fallback if context not yet available). The hook call
   // is unconditional: outside the layout provider useYear() returns undefined
@@ -67,14 +68,32 @@ export default function Students() {
   const [studentToDelete, setStudentToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Real class sections for teacher scoping
+  const { classSections: allMySections } = useClassSections();
+  const teacherClassSections = useMemo(() => {
+    if (!isTeacher) return [];
+    return allMySections || [];
+  }, [isTeacher, allMySections]);
+  const teacherYears = useMemo(() => {
+    return Array.from(new Set(teacherClassSections.map(s => s.year_num)));
+  }, [teacherClassSections]);
+  const teacherClassName = teacherClassSections.map(s => `Year ${s.year_num} ${s.name}`).join(', ');
+
   // Sync filterYear when global selectedYear changes, during render via the
   // guarded state-mirror pattern instead of an effect (per
-  // react-hooks/set-state-in-effect). Initial state already matches the
-  // selectedYear mapping, so the old mount-run reset was a no-op.
+  // react-hooks/set-state-in-effect).
   const [prevSelectedYear, setPrevSelectedYear] = useState(selectedYear);
   if (prevSelectedYear !== selectedYear) {
     setPrevSelectedYear(selectedYear);
-    setFilterYear(selectedYear ? String(selectedYear) : 'all');
+    if (isTeacher && teacherYears.length > 0) {
+      if (selectedYear && teacherYears.includes(selectedYear)) {
+        setFilterYear(String(selectedYear));
+      } else {
+        setFilterYear('all');
+      }
+    } else {
+      setFilterYear(selectedYear ? String(selectedYear) : 'all');
+    }
   }
 
   // Load students from Supabase. When filterYear === 'all', pass undefined so the hook returns all years.
@@ -450,7 +469,15 @@ export default function Students() {
           <h1>
             <span className="word k">Student</span>{' '}
             <span className="word y">Management</span>
-            {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
+            {isTeacher && teacherClassName ? (
+              <span className="year-badge">
+                {teacherClassSections.length > 1 ? `Classes (${teacherClassSections.length}): ${teacherClassName}` : `Class: ${teacherClassName}`}
+              </span>
+            ) : selectedYear ? (
+              <span className="year-badge">Year {selectedYear}</span>
+            ) : (
+              <span className="year-badge year-badge-all">All Years</span>
+            )}
           </h1>
         </div>
         <div className="header-actions">
@@ -490,15 +517,18 @@ export default function Students() {
             <input className="search-input search-input-padded" placeholder="Search student..." value={search} onChange={e => setSearch(e.target.value)} />
           </div>
           <div className="toolbar-filters">
-            <select className="search-input filter-class" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
-              <option value="all">All Classes</option>
-              {/* Class names repeat across years in class_sections — offer each once. */}
-              {[...new Set(filterClassSections.map(c => c.name))].map(name => <option key={name} value={name}>{name}</option>)}
-            </select>
-            <select className="search-input filter-face" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
-              <option value="all">All Years</option>
-              {yearOptions.map(y => <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>)}
-            </select>
+            {(!isTeacher || teacherClassSections.length > 1) && (
+              <select className="search-input filter-class" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
+                <option value="all">{isTeacher ? 'All My Classes' : 'All Classes'}</option>
+                {filterClassSections.map(c => <option key={c.id} value={c.name}>{!selectedYear && c.year_num ? `Y${c.year_num} ` : ''}{c.name}</option>)}
+              </select>
+            )}
+            {!isTeacher && (
+              <select className="search-input filter-face" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
+                <option value="all">All Years</option>
+                {yearOptions.map(y => <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>)}
+              </select>
+            )}
             <select className="search-input filter-face" value={filterFace} onChange={e => setFilterFace(e.target.value)}>
               <option value="all">All Face Status</option>
               <option value="registered">Registered</option>

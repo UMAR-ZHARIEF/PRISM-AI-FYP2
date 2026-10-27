@@ -39,6 +39,14 @@
 
 /* ================= LEFT ASIDE ================= */
 .login-aside { padding-top: 16px; }
+.login-brand { margin-bottom: 32px; }
+.login-logo-img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  margin-bottom: 12px;
+  display: block;
+}
 .login-aside .eyebrow { font-size: 26px; margin-bottom: 16px; }
 
 .login-headline {
