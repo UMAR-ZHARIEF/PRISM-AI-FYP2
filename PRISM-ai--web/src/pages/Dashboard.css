@@ -267,6 +267,22 @@
   clip-path: var(--cut-pill);
 }
 
+/* D3: sample-size hint beside a rate computed off a small class, so a
+   100% from a 3-student class is read with its denominator in view. */
+.class-rate-wrap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.class-rate-sample {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
 .class-counts {
   display: flex;
   gap: 14px;

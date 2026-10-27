@@ -111,6 +111,24 @@ export default function ClassComparison() {
     return (classSections || []).filter(s => allow.has(s.id));
   }, [classSections, filterToMine, teacherHomeroomIds]);
 
+  // F1: the year filter offers the same years as the topbar picker — a
+  // homeroom teacher sees only the years their classes belong to (full list
+  // for admins and homeroom-less teachers). Needs the all-year section list:
+  // the year-filtered `classSections` above cannot reveal out-of-year
+  // homerooms. Mirrors DashboardLayout's visibleYears.
+  const { classSections: allYearSections } = useClassSections();
+  const filterYearOptions = useMemo(() => {
+    if (!isTeacher) return yearOptions || [];
+    const mine = new Set(
+      (allYearSections || [])
+        .filter(s => s.homeroom_teacher_id === profile?.id)
+        .map(s => s.year_num)
+        .filter(y => y != null)
+    );
+    if (mine.size === 0) return yearOptions || [];
+    return (yearOptions || []).filter(y => mine.has(y.year_num));
+  }, [yearOptions, allYearSections, isTeacher, profile?.id]);
+
   // Picked classes as actually counted: when scoped to homerooms, ids that
   // fall outside the visible set (e.g. teacher toggles "My homerooms only"
   // back on after picking a class that isn't theirs) are ignored here instead
@@ -379,7 +397,7 @@ export default function ClassComparison() {
               }}
             >
               <option value="all">All Years</option>
-              {(yearOptions || []).map(y => (
+              {(filterYearOptions || []).map(y => (
                 <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>
               ))}
             </select>

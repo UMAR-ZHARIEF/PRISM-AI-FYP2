@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useContext } from 'react';
 import { Link } from 'react-router-dom';
 import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear } from '../layouts/dashboardContexts';
+import { useYear, ScopeContext } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import Pagination from '../components/Pagination';
 import useStudents from '../hooks/useStudents';
@@ -170,6 +170,38 @@ export default function Students() {
   // Real class sections scoped to the active year filter: drives the Classes stat and the class filter.
   const filterYearNumber = filterYear === 'all' ? undefined : Number(filterYear);
   const { classSections: filterClassSections } = useClassSections({ year: filterYearNumber });
+
+  // All-year section list for the F1 year-filter scope below (the topbar's
+  // visibleYears pattern needs homerooms from every year, which the
+  // year-filtered list above cannot show).
+  const { classSections: allYearSections } = useClassSections();
+
+  // F1: the toolbar year filter offers the same years as the topbar picker —
+  // a homeroom teacher sees only the years their classes belong to; admins
+  // (and teachers with no homerooms) keep the full list. Mirrors
+  // DashboardLayout's visibleYears. The add/edit form picker keeps the full
+  // list on purpose: student creation is admin-only.
+  const filterYearOptions = useMemo(() => {
+    if (profile?.role !== 'teacher') return yearOptions || [];
+    const mine = new Set(
+      (allYearSections || [])
+        .filter(s => s.homeroom_teacher_id === profile?.id)
+        .map(s => s.year_num)
+        .filter(y => y != null)
+    );
+    if (mine.size === 0) return yearOptions || [];
+    return (yearOptions || []).filter(y => mine.has(y.year_num));
+  }, [yearOptions, allYearSections, profile?.id]);
+
+  // F2-sibling (mirrors Reports.jsx): when the shared layout scope narrows
+  // the teacher to their homerooms, the header badge says "My Classes"
+  // instead of the misleading "All Years".
+  const scopeCtx = useContext(ScopeContext) || {};
+  const myHomeroomCount = useMemo(
+    () => (allYearSections || []).filter(s => s.homeroom_teacher_id === profile?.id).length,
+    [allYearSections, profile?.id]
+  );
+  const scopedToMine = (scopeCtx.scope || 'all') === 'mine' && myHomeroomCount > 0;
 
   // Real face-enrollment status from the AI bridge (shared hook, polls every 30s).
   // loading/error tell us whether the set is authoritative: while the Express
@@ -450,7 +482,12 @@ export default function Students() {
           <h1>
             <span className="word k">Student</span>{' '}
             <span className="word y">Management</span>
-            {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
+            {/* F2-sibling: badge mirrors the actual scope, like Reports.jsx. */}
+            {selectedYear
+              ? <span className="year-badge">Year {selectedYear}</span>
+              : scopedToMine
+                ? <span className="year-badge">My Classes</span>
+                : <span className="year-badge year-badge-all">All Years</span>}
           </h1>
         </div>
         <div className="header-actions">
@@ -497,7 +534,7 @@ export default function Students() {
             </select>
             <select className="search-input filter-face" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
               <option value="all">All Years</option>
-              {yearOptions.map(y => <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>)}
+              {filterYearOptions.map(y => <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>)}
             </select>
             <select className="search-input filter-face" value={filterFace} onChange={e => setFilterFace(e.target.value)}>
               <option value="all">All Face Status</option>

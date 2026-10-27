@@ -386,6 +386,22 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
     [dbArrivalTimes, arrivalOverrides]
   );
 
+  // D-J1-1: the local `submitted` flag below is client-only state, so a page
+  // reload silently unlocked a submitted class-day (marks persisted, Submit
+  // re-enabled). Submit is only reachable once every student is marked, and
+  // it persists every marked student, so "every student in the class has a
+  // DB record for this date" is exactly the persisted submitted state. The
+  // page already fetches those records, so derive the lock from them.
+  const dbSubmitted = useMemo(
+    function deriveSubmittedFromDb() {
+      return students.length > 0 && students.every(s => Boolean(dbStatuses[s.id]));
+    },
+    [students, dbStatuses]
+  );
+  // Locked either because the teacher just submitted this visit or because
+  // this class-day was already submitted earlier (DB state).
+  const locked = submitted || dbSubmitted;
+
   const setStudentStatus = (studentId, status) => {
     setStatusOverrides(prev => ({ ...prev, [studentId]: status }));
     setArrivalOverrides(prev => {
@@ -527,11 +543,11 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
               : `${markedCount} of ${totalStudents} marked`}
           </span>
           <button
-            className={`btn ${submitted ? 'btn-outline' : 'btn-green'} btn-submit`}
-            disabled={!allMarked || submitted || saving}
+            className={`btn ${locked ? 'btn-outline' : 'btn-green'} btn-submit`}
+            disabled={!allMarked || locked || saving}
             onClick={handleSubmit}
           >
-            {submitted ? (
+            {locked ? (
               <><Check size={16} /> Submitted</>
             ) : saving ? (
               <><Clock size={16} /> Saving&hellip;</>
@@ -612,8 +628,8 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
                   <div className="toggle-group">
                     <button
                       className={`toggle-btn toggle-present ${status === 'present' ? 'active' : ''}`}
-                      onClick={() => !submitted && !saving && setStudentStatus(student.id, 'present')}
-                      disabled={submitted || saving}
+                      onClick={() => !locked && !saving && setStudentStatus(student.id, 'present')}
+                      disabled={locked || saving}
                       aria-label="Mark present"
                     >
                       <Check size={16} />
@@ -621,8 +637,8 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
                     </button>
                     <button
                       className={`toggle-btn toggle-absent ${status === 'absent' ? 'active' : ''}`}
-                      onClick={() => !submitted && !saving && setStudentStatus(student.id, 'absent')}
-                      disabled={submitted || saving}
+                      onClick={() => !locked && !saving && setStudentStatus(student.id, 'absent')}
+                      disabled={locked || saving}
                       aria-label="Mark absent"
                     >
                       <X size={16} />
@@ -630,8 +646,8 @@ function MarkingView({ year, yearNum, className, dateString, dateISO, toast }) {
                     </button>
                     <button
                       className={`toggle-btn toggle-late ${status === 'late' ? 'active' : ''}`}
-                      onClick={() => !submitted && !saving && setStudentStatus(student.id, 'late')}
-                      disabled={submitted || saving}
+                      onClick={() => !locked && !saving && setStudentStatus(student.id, 'late')}
+                      disabled={locked || saving}
                       aria-label="Mark late"
                     >
                       <Clock size={16} />

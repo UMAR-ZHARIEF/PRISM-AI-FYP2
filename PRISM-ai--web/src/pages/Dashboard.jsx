@@ -37,18 +37,6 @@ function bucketArrival(t) {
   return `${String(h).padStart(2, '0')}:${String(half).padStart(2, '0')}`;
 }
 
-// Relative "5m ago" label from an ISO timestamp (same shape as StudentProfile's).
-function timeAgo(iso) {
-  if (!iso) return '';
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
 // First non-empty string among the alias keys (watchlist rows).
 function pickFirstStr(row, keys) {
   for (const key of keys) {
@@ -329,6 +317,23 @@ export default function Dashboard() {
     [scopedRecords, today]
   );
 
+  // D1: attendance rows embed `student:students(*)` (useAttendance), which
+  // does not include the nested class_section row, so
+  // r.student.class_section is always undefined on this page and the
+  // Today's Attendance table fell back to the dash placeholder even for
+  // students whose class is known. Resolve the class name from the students
+  // hook instead (same query the Students page uses, embeds intact). The
+  // placeholder in the table stays reserved for students that genuinely
+  // have no class assignment in the data.
+  const classByStudentId = useMemo(() => {
+    const map = new Map();
+    for (const s of dbStudents) {
+      const sectionName = s.class_section?.name;
+      if (s.id && sectionName) map.set(s.id, sectionName);
+    }
+    return map;
+  }, [dbStudents]);
+
   // Today's counts straight off the records.
   const present = useMemo(() => todayRecords.filter(r => r.status === 'present').length, [todayRecords]);
   const absent = useMemo(() => todayRecords.filter(r => r.status === 'absent').length, [todayRecords]);
@@ -415,7 +420,9 @@ export default function Dashboard() {
   const recentActivity = useMemo(() => {
     return todayRecords.map(r => {
       const name = r.student?.full_name || 'Unknown student';
-      const cls = r.student?.class_section?.name || '';
+      // D1: resolve through the students hook — the attendance embed does
+      // not carry the class_section row (see classByStudentId above).
+      const cls = r.student?.class_section?.name || classByStudentId.get(r.student_id) || '';
       const where = r.student?.year_num
         ? ` (Year ${r.student.year_num}${cls ? ` ${cls}` : ''})`
         : (cls ? ` (${cls})` : '');
@@ -433,7 +440,7 @@ export default function Dashboard() {
     })
       .sort((a, b) => b.time.localeCompare(a.time))
       .slice(0, 12);
-  }, [todayRecords]);
+  }, [todayRecords, classByStudentId]);
 
   // Flatten today's records into the legacy row shape so the table renders unchanged.
   // `record` keeps the raw Supabase row so the per-row Edit modal can update by id.
@@ -441,14 +448,16 @@ export default function Dashboard() {
   const todayRows = useMemo(() => todayRecords.map(r => ({
     studentId: r.student_id,
     name: r.student?.full_name || '',
-    class: r.student?.class_section?.name || '',
+    // D1: attendance embed lacks class_section — resolve via the students
+    // hook (classByStudentId) so real class names render here.
+    class: r.student?.class_section?.name || classByStudentId.get(r.student_id) || '',
     year: r.student?.year_num,
     status: r.status,
     // HH:MM (24h) everywhere — Postgres returns time columns as HH:MM:SS.
     timeIn: (r.arrival_time || '').slice(0, 5),
     timeOut: (r.time_out || '').slice(0, 5),
     record: r,
-  })), [todayRecords]);
+  })), [todayRecords, classByStudentId]);
 
   // Class filter options come from the real class_sections table (P7),
   // narrowed to the current view scope (see scopedSections) and deduped by
@@ -777,7 +786,14 @@ export default function Dashboard() {
     <div className="dashboard-page">
       <div className="page-header">
         <div>
-          <h1><span className="word k">Dashboard</span>{selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}</h1>
+          {/* F2-sibling (mirrors Reports.jsx): when the shared scope narrows
+              the teacher to their homerooms, the badge says so instead of the
+              misleading "All Years". */}
+          <h1><span className="word k">Dashboard</span>{selectedYear
+            ? <span className="year-badge">Year {selectedYear}</span>
+            : scopeToMine
+              ? <span className="year-badge">My Classes</span>
+              : <span className="year-badge year-badge-all">All Years</span>}</h1>
           <p className="page-subtitle">
             {scopeToMine
               ? 'Showing your homeroom classes'
@@ -864,6 +880,11 @@ export default function Dashboard() {
               <div className="empty-state">No classes to display.</div>
             ) : filteredClassAttendance.map((c, i) => {
               const rate = c.total > 0 ? Math.round((c.present / c.total) * 100) : 0;
+              // D3: a rate computed off a handful of students reads as
+              // "perfect" when it is really a tiny sample (evidence:
+              // 1-3-student classes showing 100%). Flag any class smaller
+              // than ten students so the rate is read with its sample size.
+              const smallSample = c.total > 0 && c.total < 10;
               const linkYear = selectedYear || c.year || 1;
               return (
                 <div key={c.id || i} className={`class-card class-card-${i % 4}`} style={{ '--cc': classColors[c.class] }}>
@@ -878,7 +899,17 @@ export default function Dashboard() {
                     ) : (
                       <strong>&mdash;</strong>
                     )}
-                    <span className="class-rate mono">{rate}%</span>
+                    <span className="class-rate-wrap">
+                      <span
+                        className="class-rate mono"
+                        title={smallSample ? `Small sample — only ${c.total} student${c.total === 1 ? '' : 's'} in this class` : undefined}
+                      >
+                        {rate}%
+                      </span>
+                      {smallSample && (
+                        <span className="class-rate-sample mono">of {c.total}</span>
+                      )}
+                    </span>
                   </div>
                   <div className="class-counts">
                     <span className="cc-present">{c.present} present</span>
@@ -1059,7 +1090,10 @@ export default function Dashboard() {
                         <span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>{a.class}</span>
                       </Link>
                     ) : (
-                      <span className="class-chip mono">&mdash;</span>
+                      /* D1: deliberate placeholder — this student genuinely
+                         has no class assignment in the data, so there is no
+                         name to show and nowhere to link. */
+                      <span className="class-chip mono">Unassigned</span>
                     )}
                   </td>
                   <td><span className={`badge badge-${a.status}`}>{a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span></td>
@@ -1116,7 +1150,15 @@ export default function Dashboard() {
                 <AlertTriangle size={18} />
                 <div>
                   <p>{n.title && <strong>{n.title}</strong>}{n.title && n.body ? ' — ' : ''}{n.body}</p>
-                  <small className="mono">{timeAgo(n.created_at)}</small>
+                  {/* D2: format exactly like the topbar bell
+                      (DashboardLayout) so the same notification does not
+                      read as "5:41 PM" in one surface and "115d ago" in
+                      the other. */}
+                  <small className="mono">
+                    {n.created_at
+                      ? new Date(n.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : ''}
+                  </small>
                 </div>
               </div>
             ))}

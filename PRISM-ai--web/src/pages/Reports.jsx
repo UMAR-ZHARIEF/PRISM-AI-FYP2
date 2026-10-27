@@ -518,7 +518,14 @@ export default function Reports() {
           <h1>
             <span className="word k">Attendance</span>{' '}
             <span className="word b">Reports</span>
-            {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
+            {/* F2: the badge mirrors the data actually shown. A teacher scoped
+                to their homerooms never sees the whole school, so the badge
+                says "My Classes" instead of the misleading "All Years". */}
+            {selectedYear
+              ? <span className="year-badge">Year {selectedYear}</span>
+              : scopeToMine
+                ? <span className="year-badge">My Classes</span>
+                : <span className="year-badge year-badge-all">All Years</span>}
           </h1>
           <p className="reports-subtitle">
             {scopeToMine
