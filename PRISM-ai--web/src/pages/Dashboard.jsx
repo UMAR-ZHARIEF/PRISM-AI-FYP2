@@ -537,6 +537,11 @@ export default function Dashboard() {
     setPage(1);
   };
 
+  const renderSortIcon = (col) => {
+    if (sortCol !== col) return null;
+    return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
+  };
+
   const teacherStatCards = [
     { label: 'Total Students', value: totalStudents, tone: 's-blue',   change: `${totalStudents} enrolled` },
     { label: 'Present',        value: present,       tone: 's-green',  change: `${attendanceRate}% attendance` },
@@ -1149,10 +1154,10 @@ export default function Dashboard() {
         <table>
           <thead>
             <tr>
-              <th className="sortable" onClick={() => handleSort('name')}>Student <SortIcon col="name" /></th>
-              <th className="sortable" onClick={() => handleSort('class')}>Class <SortIcon col="class" /></th>
-              <th className="sortable" onClick={() => handleSort('status')}>Status <SortIcon col="status" /></th>
-              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In <SortIcon col="timeIn" /></th>
+              <th className="sortable" onClick={() => handleSort('name')}>Student {renderSortIcon('name')}</th>
+              <th className="sortable" onClick={() => handleSort('class')}>Class {renderSortIcon('class')}</th>
+              <th className="sortable" onClick={() => handleSort('status')}>Status {renderSortIcon('status')}</th>
+              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In {renderSortIcon('timeIn')}</th>
               <th>Time Out</th>
               <th>Actions</th>
             </tr>
