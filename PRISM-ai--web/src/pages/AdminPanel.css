@@ -296,7 +296,8 @@
   padding: 9px 12px;
   background: var(--paper-light);
   border: 2px solid var(--ink);
-  clip-path: var(--cut-2);
+  border-radius: 4px;
+  clip-path: none;
   color: var(--ink);
 }
 .settings-section input:focus,
@@ -621,7 +622,8 @@
   padding: 10px 16px;
   background: var(--paper);
   border: 2px solid var(--ink);
-  clip-path: var(--cut-2);
+  border-radius: 4px;
+  clip-path: none;
   color: var(--ink);
   cursor: pointer;
   min-width: 150px;
@@ -640,6 +642,19 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 8px;
+}
+.face-progress-list::-webkit-scrollbar {
+  width: 6px;
+}
+.face-progress-list::-webkit-scrollbar-track {
+  background: rgba(31, 26, 18, 0.05);
+}
+.face-progress-list::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+  border-radius: 3px;
 }
 .face-progress-row {
   display: grid;
@@ -1252,7 +1267,8 @@
   padding: 10px 14px;
   background: var(--paper);
   border: 2px solid var(--ink);
-  clip-path: var(--cut-2);
+  border-radius: 4px;
+  clip-path: none;
   color: var(--ink);
   cursor: pointer;
 }

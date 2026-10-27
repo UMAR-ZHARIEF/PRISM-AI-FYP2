@@ -52,12 +52,12 @@
   --accent:  'Caveat', cursive;
   --mono:    'JetBrains Mono', ui-monospace, monospace;
 
-  /* Cut-paper clip-paths — each one is a slightly different scissor-edge irregularity */
-  --cut-1: polygon(0 6%, 8% 0, 92% 3%, 100% 12%, 98% 92%, 90% 100%, 4% 96%, 0 86%);
-  --cut-2: polygon(0 4%, 6% 0, 94% 6%, 100% 14%, 99% 88%, 94% 100%, 6% 96%, 1% 90%);
-  --cut-3: polygon(0 8%, 12% 0, 88% 4%, 100% 18%, 98% 90%, 92% 100%, 8% 95%, 0 85%);
-  --cut-4: polygon(2% 4%, 10% 0, 90% 6%, 100% 16%, 96% 90%, 88% 100%, 8% 96%, 0 88%);
-  --cut-pill: polygon(0 14%, 8% 0, 94% 4%, 100% 20%, 98% 80%, 92% 100%, 6% 96%, 0 82%);
+  /* Cut-paper clip-paths — scissor-edge irregularity with pixel-based corners so tall containers never slice */
+  --cut-1: polygon(0 14px, 12px 0, calc(100% - 12px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 12px) 100%, 14px 100%, 0 calc(100% - 14px));
+  --cut-2: polygon(0 12px, 14px 0, calc(100% - 14px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 14px) 100%, 12px 100%, 0 calc(100% - 12px));
+  --cut-3: polygon(0 16px, 10px 0, calc(100% - 16px) 0, 100% 10px, 100% calc(100% - 16px), calc(100% - 10px) 100%, 16px 100%, 0 calc(100% - 16px));
+  --cut-4: polygon(0 10px, 16px 0, calc(100% - 10px) 0, 100% 16px, 100% calc(100% - 10px), calc(100% - 16px) 100%, 10px 100%, 0 calc(100% - 16px));
+  --cut-pill: polygon(0 8px, 10px 0, calc(100% - 10px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 8px));
 }
 
 html, body { background: var(--paper); color: var(--ink); }
@@ -356,7 +356,8 @@ th.sortable svg { display: inline; vertical-align: middle; margin-left: 4px; }
   font-size: 16px;
   width: 100%;
   max-width: 320px;
-  clip-path: var(--cut-2);
+  border-radius: 4px;
+  clip-path: none;
   color: var(--ink);
 }
 .search-input::placeholder { color: var(--ink-faint); font-style: italic; }
@@ -379,11 +380,12 @@ th.sortable svg { display: inline; vertical-align: middle; margin-left: 4px; }
   width: 100%;
   padding: 12px 16px;
   border: 2px solid var(--ink);
+  border-radius: 4px;
+  clip-path: none;
   background: var(--paper-light);
   font-family: var(--body);
   font-size: 17px;
   color: var(--ink);
-  clip-path: var(--cut-2);
 }
 .form-group input:focus,
 .form-group select:focus,
@@ -462,7 +464,7 @@ th.sortable svg { display: inline; vertical-align: middle; margin-left: 4px; }
 .card-header h2 { font-family: var(--display); font-size: 26px; font-weight: 900; }
 
 /* === Grids === */
-.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; align-items: start; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
 

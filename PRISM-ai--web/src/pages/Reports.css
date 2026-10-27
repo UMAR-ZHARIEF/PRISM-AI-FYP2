@@ -137,7 +137,7 @@
   position: relative;
   background: var(--paper-light);
   border: 2px solid var(--ink);
-  clip-path: var(--cut-pill);
+  clip-path: var(--cut-2);
   padding: 18px 24px;
   transform: rotate(-0.4deg);
 }
@@ -311,6 +311,25 @@
   box-shadow: var(--shadow-paper);
   padding: 24px 22px 20px;
   overflow: visible;
+  max-height: 480px;
+  display: flex;
+  flex-direction: column;
+}
+
+.report-table-scroll {
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 4px;
+}
+.report-table-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.report-table-scroll::-webkit-scrollbar-track {
+  background: rgba(31, 26, 18, 0.05);
+}
+.report-table-scroll::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+  border-radius: 3px;
 }
 
 .reports-page .card.list-attention {
