@@ -40,7 +40,7 @@ function useAttendance({ studentId, date, fromDate, toDate, classSectionId } = {
 
         let query = supabase
           .from('attendance_records')
-          .select('*, student:students(*)')
+          .select('*, student:students(*, class_section:class_sections(*))')
           .order('date', { ascending: false });
 
         if (studentId != null) query = query.eq('student_id', studentId);

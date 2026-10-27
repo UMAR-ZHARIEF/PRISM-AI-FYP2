@@ -418,20 +418,29 @@ export default function Dashboard() {
       .slice(0, 12);
   }, [todayRecords]);
 
+  // Map class_section_id to section name as an instant fallback
+  const classSectionNameById = useMemo(() => {
+    const map = {};
+    for (const cs of classSections || []) {
+      if (cs.id && cs.name) map[cs.id] = cs.name;
+    }
+    return map;
+  }, [classSections]);
+
   // Flatten today's records into the legacy row shape so the table renders unchanged.
   // `record` keeps the raw Supabase row so the per-row Edit modal can update by id.
   // Time Out reads time_out (added by migration 0005_app_settings_and_checkout.sql).
   const todayRows = useMemo(() => todayRecords.map(r => ({
     studentId: r.student_id,
     name: r.student?.full_name || '',
-    class: r.student?.class_section?.name || '',
+    class: r.student?.class_section?.name || classSectionNameById[r.student?.class_section_id] || '',
     year: r.student?.year_num,
     status: r.status,
     // HH:MM (24h) everywhere — Postgres returns time columns as HH:MM:SS.
     timeIn: (r.arrival_time || '').slice(0, 5),
     timeOut: (r.time_out || '').slice(0, 5),
     record: r,
-  })), [todayRecords]);
+  })), [todayRecords, classSectionNameById]);
 
   // Export School Report (MOE format CSV) for Administrator
   const handleExportSchoolReport = () => {
@@ -1179,7 +1188,19 @@ export default function Dashboard() {
                       {a.name}
                     </div>
                   </td>
-                  <td><Link to={`/dashboard/class/${selectedYear || a.year || 1}/${a.class}`} className="class-link"><span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>{a.class}</span></Link></td>
+                  <td>
+                    {a.class ? (
+                      <Link to={`/dashboard/class/${selectedYear || a.year || 1}/${a.class}`} className="class-link">
+                        <span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>
+                          {a.class}
+                        </span>
+                      </Link>
+                    ) : (
+                      <span className="class-chip mono" style={{ borderColor: 'var(--ink-faint)', color: 'var(--ink-faint)' }}>
+                        —
+                      </span>
+                    )}
+                  </td>
                   <td><span className={`badge badge-${a.status}`}>{a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span></td>
                   <td className="mono">{a.timeIn}</td>
                   <td className="mono">{a.timeOut || '—'}</td>
