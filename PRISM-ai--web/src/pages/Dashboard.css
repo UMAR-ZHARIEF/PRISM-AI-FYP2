@@ -594,7 +594,13 @@
   .dashboard-page .page-header-actions button { flex: 1 1 auto; }
   .filter-row { flex-direction: column; align-items: stretch; gap: 8px; }
   .filter-select { max-width: unset; }
-  table { display: block; overflow-x: auto; }
+  /* FIX-7D: page-scoped version of the old bare `table` rule so it cannot
+     leak onto other pages (AdminPanel, Engagement, ...); page CSS is global
+     once loaded. On the dashboard it still gives the unwrapped loading
+     skeleton table (Dashboard.jsx SkeletonTable) its own horizontal scroll
+     at phone width; the real attendance table overrides this via the
+     higher-specificity .dashboard-table-card .table-scroll rule below. */
+  .dashboard-page table { display: block; overflow-x: auto; }
   /* D1: the attendance table scrolls inside its own wrapper instead of
      stretching the card and the page past the viewport; min-width keeps the
      six columns readable while the wrapper scrolls. */

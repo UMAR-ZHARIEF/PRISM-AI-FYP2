@@ -27,10 +27,10 @@ export default function Camera() {
   const [streamState, setStreamState] = useState('idle');
 
   // Auto-retry state. The MJPEG stream can fail on the first attempt because
-  // Python takes ~10s to load InsightFace models before the HTTP server starts
-  // accepting connections. We exponentially back off + remount the <img> until
-  // either it connects or we give up.
-  const MAX_RETRIES = 15; // ~30 seconds of total reconnection window
+  // a cold Python start (spawn + InsightFace model load + HTTP server bind)
+  // takes roughly 60-90s before the first frame is served. We exponentially
+  // back off + remount the <img> until either it connects or we give up.
+  const MAX_RETRIES = 15; // ~40 seconds of total reconnection window (1+1.5+2+2.5, then 3s caps)
   const [retryAttempt, setRetryAttempt] = useState(0);
   const retryTimerRef = useRef(null);
   const clearRetryTimer = () => {
@@ -104,8 +104,8 @@ export default function Camera() {
   }, [proc.running, proc.startedAt]);
 
   // <img> error → schedule an auto-retry instead of giving up. Python's MJPEG
-  // server isn't reachable for the first ~10 seconds while InsightFace models
-  // load; we silently retry until it comes up or we run out of attempts.
+  // server isn't reachable during the ~60-90s cold start while the InsightFace
+  // models load; we silently retry until it comes up or we run out of attempts.
   const handleStreamError = useCallback(() => {
     if (!proc.running) {
       setStreamState('idle');
@@ -263,8 +263,8 @@ export default function Camera() {
             {proc.running && streamState === 'connecting' && (
               <div className="live-cam-overlay">
                 <Loader2 size={48} className="live-cam-spin" />
-                <p>Starting AI camera…</p>
-                <small>Python is loading the InsightFace models — this usually takes 5–10 seconds on first start.</small>
+                <p>Starting the AI service…</p>
+                <small>The first start takes about a minute, sometimes a little longer. The face-recognition models are loading and the feed will appear here as soon as it's ready.</small>
               </div>
             )}
 
