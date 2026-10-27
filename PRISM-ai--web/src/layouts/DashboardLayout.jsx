@@ -24,16 +24,16 @@ const sidebarSections = [
     label: 'Main',
     links: [
       { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { path: '/dashboard/camera', label: 'Take Attendance', icon: Video },
+      { path: '/dashboard/camera', label: 'Take Attendance', icon: Video, teacherOnly: true },
     ]
   },
   {
     label: 'Academic',
     links: [
       { path: '/dashboard/students', label: 'Students', icon: Users },
-      { path: '/dashboard/reports', label: 'Reports', icon: FileBarChart },
+      { path: '/dashboard/reports', label: 'Reports & Analytics', icon: FileBarChart },
       { path: '/dashboard/engagement', label: 'Engagement', icon: Activity },
-      { path: '/dashboard/attendance', label: 'Manual Attendance', icon: ClipboardCheck },
+      { path: '/dashboard/attendance', label: 'Manual Attendance', icon: ClipboardCheck, teacherOnly: true },
       { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3, adminOnly: true },
     ]
   },
@@ -131,7 +131,7 @@ export default function DashboardLayout() {
     if (path === '/dashboard') return 'Dashboard';
     if (path.includes('students/') && path !== '/dashboard/students') return 'Student Profile';
     if (path.includes('students')) return 'Students';
-    if (path.includes('reports')) return 'Reports';
+    if (path.includes('reports')) return 'Reports & Analytics';
     if (path.includes('engagement')) return 'Engagement';
     if (path.includes('admin')) return 'Admin Panel';
     if (path.includes('camera')) return 'Take Attendance';
@@ -168,6 +168,7 @@ export default function DashboardLayout() {
                 {sidebarOpen && <span className="sidebar-section-label">{section.label}</span>}
                 {section.links.map(link => {
                   if (link.adminOnly && role !== 'admin') return null;
+                  if (link.teacherOnly && role !== 'teacher') return null;
                   return (
                     <Link
                       key={link.path}
