@@ -702,59 +702,63 @@ export default function Reports() {
 
       {/* MOST ABSENT + PERFECT */}
       <div className="grid-2">
-        <div className="card list-card list-attention tilt-l">
+        <div className="card list-card list-attention">
           <span className="tape tl" />
           <div className="chart-head">
             <h2>Needs Attention</h2>
           </div>
-          <table>
-            <thead><tr><th>Student</th><th>Rate</th><th>Status</th></tr></thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={3} className="empty-state">Loading…</td></tr>
-              ) : mostAbsent.length === 0 ? (
-                <tr><td colSpan={3} className="empty-state">Nobody needs attention right now.</td></tr>
-              ) : mostAbsent.map((s, i) => (
-                <tr key={s.id}>
-                  <td>
-                    <div className="report-cell-name">
-                      <div className={`avatar ${AVA_COLORS[i % AVA_COLORS.length]}`}>{(s.name || '—').split(' ').map(n => n[0]).join('').slice(0, 2)}</div>
-                      {s.name}
-                    </div>
-                  </td>
-                  <td><strong className="mono">{s.attendanceRate}%</strong></td>
-                  <td><span className="badge badge-absent">Low</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="report-table-scroll">
+            <table>
+              <thead><tr><th>Student</th><th>Rate</th><th>Status</th></tr></thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={3} className="empty-state">Loading…</td></tr>
+                ) : mostAbsent.length === 0 ? (
+                  <tr><td colSpan={3} className="empty-state">Nobody needs attention right now.</td></tr>
+                ) : mostAbsent.map((s, i) => (
+                  <tr key={s.id}>
+                    <td>
+                      <div className="report-cell-name">
+                        <div className={`avatar ${AVA_COLORS[i % AVA_COLORS.length]}`}>{(s.name || '—').split(' ').map(n => n[0]).join('').slice(0, 2)}</div>
+                        {s.name}
+                      </div>
+                    </td>
+                    <td><strong className="mono">{s.attendanceRate}%</strong></td>
+                    <td><span className="badge badge-absent">Low</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-        <div className="card list-card list-perfect tilt-r">
+        <div className="card list-card list-perfect">
           <span className="tape tr" />
           <div className="chart-head">
             <h2>Perfect Attendance</h2>
           </div>
-          <table>
-            <thead><tr><th>Student</th><th>Rate</th><th>Status</th></tr></thead>
-            <tbody>
-              {loading ? (
-                <tr><td colSpan={3} className="empty-state">Loading…</td></tr>
-              ) : perfectStudents.length === 0 ? (
-                <tr><td colSpan={3} className="empty-state">No perfect attendance yet.</td></tr>
-              ) : perfectStudents.map((s, i) => (
-                <tr key={s.id}>
-                  <td>
-                    <div className="report-cell-name">
-                      <div className={`avatar ${AVA_COLORS[i % AVA_COLORS.length]}`}>{(s.name || '—').split(' ').map(n => n[0]).join('').slice(0, 2)}</div>
-                      {s.name}
-                    </div>
-                  </td>
-                  <td><strong className="mono">{s.attendanceRate}%</strong></td>
-                  <td><span className="badge badge-present">Excellent</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="report-table-scroll">
+            <table>
+              <thead><tr><th>Student</th><th>Rate</th><th>Status</th></tr></thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={3} className="empty-state">Loading…</td></tr>
+                ) : perfectStudents.length === 0 ? (
+                  <tr><td colSpan={3} className="empty-state">No perfect attendance yet.</td></tr>
+                ) : perfectStudents.map((s, i) => (
+                  <tr key={s.id}>
+                    <td>
+                      <div className="report-cell-name">
+                        <div className={`avatar ${AVA_COLORS[i % AVA_COLORS.length]}`}>{(s.name || '—').split(' ').map(n => n[0]).join('').slice(0, 2)}</div>
+                        {s.name}
+                      </div>
+                    </td>
+                    <td><strong className="mono">{s.attendanceRate}%</strong></td>
+                    <td><span className="badge badge-present">Excellent</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
