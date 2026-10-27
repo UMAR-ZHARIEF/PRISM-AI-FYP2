@@ -45,7 +45,7 @@ export default function Landing() {
       <nav className="landing-nav">
         <div className="nav-container">
           <Link to="/" className="nav-logo">
-            <span className="nav-mark"><Camera size={22} /></span>
+            <img src="/logo.png" alt="PRISM-AI Logo" className="nav-logo-img" />
             <span className="nav-name">PRISM-AI</span>
           </Link>
           <div className={`nav-links ${mobileNav ? 'show' : ''}`}>
@@ -183,7 +183,7 @@ export default function Landing() {
       <footer className="landing-footer">
         <div className="footer-container">
           <div className="footer-brand">
-            <div className="nav-logo"><Camera size={24} /><span>PRISM-AI</span></div>
+            <div className="nav-logo"><img src="/logo.png" alt="PRISM-AI Logo" className="nav-logo-img" /><span>PRISM-AI</span></div>
             <p>Primary School Intelligent Student Management and Predictive Analytics Ecosystem.</p>
           </div>
           <div className="footer-col">

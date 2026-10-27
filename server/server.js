@@ -1909,9 +1909,10 @@ async function startAiProcess(req) {
   const settings = await getAppSettings();
   console.log(`[AI] start: det_size=${settings.det_size} threshold=${settings.match_threshold}`);
 
+  const cameraIndex = process.env.CAMERA_INDEX || '0';
   const child = spawn(pythonExe, [
     '-u', script,
-    '--camera', '0',
+    '--camera', cameraIndex,
     '--det-size', String(settings.det_size),
     '--threshold', String(settings.match_threshold),
     '--classroom', String(settings.classroom_label),

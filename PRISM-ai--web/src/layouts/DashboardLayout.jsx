@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
-  Camera, UserCog, ChevronDown, Video, ClipboardCheck, BarChart3, Activity
+  UserCog, ChevronDown, Video, ClipboardCheck, BarChart3, Activity
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
@@ -16,17 +16,17 @@ const sidebarSections = [
     label: 'Main',
     links: [
       { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-      { path: '/dashboard/camera', label: 'Live Camera', icon: Video },
+      { path: '/dashboard/camera', label: 'Take Attendance', icon: Video },
     ]
   },
   {
-    label: 'Management',
+    label: 'Academic',
     links: [
       { path: '/dashboard/students', label: 'Students', icon: Users },
       { path: '/dashboard/reports', label: 'Reports', icon: FileBarChart },
       { path: '/dashboard/engagement', label: 'Engagement', icon: Activity },
-      { path: '/dashboard/attendance', label: 'Take Attendance', icon: ClipboardCheck },
-      { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3 },
+      { path: '/dashboard/attendance', label: 'Manual Attendance', icon: ClipboardCheck },
+      { path: '/dashboard/comparison', label: 'Compare Classes', icon: BarChart3, adminOnly: true },
     ]
   },
   {
@@ -41,52 +41,45 @@ const sidebarSections = [
 // Sidebar highlight rule: exact match for the Dashboard root, prefix match for
 // everything else. Class Detail pages (/dashboard/class/...) are a prefix of
 // no sidebar path, so they highlight the closest related section, Students.
-function isSidebarLinkActive(link, pathname) {
-  if (pathname.startsWith('/dashboard/class')) {
-    return link.path === '/dashboard/students';
+function isSidebarLinkActive(link, currentPath) {
+  if (link.path === '/dashboard') return currentPath === '/dashboard';
+  if (link.path === '/dashboard/students') {
+    return currentPath.startsWith('/dashboard/students') || currentPath.startsWith('/dashboard/class/');
   }
-  return link.path === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(link.path);
+  return currentPath.startsWith(link.path);
 }
 
 export default function DashboardLayout() {
-  // Start collapsed on phones so the sidebar never covers the page on first load.
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
+  const [selectedYear, setSelectedYear] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [selectedYear, setSelectedYear] = useState(null);
+
   const location = useLocation();
   const navigate = useNavigate();
   const notifRef = useRef(null);
   const userRef = useRef(null);
 
   const { years, loading: yearsLoading } = useYears();
-  // R3: same class_sections source every page uses — needed to narrow the
-  // year options for teachers (see visibleYears below).
   const { classSections } = useClassSections();
   const { notifications, unreadCount, markAllRead } = useNotifications();
   const { user, profile, signOut } = useAuth();
 
   const role = profile?.role;
+  const isTeacher = role === 'teacher';
 
-  // R3: teachers see only the years their own classes belong to; admins (and
-  // any other role) keep the full list. A teacher's classes are their
-  // homeroom assignments — the same client-side teacher-class link the
-  // Dashboard page uses for myClassSectionIds (the DB boundary is the RLS
-  // teacher_class_ids() helper; this picker filter is a view filter on top
-  // of it, not a security boundary). While class sections are still loading,
-  // or when a teacher has no homerooms at all, fall back to the full list so
-  // the picker never blanks out.
-  const visibleYears = useMemo(() => {
-    if (role !== 'teacher') return years;
-    const mine = new Set(
-      classSections
-        .filter(s => s.homeroom_teacher_id === profile?.id)
-        .map(s => s.year_num)
-        .filter(y => y != null)
-    );
-    if (mine.size === 0) return years;
-    return years.filter(y => mine.has(y.year_num));
-  }, [years, classSections, role, profile?.id]);
+  const teacherClassSections = useMemo(() => {
+    if (!isTeacher) return [];
+    return (classSections || []).filter(s => s.homeroom_teacher_id === profile?.id);
+  }, [isTeacher, classSections, profile?.id]);
+
+  const teacherYears = useMemo(() => {
+    return Array.from(new Set(teacherClassSections.map(s => s.year_num)));
+  }, [teacherClassSections]);
+
+  if (isTeacher && selectedYear !== null && teacherYears.length > 0 && !teacherYears.includes(selectedYear)) {
+    setSelectedYear(null);
+  }
 
   // Shared view scope for the pages below (see ScopeContext above). The user's
   // explicit pick wins once made; until then the scope derives from the role:
@@ -132,9 +125,9 @@ export default function DashboardLayout() {
     if (path.includes('reports')) return 'Reports';
     if (path.includes('engagement')) return 'Engagement';
     if (path.includes('admin')) return 'Admin Panel';
-    if (path.includes('camera')) return 'Live Camera';
+    if (path.includes('camera')) return 'Take Attendance';
     if (path.includes('class/')) return 'Class Detail';
-    if (path.includes('attendance')) return 'Attendance';
+    if (path.includes('attendance')) return 'Manual Attendance';
     if (path.includes('comparison')) return 'Compare Classes';
     return 'Dashboard';
   };
@@ -150,7 +143,7 @@ export default function DashboardLayout() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-header">
           <Link to="/" className="sidebar-logo">
-            <Camera size={24} />
+            <img src="/logo.png" alt="PRISM-AI" className="sidebar-logo-img" />
             {sidebarOpen && <span>PRISM-AI</span>}
           </Link>
           <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -164,16 +157,19 @@ export default function DashboardLayout() {
             return (
               <div key={section.label} className="sidebar-section">
                 {sidebarOpen && <span className="sidebar-section-label">{section.label}</span>}
-                {section.links.map(link => (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    className={`sidebar-link ${isSidebarLinkActive(link, location.pathname) ? 'active' : ''}`}
-                  >
-                    <link.icon size={20} />
-                    {sidebarOpen && <span>{link.label}</span>}
-                  </Link>
-                ))}
+                {section.links.map(link => {
+                  if (link.adminOnly && role !== 'admin') return null;
+                  return (
+                    <Link
+                      key={link.path}
+                      to={link.path}
+                      className={`sidebar-link ${isSidebarLinkActive(link, location.pathname) ? 'active' : ''}`}
+                    >
+                      <link.icon size={20} />
+                      {sidebarOpen && <span>{link.label}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             );
           })}
@@ -199,17 +195,48 @@ export default function DashboardLayout() {
               <span className="breadcrumb-current">{getPageTitle()}</span>
             </div>
             {showYearDropdown && (
-              <select
-                className="year-dropdown"
-                value={selectedYear ?? ''}
-                onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
-                disabled={yearsLoading && years.length === 0}
-              >
-                <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
-                {visibleYears.map(y => (
-                  <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
-                ))}
-              </select>
+              isTeacher ? (
+                teacherClassSections.length <= 1 ? (
+                  <div className="teacher-assigned-badge" title="Your assigned class">
+                    <span className="teacher-badge-pill">
+                      {teacherClassSections.length === 1
+                        ? `Year ${teacherClassSections[0].year_num} ${teacherClassSections[0].name}`
+                        : 'Class: Assigned'}
+                    </span>
+                  </div>
+                ) : (
+                  <select
+                    className="year-dropdown"
+                    value={selectedYear ?? ''}
+                    onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">All My Classes ({teacherClassSections.length})</option>
+                    {teacherYears.map(yn => {
+                      const classesInYear = teacherClassSections
+                        .filter(s => s.year_num === yn)
+                        .map(s => s.name)
+                        .join(', ');
+                      return (
+                        <option key={yn} value={yn}>
+                          Year {yn} ({classesInYear})
+                        </option>
+                      );
+                    })}
+                  </select>
+                )
+              ) : (
+                <select
+                  className="year-dropdown"
+                  value={selectedYear ?? ''}
+                  onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                  disabled={yearsLoading && years.length === 0}
+                >
+                  <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
+                  {years.map(y => (
+                    <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
+                  ))}
+                </select>
+              )
             )}
           </div>
 

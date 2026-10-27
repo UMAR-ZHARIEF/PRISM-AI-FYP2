@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useContext } from 'react';
+import { useState, useMemo, useContext } from 'react';
 import { Download, Calendar, TrendingUp, Users, UserX, Printer, ArrowUp, ArrowDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend, PieChart, Pie, Cell } from 'recharts';
 import Papa from 'papaparse';
@@ -101,22 +101,13 @@ export default function Reports() {
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
-  // Shared view scope from the layout (ScopeContext): the "My Classes" vs
-  // "All School" choice now survives navigation between pages. Safe fallback
-  // mirrors the year context pattern above; falls back to all-school.
-  const scopeCtx = useContext(ScopeContext) || {};
-  const viewScope = scopeCtx.scope || 'all';
-  const setViewScope = useMemo(() => scopeCtx.setScope || (() => {}), [scopeCtx.setScope]);
-
-  // If the teacher loads in before classSections resolve, snap to "all" once
-  // we discover they have no homeroom (and keep them there).
-  useEffect(() => {
-    if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
-      setViewScope('all');
-    }
-  }, [isTeacher, myClassSectionIds, setViewScope]);
-
-  const scopeToMine = viewScope === 'mine' && hasHomeroom;
+  // Strict teacher scoping: teachers can only view reports for their assigned class
+  const scopeToMine = isTeacher && hasHomeroom;
+  const myClasses = useMemo(() => {
+    if (!profile?.id) return [];
+    return classSections.filter(s => s.homeroom_teacher_id === profile.id);
+  }, [classSections, profile]);
+  const assignedClassLabel = myClasses.map(c => `Year ${c.year_num} ${c.name}`).join(', ');
 
   // Scoped: teacher's homerooms only when scopeToMine; otherwise pass-through.
   const scopedRecords = useMemo(() => {
@@ -521,37 +512,20 @@ export default function Reports() {
             {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
           </h1>
           <p className="reports-subtitle">
-            {scopeToMine
-              ? 'Showing your homeroom classes'
-              // Teachers never see the whole school here: RLS scopes their reads
-              // to the classes they teach (migration 0006), so say exactly that.
-              : (isTeacher ? 'Showing all your classes' : 'Showing all classes')}
+            {isTeacher && hasHomeroom
+              ? (myClasses.length > 1 ? `Assigned Classes (${myClasses.length}): ${assignedClassLabel}` : `Assigned Class: ${assignedClassLabel}`)
+              : (isTeacher ? 'No class assigned — please contact admin' : 'Showing all classes')}
           </p>
           {isTeacher && hasHomeroom && (
-            <div className="scope-toggle no-print" role="tablist" aria-label="View scope">
+            <div className="scope-toggle no-print" role="region" aria-label="Assigned Class">
               <span className="tape tl" />
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewScope === 'mine'}
-                className={`scope-pill ${viewScope === 'mine' ? 'is-active' : ''}`}
-                onClick={() => setViewScope('mine')}
-              >
-                My Classes
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewScope === 'all'}
-                className={`scope-pill ${viewScope === 'all' ? 'is-active' : ''}`}
-                onClick={() => setViewScope('all')}
-              >
-                All My Classes
-              </button>
+              <span className="scope-pill is-active" style={{ cursor: 'default' }}>
+                {myClasses.length > 1 ? `Classes (${myClasses.length}): ${assignedClassLabel}` : `Class: ${assignedClassLabel}`}
+              </span>
             </div>
           )}
           {isTeacher && !hasHomeroom && (
-            <p className="scope-note">You are not assigned a homeroom — showing every class you teach</p>
+            <p className="scope-note">You are not assigned to any class in the database. Please contact an administrator.</p>
           )}
         </div>
         <div className="report-flex-gap-8 reports-actions no-print">

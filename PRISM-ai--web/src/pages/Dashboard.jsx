@@ -156,7 +156,6 @@ export default function Dashboard() {
   // Today's emotion-engine summary — powers the compact engagement card below
   // (green >70%, yellow 40-70%, red <40% class attentive average).
   const { summaries: engagementSummaries, loading: engagementLoading } = useEngagement(today);
-
   // ── Engagement watchlist state (GET /api/engagement/risk, today) ──
   // Local fetch + state on purpose: the shared risk hook belongs to the
   // Engagement page (sibling package), and this card needs one unscoped read
@@ -299,6 +298,11 @@ export default function Dashboard() {
 
   // Whether we should actually narrow the client-side data right now.
   const scopeToMine = viewScope === 'mine' && hasHomeroom;
+  const myClasses = useMemo(() => {
+    if (!profile?.id) return [];
+    return classSections.filter(s => s.homeroom_teacher_id === profile.id);
+  }, [classSections, profile?.id]);
+  const assignedClassLabel = myClasses.map(c => `Year ${c.year_num} ${c.name}`).join(', ');
 
   // Class sections narrowed to the teacher's homerooms while "My Classes" is
   // active; pass-through otherwise. Drives the class-breakdown panel AND the
@@ -309,6 +313,7 @@ export default function Dashboard() {
       ? classSections.filter(s => myClassSectionIds.includes(s.id))
       : classSections
   ), [classSections, myClassSectionIds, scopeToMine]);
+
 
   // Scoped students + records. When not scoping, these are pass-throughs.
   const scopedStudents = useMemo(() => {
@@ -779,42 +784,27 @@ export default function Dashboard() {
         <div>
           <h1><span className="word k">Dashboard</span>{selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}</h1>
           <p className="page-subtitle">
-            {scopeToMine
-              ? 'Showing your homeroom classes'
-              : (isTeacher ? 'Showing all classes' : new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}
+            {isTeacher && hasHomeroom
+              ? `Assigned Class: ${assignedClassLabel}`
+              : (isTeacher ? 'No class assigned yet — please contact admin' : new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}
           </p>
           {isTeacher && hasHomeroom && (
-            <div className="scope-toggle" role="tablist" aria-label="View scope">
+            <div className="scope-toggle" role="region" aria-label="Assigned Class">
               <span className="tape tl" />
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewScope === 'mine'}
-                className={`scope-pill ${viewScope === 'mine' ? 'is-active' : ''}`}
-                onClick={() => setViewScope('mine')}
-              >
-                My Classes
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewScope === 'all'}
-                className={`scope-pill ${viewScope === 'all' ? 'is-active' : ''}`}
-                onClick={() => setViewScope('all')}
-              >
-                All School
-              </button>
+              <span className="scope-pill is-active" style={{ cursor: 'default' }}>
+                {myClasses.length > 1 ? `Classes (${myClasses.length}): ${assignedClassLabel}` : `Class: ${assignedClassLabel}`}
+              </span>
             </div>
           )}
           {isTeacher && !hasHomeroom && (
-            <p className="scope-note">You are not assigned a homeroom — showing all-school data</p>
+            <p className="scope-note">You are not assigned to any class in the database. Please contact an administrator.</p>
           )}
         </div>
         <div className="page-header-actions">
           <button className="btn btn-outline" onClick={handleMarkAllPresent} disabled={bulkBusy}>
             <UserCheck size={16} /> {bulkBusy ? `Marking ${bulkProgress.done}/${bulkProgress.total}...` : 'Mark All Present'}
           </button>
-          <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Check-In</button>
+          <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Attendance</button>
         </div>
       </div>
 
@@ -844,7 +834,7 @@ export default function Dashboard() {
         <div className="card tilt-l">
           <span className="tape tr" />
           <div className="card-header">
-            <h2>Live Camera Feed</h2>
+            <h2>Take Attendance (Camera)</h2>
             <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}><span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Offline'}</span>
           </div>
           <div className="camera-feed">
@@ -921,7 +911,6 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-
         {/* ENGAGEMENT WATCHLIST: today's risk model output, worst first.
             Rows link straight to the student profile. */}
         <div className="card tilt-r">
