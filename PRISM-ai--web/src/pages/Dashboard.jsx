@@ -259,9 +259,12 @@ export default function Dashboard() {
   const totalStudents = scopedStudents.length;
   const attendanceRate = totalStudents > 0 ? Math.round((present / totalStudents) * 100) : 0;
 
-  // Active teachers count for admin executive KPI
-  const { profiles: teacherProfiles } = useProfiles({ role: 'teacher' });
-  const activeTeacherCount = teacherProfiles?.length || 15;
+  // Active teachers count for admin executive KPI: unique homeroom teachers assigned across class sections
+  const activeTeacherCount = useMemo(() => {
+    if (!classSections || classSections.length === 0) return 15;
+    const teacherIds = new Set(classSections.map(s => s.homeroom_teacher_id).filter(Boolean));
+    return teacherIds.size || 15;
+  }, [classSections]);
 
   // Biometric enrolment status & coverage rate
   const { enrolledNames, enrolled: enrolledList } = useEnrolledFaces();
@@ -995,7 +998,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="card tilt-r">
+        <div className="card class-breakdown-card">
           <span className="tape tl" />
           <div className="card-header">
             <h2>Attendance by Class</h2>
@@ -1034,7 +1037,7 @@ export default function Dashboard() {
         </div>
 
         {/* ENGAGEMENT OVERVIEW — today's emotion-engine summary */}
-        <div className="card tilt-l">
+        <div className="card engagement-card">
           <span className="tape tr" />
           <div className="card-header">
             <h2>Class Engagement</h2>
@@ -1062,7 +1065,7 @@ export default function Dashboard() {
         </div>
 
         {/* SCHOOL WATCHLIST — at risk student overview */}
-        <div className="card tilt-r">
+        <div className="card watchlist-card">
           <span className="tape bl" />
           <div className="card-header">
             <h2>School Watchlist</h2>
