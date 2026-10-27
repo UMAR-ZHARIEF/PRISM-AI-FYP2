@@ -2174,6 +2174,7 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
   const script = path.join(aiDir, 'enroll_student.py');
   if (!fs.existsSync(script)) return res.status(500).json({ error: 'Enrollment script missing' });
 
+  const cameraIndex = process.env.CAMERA_INDEX || '1';
   const child = spawn(pythonExe, [
     '-u', script,
     '--name', student.full_name,
@@ -2182,7 +2183,7 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
     // the embedding, so detections can resolve students by id — unambiguous
     // even for namesakes — instead of falling back to name matching.
     '--student-id', String(student.id),
-    '--camera', '0',
+    '--camera', cameraIndex,
     // The admin picked this student deliberately, so a re-enrollment replaces
     // the stored embedding in place instead of tripping the duplicate guard
     // (the old interactive prompt crashed under stdio:'ignore' — EOFError).
