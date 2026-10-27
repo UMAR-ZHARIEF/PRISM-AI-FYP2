@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classColors } from '../data/mockData';
@@ -30,7 +31,22 @@ const SETTINGS_DEFAULTS = {
 const DET_SIZE_OPTIONS = [320, 640, 960, 1280];
 
 export default function AdminPanel() {
-  const [tab, setTab] = useState('users');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const validTabs = useMemo(() => ['users', 'settings', 'logs', 'ai', 'faces'], []);
+  const queryTab = searchParams.get('tab');
+  const [tab, setTab] = useState(() => (queryTab && validTabs.includes(queryTab) ? queryTab : 'users'));
+
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    if (t && validTabs.includes(t)) {
+      setTab(t);
+    }
+  }, [searchParams, validTabs]);
+
+  const handleTabClick = (newTab) => {
+    setTab(newTab);
+    setSearchParams({ tab: newTab });
+  };
   const [showModal, setShowModal] = useState(false);
   const [logFilter, setLogFilter] = useState('all');
 
@@ -758,7 +774,7 @@ export default function AdminPanel() {
           <button
             key={t.key}
             className={`admin-tab tab-${t.color} ${tab === t.key ? 'active' : ''}`}
-            onClick={() => setTab(t.key)}
+            onClick={() => handleTabClick(t.key)}
           >
             <t.icon size={16} /> {t.label}
           </button>

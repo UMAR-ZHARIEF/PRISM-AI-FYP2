@@ -30,10 +30,9 @@ export default function Students() {
   const isAdmin = profile?.role === 'admin';
   const isTeacher = profile?.role === 'teacher';
 
-  // Year context (safe fallback if context not yet available)
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
-  const { selectedYear } = yearCtx;
+  // Year context
+  const yearCtx = useYear();
+  const selectedYear = yearCtx?.selectedYear ?? null;
 
   const [search, setSearch] = useState('');
   const [filterClass, setFilterClass] = useState('all');

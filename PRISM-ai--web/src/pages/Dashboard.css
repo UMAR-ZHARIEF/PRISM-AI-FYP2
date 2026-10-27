@@ -520,9 +520,197 @@
   margin-top: 24px;
 }
 
+/* ---------- Admin AI & System Infrastructure card ---------- */
+.admin-system-card {
+  display: flex;
+  flex-direction: column;
+}
+.card-subtitle-small {
+  font-family: var(--accent);
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 2px 0 0;
+}
+.admin-infra-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+}
+.infra-node {
+  background: var(--paper-light);
+  border: 2px solid var(--ink);
+  clip-path: var(--cut-3);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.infra-node:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-paper);
+}
+.infra-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: 2px solid var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  flex-shrink: 0;
+}
+.node-icon.server-icon { color: var(--blue); }
+.node-icon.gpu-icon { color: #8B5CF6; }
+.node-icon.face-icon { color: var(--green); }
+.node-icon.speed-icon { color: var(--orange); }
+.infra-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.infra-label {
+  font-family: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.infra-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.admin-enroll-alert {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: #FEF3C7;
+  border: 2px dashed #D97706;
+  clip-path: var(--cut-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--accent);
+  font-size: 14px;
+  color: #92400E;
+}
+.admin-enroll-alert .alert-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.admin-enroll-alert .alert-icon {
+  color: #D97706;
+  flex-shrink: 0;
+}
+.admin-enroll-alert strong {
+  font-weight: 800;
+}
+
+.admin-infra-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 2px dashed rgba(31, 26, 18, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.infra-diag-link {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+.infra-diag-link:hover {
+  color: var(--ink);
+}
+.class-compare-link {
+  font-family: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 14px;
+}
+
+/* ---------- Engagement watchlist (school at-risk) ---------- */
+.watchlist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.watchlist-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--paper);
+  clip-path: var(--cut-3);
+  text-decoration: none;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.watchlist-row:nth-child(odd)  { transform: rotate(-0.5deg); }
+.watchlist-row:nth-child(even) { transform: rotate(0.4deg); }
+.watchlist-row:hover {
+  transform: translateY(-2px) rotate(0deg);
+  background: var(--paper-deep);
+}
+.watchlist-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--display);
+  font-weight: 900;
+  font-size: 18px;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+.watchlist-class {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.watchlist-score {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--paper-light);
+  padding: 2px 10px;
+  clip-path: var(--cut-pill);
+}
+.watchlist .badge {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 2px 10px;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {
   .dashboard-grid { grid-template-columns: 1fr; }
+  .admin-infra-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 768px) {
   .dashboard-page .page-header { flex-direction: column; align-items: flex-start; gap: 14px; }
@@ -532,4 +720,6 @@
   .filter-select { max-width: unset; }
   table { display: block; overflow-x: auto; }
   .dashboard-page .page-header h1 { font-size: 40px; }
+  .admin-enroll-alert { flex-direction: column; align-items: flex-start; }
 }
+
