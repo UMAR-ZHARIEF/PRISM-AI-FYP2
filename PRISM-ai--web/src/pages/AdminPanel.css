@@ -207,14 +207,13 @@
    `table { display: block }` hack, and the table's natural min-content
    width already keeps the columns intact while the wrapper scrolls. */
 .admin-users-card .table-scroll { overflow-x: auto; }
-/* RS-C: Dashboard.css's ≤768px `table { display: block }` rule is unscoped
-   and leaks onto this page, which would turn the table itself into the
-   scroll container and leave the wrapper inert. Mirror Dashboard's own
-   remedy for its attendance table: restore display: table (wins on
-   specificity over the bare `table` selector) and give the table a
-   min-width so the five columns keep their natural ~660px layout and the
-   wrapper does the scrolling. */
-.admin-users-card .table-scroll table { display: table; min-width: 620px; }
+/* FIX-7D: Dashboard.css's former unscoped `table { display: block }` phone
+   hack is now scoped to .dashboard-page, so the table here keeps native
+   `display: table` at every width; the RS-C `display: table; min-width:
+   620px` override against that leak was removed as dead weight. Verified at
+   390x844: the five columns' natural min-content (~660px) still exceeds the
+   ~302px card, so the wrapper alone keeps every column — including ACTION —
+   reachable via the in-card scroll, same as the Students table (D13). */
 
 .admin-user-cell {
   display: flex;

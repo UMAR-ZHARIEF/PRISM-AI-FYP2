@@ -212,26 +212,34 @@ export default function Reports() {
     return bucket;
   }, [scopedRecords]);
 
-  // Monthly trend: weekly buckets across the loaded range, showing rate %.
+  // Monthly trend: one point per SCHOOL DAY (any day with at least one record
+  // in range — the same school-day definition the headline card uses), showing
+  // that day's HONEST attendance rate. Same rule as the headline card and
+  // Class Comparison: every enrolled student in scope is expected present or
+  // late, and UNMARKED students count as ABSENT — each day's rate =
+  // (present + late marks that day) / (enrolled students in scope): 91
+  // enrolled with 6 of them marked on a day is 6/91 = 6.6% -> 7%, never 100%.
+  // Days with no marks at all are not school days and get no point. When no
+  // enrolled students are in scope every rate is null (the line renders a
+  // gap, never a computed %). Per-student panels elsewhere stay MARKED-ONLY
+  // by contract (see ratesByStudent).
   const monthlyData = useMemo(() => {
-    const groups = {};
+    const enrolled = scopedStudents.length;
+    const byDate = {};
     scopedRecords.forEach(r => {
       if (!r.date) return;
-      const d = new Date(r.date + 'T00:00:00');
-      // Week-of-month key (YYYY-MM-W).
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-W${Math.ceil(d.getDate() / 7)}`;
-      if (!groups[key]) groups[key] = { present: 0, total: 0 };
-      groups[key].total += 1;
-      if (r.status === 'present' || r.status === 'late') groups[key].present += 1;
+      if (!byDate[r.date]) byDate[r.date] = { present: 0, late: 0 };
+      if (r.status === 'present') byDate[r.date].present += 1;
+      else if (r.status === 'late') byDate[r.date].late += 1;
     });
-    return Object.keys(groups).sort().map((k, i) => {
-      const g = groups[k];
-      return {
-        week: `W${i + 1}`,
-        rate: g.total > 0 ? Math.round((g.present / g.total) * 100) : 0,
-      };
-    });
-  }, [scopedRecords]);
+    return Object.keys(byDate).sort().map(date => ({
+      date,
+      day: date.slice(8), // day-of-month label for the X axis
+      rate: enrolled > 0
+        ? Math.round(((byDate[date].present + byDate[date].late) / enrolled) * 100)
+        : null,
+    }));
+  }, [scopedRecords, scopedStudents]);
 
   // Monthly Trend Y-axis: fit the plotted rates with ±5 padding, clamped 0-100.
   const monthlyDomain = useMemo(() => {
@@ -643,7 +651,7 @@ export default function Reports() {
                   when the fitted domain tops out at exactly 100. */}
               <LineChart data={monthlyData} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
-                <XAxis dataKey="week" fontSize={12} stroke="#1F1A12" />
+                <XAxis dataKey="day" fontSize={12} stroke="#1F1A12" />
                 <YAxis fontSize={12} domain={monthlyDomain} stroke="#1F1A12" />
                 <Tooltip />
                 <Line type="monotone" dataKey="rate" stroke="#2F75C9" strokeWidth={3} dot={{ fill: '#F2C744', stroke: '#1F1A12', strokeWidth: 2, r: 6 }} activeDot={{ r: 8, fill: '#E04A3F', stroke: '#1F1A12', strokeWidth: 2 }} />

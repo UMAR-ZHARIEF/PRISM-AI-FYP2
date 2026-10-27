@@ -275,6 +275,12 @@ export default function Engagement() {
             ) : sorted.length === 0 ? (
               <div className="empty-state">No engagement data recorded for {date}.</div>
             ) : (
+              /* FIX-7D: always-on wrapper scroll (same pattern as the Students
+                 table, D13). Before the Dashboard.css table-rule scoping, the
+                 leaked `table { display: block }` hack made the table itself
+                 the scroll container at phone width; the wrapper now does that
+                 job at every viewport without depending on other pages' CSS. */
+              <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
@@ -325,6 +331,7 @@ export default function Engagement() {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </>

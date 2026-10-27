@@ -223,6 +223,12 @@
 
 /* === TABLE ================================================= */
 .engagement-table-card { overflow: visible; }
+/* FIX-7D: the six-column table's natural min-content width (~582px at 390px)
+   cannot fit a phone card; the always-on wrapper scrolls it inside the card
+   (same pattern as Students D13). Before this, the page silently depended on
+   Dashboard.css's unscoped `table { display: block }` phone hack, which that
+   package scoped to .dashboard-page. */
+.engagement-page .table-scroll { overflow-x: auto; }
 .eng-student-cell {
   display: flex;
   align-items: center;
