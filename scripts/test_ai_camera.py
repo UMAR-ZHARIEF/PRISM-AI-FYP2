@@ -57,6 +57,13 @@ def run_test(camera_idx=1, num_frames=15, output_image_path="test_camera_result.
         print("[WARN] DirectShow failed, trying default backend...")
         cap = cv2.VideoCapture(camera_idx)
 
+    if not cap.isOpened() and camera_idx != 0:
+        print(f"[WARN] Camera {camera_idx} could not be opened. Falling back to Camera 0...")
+        camera_idx = 0
+        cap = cv2.VideoCapture(camera_idx, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(camera_idx)
+
     if not cap.isOpened():
         print(f"[ERROR] Could not open camera {camera_idx}!")
         return False

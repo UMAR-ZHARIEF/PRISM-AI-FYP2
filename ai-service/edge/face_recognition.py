@@ -136,7 +136,7 @@ COLORS = {
 # ── Two-thread tuning knobs ───────────────────────────────────────────────────
 DETECT_EVERY_N = 3        # AI worker runs InsightFace every 3rd new frame
 EMOTION_INTERVAL = 2.0    # seconds between emotion-inference passes
-EMOTION_CONF_THRESHOLD = 0.25   # min YOLO score to keep an emotion box
+EMOTION_CONF_THRESHOLD = 0.15   # min YOLO score to keep an emotion box
 EMOTION_NMS_IOU = 0.45          # NMS overlap threshold for emotion boxes
 FACE_CROP_PADDING = 30          # px of context added around each face crop
 
@@ -297,11 +297,31 @@ def parse_yolo_predictions(pred, num_classes, gain, pad_x, pad_y,
     if scores.shape[1] != num_classes:
         return []
 
+    # Discard anchors on the outer letterbox padding boundary to eliminate
+    # phantom border contrast artifacts
+    cx, cy = boxes_cxcywh[:, 0], boxes_cxcywh[:, 1]
+    margin_x = pad_x + 5
+    margin_y = pad_y + 5
+    inside_mask = (cx >= margin_x) & (cx <= (640 - margin_x)) & (cy >= margin_y) & (cy <= (640 - margin_y))
+    if np.any(inside_mask):
+        boxes_cxcywh = boxes_cxcywh[inside_mask]
+        scores = scores[inside_mask]
+
     class_ids = scores.argmax(axis=1)
     confs = scores.max(axis=1)
     keep = confs >= conf_threshold
     if not np.any(keep):
-        return []
+        # Fallback: if no anchor strictly exceeds conf_threshold, pick the top anchor
+        # in the face region as long as its score is above 0.10 baseline
+        if len(confs) > 0:
+            top_i = confs.argmax()
+            if confs[top_i] >= 0.10:
+                keep = np.zeros_like(confs, dtype=bool)
+                keep[top_i] = True
+            else:
+                return []
+        else:
+            return []
     boxes_cxcywh = boxes_cxcywh[keep]
     class_ids = class_ids[keep]
     confs = confs[keep]
@@ -404,21 +424,47 @@ class EmotionEngine:
         if self.session is None or face_crop is None or face_crop.size == 0:
             return None
         padded, gain, pad_x, pad_y = _letterbox(face_crop, self.input_size)
-        # NOTE: best_v2.pt was trained on raw 0-255 pixel values, NOT
-        # normalized 0-1. Dividing by 255 crushes the signal to near-zero
-        # (verified: 0.0019 max confidence vs 0.9985 without normalization).
-        blob = padded[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32)
+        # Normalize pixels to [0.0, 1.0] as standard for Ultralytics YOLO models.
+        # Passing unnormalized 0-255 values causes feature activations to saturate
+        # and trigger false Happy detections on border artifacts.
+        blob = (padded[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32)) / 255.0
         outputs = self.session.run(None, {self.input_name: blob})
 
-        # Boxes stay in crop coordinates (no frame_wh clamp) — only the label
-        # and score are consumed, never the geometry.
-        raw = parse_yolo_predictions(
-            outputs[0], len(self.classes), gain, pad_x, pad_y
-        )
-        if not raw:
+        pred = outputs[0]
+        if pred.ndim == 3:
+            pred = pred[0]
+        if pred.shape[0] == 4 + len(self.classes) and pred.shape[0] < pred.shape[-1]:
+            pred = pred.T
+        if pred.ndim != 2 or pred.shape[1] != 4 + len(self.classes):
             return None
-        best = max(raw, key=lambda det: det["confidence"])
-        return self.classes[best["class_id"]], best["confidence"]
+
+        boxes = pred[:, :4]
+        scores = pred[:, 4:]
+
+        # Filter out anchors that sit in the letterbox padding boundaries to avoid
+        # border contrast artifacts saturating detections.
+        cx, cy = boxes[:, 0], boxes[:, 1]
+        margin_x = pad_x + 8
+        margin_y = pad_y + 8
+        inside_mask = (cx >= margin_x) & (cx <= (self.input_size - margin_x)) & (cy >= margin_y) & (cy <= (self.input_size - margin_y))
+        if not np.any(inside_mask):
+            inside_mask = np.ones(len(boxes), dtype=bool)
+
+        val_scores = scores[inside_mask]
+
+        # Pick the most confident face anchor
+        max_per_anchor = val_scores.max(axis=1)
+        best_anchor_idx = max_per_anchor.argmax()
+        anchor_scores = val_scores[best_anchor_idx]
+
+        cls_id = int(anchor_scores.argmax())
+        emotion = self.classes[cls_id]
+
+        # Compute relative confidence distribution among the 10 emotion classes
+        s_sum = anchor_scores.sum()
+        rel_conf = float(anchor_scores[cls_id] / s_sum) if s_sum > 0 else float(anchor_scores[cls_id])
+
+        return emotion, rel_conf
 
 
 # ── InsightFace Setup ─────────────────────────────────────────────────────────
