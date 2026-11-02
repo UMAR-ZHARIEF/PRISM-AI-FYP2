@@ -1188,6 +1188,16 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
               if (rows.length === 0) {
                 console.log('[notification fanout] skipped: identical notification already sent today');
               } else {
+                // Never chain .select() onto this insert (keep the default
+                // minimal return). A representation return makes PostgREST
+                // re-read the new row under notifications_select_for_me,
+                // which hides a row addressed to someone else from the
+                // inserting staff user; combined RLS semantics then surface
+                // a misleading 42501 "new row violates row-level security
+                // policy" even though notifications_insert_staff passed.
+                // Evidence: .pi/work-reports/ft-phase3-rls.md Finding 3 and
+                // ft-rls-suite.mjs assertion 13 (measured with
+                // Prefer: return=minimal for this exact reason).
                 const { error: nErr } = await supabase.from('notifications').insert(rows);
                 if (nErr) {
                   console.warn('[notification fanout] insert failed:', nErr.message);

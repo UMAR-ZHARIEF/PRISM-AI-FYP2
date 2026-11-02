@@ -246,7 +246,13 @@
 
 .student-actions {
   display: flex;
-  gap: 8px;
+  /* G1: at 1280 the three buttons totalled 269px against a 248px card content
+     box and overflowed every card. Tighter side padding and icon gap fit all
+     three on one line there; wrap is the narrow-track fallback (the auto-fill
+     grid can hand the card a 240px track, whose 196px content box cannot hold
+     three buttons on one line at any readable size). */
+  flex-wrap: wrap;
+  gap: 8px 6px;
   justify-content: center;
   margin-top: 10px;
   padding-top: 10px;
@@ -254,7 +260,14 @@
 
 .btn-sm-grid {
   font-size: 14px;
-  padding: 6px 14px;
+  /* G1: was padding 6px 14px with the .btn icon gap of 10px; the smaller
+     side padding and icon gap bring the one-line row to ~240px, inside the
+     248px card content box at 1280. nowrap keeps each label whole while
+     flex-wrap handles narrower tracks (the auto-fill grid can hand the card
+     a 240px track whose 196px content box cannot hold three buttons). */
+  gap: 6px;
+  padding: 6px 8px;
+  white-space: nowrap;
 }
 
 /* === EMPTY STATE ========================================= */
