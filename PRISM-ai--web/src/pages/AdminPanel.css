@@ -620,7 +620,11 @@
 
 .ai-metric {
   display: grid;
-  grid-template-columns: 130px 1fr 70px;
+  /* G2: fixed 130px/70px side columns plus 12px gaps left the 1fr bar 1px at
+     a 225px tile and overflowed the row by 3px at 1280 (min-content 228 vs
+     cw 225). Rebalanced tracks with a floored shrinkable middle keep the bar
+     visible and the row inside its tile at every width. */
+  grid-template-columns: 110px minmax(28px, 1fr) 60px;
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;

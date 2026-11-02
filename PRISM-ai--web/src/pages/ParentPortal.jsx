@@ -304,6 +304,9 @@ export default function ParentPortal() {
   // ── Derived display values ──
   const childName = (student && student.full_name) || '';
   const childClassName = (student && student.class_section && student.class_section.name) || '';
+  // P1: the consent screen identifies the child by year + class, so the portal
+  // banner leads with the same two identifiers (age stays portal-only).
+  const childYearNum = student && student.year_num != null ? student.year_num : null;
   const childAge = student ? ageFromDob(student.dob) : null;
   const parentName = (profile && profile.full_name) || '';
 
@@ -441,7 +444,11 @@ export default function ParentPortal() {
             <div className="pp-banner-text">
               <h1 className="pp-child-name">{childName}</h1>
               <p className="pp-child-meta">
-                <span>Class {childClassName}</span>
+                {/* P1: Year + Class in the same order as the consent screen,
+                    so both surfaces describe the child identically. */}
+                {childYearNum != null && <span>Year {childYearNum}</span>}
+                {childYearNum != null && childClassName && <span className="pp-dot-sep">&bull;</span>}
+                {childClassName && <span>Class {childClassName}</span>}
                 {childAge != null && (
                   <>
                     <span className="pp-dot-sep">&bull;</span>
