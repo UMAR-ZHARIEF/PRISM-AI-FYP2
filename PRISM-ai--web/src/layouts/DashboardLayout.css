@@ -135,6 +135,25 @@
   cursor: pointer;
 }
 
+/* RS-A collapsed-rail fit: the closed rail's inner box is 68px (72px minus the
+   4px border-right under the global border-box rule). The open-state horizontal
+   paddings overflow it: the header's content needs 62px in a 36px box (logo 24
+   + toggle 38 -> scrollWidth 78, clipped by overflow-x), and nav/footer links
+   keep only 12px of their 20px glyph box, flex-squeezing every icon to ~12px.
+   These closed-only overrides restore full-size, centered glyphs inside the
+   rail; the open sidebar and the phone drawer (.open at <=768px) are untouched. */
+.sidebar.closed .sidebar-header { padding-left: 4px; padding-right: 4px; }
+.sidebar.closed .sidebar-logo { gap: 0; }
+.sidebar.closed .sidebar-toggle { padding: 6px; }
+.sidebar.closed .sidebar-nav,
+.sidebar.closed .sidebar-footer { padding-left: 0; padding-right: 0; }
+.sidebar.closed .sidebar-link {
+  justify-content: center;
+  gap: 0;
+  padding-left: 22px;
+  padding-right: 22px;
+}
+
 /* ============ MAIN ============ */
 .dashboard-main {
   flex: 1;
@@ -298,7 +317,19 @@
   box-shadow: var(--shadow-card);
   animation: paper-rise 0.25s ease both;
 }
-.notif-panel { width: 380px; }
+.notif-panel {
+  /* D14: pin the open panel to the viewport just below the sticky topbar
+     (76px bar + 3px dashed border + clearance) instead of anchoring it to
+     the bell button. The button-anchored 380px panel started ~4px above the
+     topbar's bottom edge (its dashed border read as a dark bar on the
+     panel's top edge), swung left across the breadcrumb/title column on
+     narrow viewports, and poked past the viewport edge on phones, dragging
+     a horizontal scrollbar with it. */
+  position: fixed;
+  top: 88px;
+  right: 16px;
+  width: min(380px, calc(100vw - 32px));
+}
 .user-panel { width: 220px; padding: 10px 8px; }
 
 .dropdown-header {
@@ -358,12 +389,27 @@
 .dot-danger  { background: var(--red); }
 .dot-info    { background: var(--blue); }
 .dot-success { background: var(--green); }
+.dot-attendance { background: var(--blue); }
+.dot-engagement { background: var(--orange); }
 
 .dropdown-item p { margin: 0; line-height: 1.4; color: var(--ink); }
 .dropdown-item small { color: var(--ink-soft); font-family: var(--mono); font-size: 11px; letter-spacing: 0.06em; }
 
 /* ============ CONTENT ============ */
 .dashboard-content { padding: 32px 36px; flex: 1; }
+
+/* W4 wide-screen stretch (continuous): the content column grows fluidly with
+   the window up to a 1920px ceiling, then caps and centers. The cap is
+   unconditional, so there is no breakpoint step: whenever the post-sidebar
+   area is under 1920px the viewport is narrower than the cap and the column
+   simply fills it (byte-identical layout to the old fluid behavior); once the
+   area would exceed the ceiling the max-width engages continuously and the
+   auto margins center the column. width:100% is required because the auto
+   centering margins disable the flex default align-self: stretch in the
+   column-flex .dashboard-main. Sidebar width is untouched (260px open / 72px
+   closed). Centered standalone pages (Landing/Login/ParentPortal) do not use
+   .dashboard-content and are unaffected. */
+.dashboard-content { width: 100%; max-width: 1920px; margin-inline: auto; }
 
 /* ============ FOOTER ============ */
 .dashboard-footer {

@@ -1,23 +1,16 @@
-import { useState, useEffect, useRef, useMemo, createContext, useContext } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FileBarChart, Settings, Bell, Menu, X, LogOut,
-  Camera, UserCog, ChevronDown, Video, ClipboardCheck, BarChart3, Activity
+  UserCog, ChevronDown, Video, ClipboardCheck, BarChart3, Activity
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
 import useNotifications from '../hooks/useNotifications';
+import { YearContext, ScopeContext } from './dashboardContexts';
 import './DashboardLayout.css';
-
-export const YearContext = createContext();
-export const useYear = () => useContext(YearContext);
-
-// Shared view scope ("My Classes" vs "All School"). Lives at the layout level
-// so the teacher's choice survives navigation between Dashboard, Reports and
-// Compare Classes. Defaults: 'mine' for teachers, 'all' for admins.
-export const ScopeContext = createContext();
-export const useScope = () => useContext(ScopeContext);
+import './WorkspacePolish.css';
 
 const sidebarSections = [
   {
@@ -49,26 +42,34 @@ const sidebarSections = [
 // Sidebar highlight rule: exact match for the Dashboard root, prefix match for
 // everything else. Class Detail pages (/dashboard/class/...) are a prefix of
 // no sidebar path, so they highlight the closest related section, Students.
-function isSidebarLinkActive(link, pathname) {
-  if (pathname.startsWith('/dashboard/class')) {
-    return link.path === '/dashboard/students';
+function isSidebarLinkActive(link, currentPath) {
+  if (link.path === '/dashboard') return currentPath === '/dashboard';
+  if (link.path === '/dashboard/students') {
+    return currentPath.startsWith('/dashboard/students') || currentPath.startsWith('/dashboard/class/');
   }
-  return link.path === '/dashboard' ? pathname === '/dashboard' : pathname.startsWith(link.path);
+  return currentPath.startsWith(link.path);
 }
 
 export default function DashboardLayout() {
-  // Start collapsed on phones so the sidebar never covers the page on first load.
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768);
+  const [selectedYear, setSelectedYear] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !window.matchMedia('(max-width: 768px)').matches);
+
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 768px)');
+    const syncNavigation = event => setSidebarOpen(!event.matches);
+    mobile.addEventListener('change', syncNavigation);
+    return () => mobile.removeEventListener('change', syncNavigation);
+  }, []);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [selectedYear, setSelectedYear] = useState(null);
+
   const location = useLocation();
   const navigate = useNavigate();
   const notifRef = useRef(null);
   const userRef = useRef(null);
 
   const { years, loading: yearsLoading } = useYears();
-  const { classSections: mySections } = useClassSections();
+  const { classSections } = useClassSections();
   const { notifications, unreadCount, markAllRead } = useNotifications();
   const { user, profile, signOut } = useAuth();
 
@@ -77,18 +78,16 @@ export default function DashboardLayout() {
 
   const teacherClassSections = useMemo(() => {
     if (!isTeacher) return [];
-    return (mySections || []).filter(s => s.homeroom_teacher_id === profile?.id);
-  }, [isTeacher, mySections, profile?.id]);
+    return (classSections || []).filter(s => s.homeroom_teacher_id === profile?.id);
+  }, [isTeacher, classSections, profile?.id]);
 
   const teacherYears = useMemo(() => {
     return Array.from(new Set(teacherClassSections.map(s => s.year_num)));
   }, [teacherClassSections]);
 
-  useEffect(() => {
-    if (isTeacher && selectedYear !== null && teacherYears.length > 0 && !teacherYears.includes(selectedYear)) {
-      setSelectedYear(null);
-    }
-  }, [isTeacher, teacherYears, selectedYear]);
+  if (isTeacher && selectedYear !== null && teacherYears.length > 0 && !teacherYears.includes(selectedYear)) {
+    setSelectedYear(null);
+  }
 
   // Shared view scope for the pages below (see ScopeContext above). The user's
   // explicit pick wins once made; until then the scope derives from the role:
@@ -155,7 +154,7 @@ export default function DashboardLayout() {
             <img src="/logo.png" alt="PRISM-AI" className="sidebar-logo-img" />
             {sidebarOpen && <span>PRISM-AI</span>}
           </Link>
-          <button className="sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
+          <button className="sidebar-toggle" aria-label={sidebarOpen ? 'Collapse navigation' : 'Expand navigation'} aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(!sidebarOpen)}>
             {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
         </div>
@@ -174,6 +173,7 @@ export default function DashboardLayout() {
                       key={link.path}
                       to={link.path}
                       className={`sidebar-link ${isSidebarLinkActive(link, location.pathname) ? 'active' : ''}`}
+                      onClick={() => { if (window.matchMedia('(max-width: 768px)').matches) setSidebarOpen(false); }}
                     >
                       <link.icon size={20} />
                       {sidebarOpen && <span>{link.label}</span>}
@@ -196,7 +196,7 @@ export default function DashboardLayout() {
       <div className={`dashboard-main ${sidebarOpen ? '' : 'expanded'}`}>
         <header className="dashboard-topbar">
           <div className="topbar-left">
-            <button className="mobile-menu" onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <button className="mobile-menu" aria-label="Toggle navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(!sidebarOpen)}>
               <Menu size={20} />
             </button>
             <div className="breadcrumb">
@@ -235,18 +235,19 @@ export default function DashboardLayout() {
                   </select>
                 )
               ) : (
-              <select
-                className="year-dropdown"
-                value={selectedYear ?? ''}
-                onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
-                disabled={yearsLoading && years.length === 0}
-              >
-                <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
-                {years.map(y => (
-                  <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
-                ))}
-              </select>
-            ))}
+                <select
+                  className="year-dropdown"
+                  value={selectedYear ?? ''}
+                  onChange={(e) => setSelectedYear(e.target.value ? Number(e.target.value) : null)}
+                  disabled={yearsLoading && years.length === 0}
+                >
+                  <option value="">{yearsLoading && years.length === 0 ? 'Loading…' : 'All Years'}</option>
+                  {years.map(y => (
+                    <option key={y.year_num} value={y.year_num}>{y.label || `Year ${y.year_num}`}</option>
+                  ))}
+                </select>
+              )
+            )}
           </div>
 
           <div className="topbar-right">

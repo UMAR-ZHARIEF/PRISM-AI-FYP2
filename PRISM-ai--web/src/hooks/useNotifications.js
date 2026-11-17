@@ -15,17 +15,28 @@ function useNotifications() {
     setRefreshTick(function bump(n) { return n + 1; });
   }, []);
 
-  useEffect(function fetchNotifications() {
+  // Reset the fetch state synchronously whenever the user or refreshTick
+  // changes, during render instead of inside the effect (per
+  // react-hooks/set-state-in-effect). The no-user branch reproduces the old
+  // early-return resets; mount without a user is already covered by the
+  // initial state (loading starts Boolean(userId), notifications start []).
+  const [fetchKey, setFetchKey] = useState({ userId, refreshTick });
+  if (fetchKey.userId !== userId || fetchKey.refreshTick !== refreshTick) {
+    setFetchKey({ userId, refreshTick });
     if (!userId) {
       setNotifications([]);
       setLoading(false);
       setError(null);
-      return undefined;
+    } else {
+      setLoading(true);
+      setError(null);
     }
+  }
+
+  useEffect(function fetchNotifications() {
+    if (!userId) return undefined;
 
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     // RLS (notifications_select_for_me) already restricts rows to:
     //   - scope='user' AND recipient_id = auth.uid()   (direct messages to me)
@@ -52,6 +63,22 @@ function useNotifications() {
       cancelled = true;
     };
   }, [userId, refreshTick]);
+
+  // Notifications are only fetched on mount (or manual refresh), so an
+  // alert inserted after mount (e.g. an at-risk alert written by the edge
+  // AI) would stay invisible until a full remount. Poll on an interval and
+  // refresh when the window regains focus so the bell stays live.
+  useEffect(function scheduleNotificationRefresh() {
+    if (!userId) return undefined;
+
+    const intervalId = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+
+    return function cleanupPolling() {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [userId, refresh]);
 
   // Broadcast rows (scope <> 'user') have no per-user read state under
   // Option B, so the unread badge only counts direct messages.

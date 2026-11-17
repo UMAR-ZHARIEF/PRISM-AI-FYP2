@@ -1,6 +1,6 @@
 # PRISM-AI Privacy Policy
 
-**Version 1.0.0 — Effective from 19 May 2026**
+**Version 1.1.0, effective from 26 October 2026**
 
 This Privacy Policy explains how PRISM-AI collects, uses, stores, and protects personal data, in compliance with the Malaysian **Personal Data Protection Act 2010 (Act 709)** as amended by the **Personal Data Protection (Amendment) Act 2024 (Act A1727)**.
 
@@ -12,10 +12,10 @@ If you are reading this on behalf of a child, please note that this policy treat
 
 **The school** is the data controller. The developer (PRISM-AI software) is a data processor working on the school's instructions.
 
-The school's appointed **Data Protection Officer (DPO)** will be named here once the school designates one (required under PDPA new Section 12A from 1 June 2025):
+The **Data Protection Officer (DPO)** contact point for this system (required under PDPA new Section 12A, in force from 1 June 2025) is:
 
-- **Name**: *To be appointed by the school.*
-- **Email**: *To be posted by the school.*
+- **Name**: Director of PRISM-AI
+- **Email**: forprojectdump@gmail.com
 - **Postal address**: *School office address.*
 
 You may contact the DPO at any time about your data.
@@ -34,7 +34,7 @@ We collect the following categories of personal data:
 
 ### About parents and staff
 - Full name, email, phone number
-- Role in the system (parent, teacher, admin, assistant)
+- Role in the system (parent, teacher, admin)
 - Profile photo (if uploaded)
 - Records of which Terms and Privacy Policy versions you have accepted
 - Records of any consents you have given or withdrawn for your child's biometric data
@@ -87,7 +87,7 @@ We do **not** share data with marketing companies, social media platforms, or an
 Personal data is stored in:
 
 - A database hosted on **Supabase**, with servers located in a region selected by the school (default: closest region to Malaysia).
-- A local file on the school's camera device for face embeddings during attendance taking.
+- A local data file on the school's AI machine (the computer that runs the face recognition) for face embeddings during attendance taking.
 
 ### Cross-border transfer
 
@@ -124,7 +124,7 @@ We process face data **only** if:
 2. The pupil has a non-biometric alternative if the parent refuses (manual roll call). **Refusing consent does not affect the child's right to attend school.**
 3. The embedding is stored as a list of numbers, not as a photograph.
 
-You can **withdraw consent at any time** through the Parent Portal. We will delete the embedding within 7 calendar days of withdrawal.
+You can **withdraw consent at any time** through the Parent Portal. When you withdraw, the school will remove your child's face data in line with the retention rules in Section 7. You can check the withdrawal status in the Parent Portal at any time, and remind the school through the contact points in Section 15 if removal has not yet happened.
 
 ## 9. Your rights
 
@@ -139,9 +139,9 @@ Under PDPA 2010 (as amended), you have the right to:
 
 You can exercise these rights through:
 
-- The **"My Data"** screen in the Parent Portal.
-- Email to the school's DPO (Section 1 above).
-- A written letter to the school office.
+- Email to the school's DPO at forprojectdump@gmail.com (Section 1 above).
+- A written letter or a visit to the school office.
+- The Parent Portal, to withdraw biometric consent (Section 8).
 
 We will respond within **21 days** of receiving your request.
 
@@ -150,9 +150,9 @@ We will respond within **21 days** of receiving your request.
 We follow the PDPA Standard 2015 (security, retention, integrity):
 
 - All personal data is encrypted in transit (HTTPS).
-- Face embeddings are encrypted at rest.
-- Access is restricted to authorised users by role.
-- Every access to face data is recorded in an audit log.
+- Face embeddings are mathematical vectors (lists of numbers, not images) stored in a server-side data file on the school's AI machine. Access to that file is restricted to administrators.
+- Access to the system is restricted to authorised users by role.
+- Administrative actions (face enrolment and removal, AI start and stop, attendance marks, and user changes) are recorded in an audit log. Routine reads of data are not individually logged.
 - We test our security at least annually.
 - We have an incident response plan ready (see Section 11).
 
@@ -195,7 +195,8 @@ When that happens, we will:
 
 For all data-protection questions:
 
-- **DPO email**: *(school to fill in)*
+- **DPO name**: Director of PRISM-AI
+- **DPO email**: forprojectdump@gmail.com
 - **DPO phone**: *(school to fill in)*
 - **Postal**: *(school address)*
 

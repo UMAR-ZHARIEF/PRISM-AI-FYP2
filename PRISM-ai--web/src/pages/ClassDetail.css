@@ -205,7 +205,10 @@
 }
 
 .classdetail-student-identity {
-  flex: 1;
+  /* Real flex-basis (not 0): with basis 0% the row never hits a wrap point and
+     the identity is crushed instead (Stage 3: name text clipped 64>33 at 390px).
+     A 160px basis lets the status badge drop to its own line on phones. */
+  flex: 1 1 160px;
   min-width: 0;
 }
 
@@ -217,6 +220,7 @@
   letter-spacing: -0.015em;
   color: var(--ink);
   margin: 0;
+  overflow-wrap: break-word;
 }
 
 .classdetail-student-meta {
@@ -342,6 +346,15 @@
 }
 
 /* ---------- Recharts scoped ---------- */
+/* Chart blowout guard: when a recharts width measurement goes stale (rendered
+   on a wide viewport, then the window shrinks) the wrapper keeps an inline px
+   width far larger than the card and escapes it (Stage 3: page 1914px wide at
+   390px). clip on the x axis only traps that escape inside the card without
+   touching the y axis, so the corner tape overhang stays visible; the chart
+   itself re-renders at the real card width via its ResizeObserver. */
+.classdetail-chart-card {
+  overflow-x: clip;
+}
 .classdetail-page .recharts-text {
   font-family: var(--mono);
   font-size: 11px;
@@ -392,5 +405,9 @@
     flex-direction: column;
     gap: 8px;
     align-items: flex-start;
+  }
+  /* Compact legend so Present/Absent/Late fit one line at 390px. */
+  .classdetail-page .recharts-legend-item-text {
+    font-size: 14px !important;
   }
 }

@@ -100,6 +100,33 @@
   font-family: var(--body);
 }
 
+/* GFM tables (remark-gfm): retention schedule and any future legal tables. */
+.legal-card table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 14px 0 18px;
+}
+
+.legal-card th,
+.legal-card td {
+  border: 2px solid var(--ink);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.legal-card th {
+  background: var(--paper-deep);
+  font-family: var(--accent);
+  font-size: 17px;
+}
+
+.legal-card td {
+  background: var(--paper-light);
+}
+
 .legal-card a {
   color: var(--blue);
   text-decoration: underline;

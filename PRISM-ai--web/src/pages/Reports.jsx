@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useContext } from 'react';
+import { useState, useMemo, useContext } from 'react';
 import { Download, Calendar, TrendingUp, Users, UserX, Printer, ArrowUp, ArrowDown } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Legend, PieChart, Pie, Cell } from 'recharts';
 import Papa from 'papaparse';
@@ -8,7 +8,7 @@ import useAttendance from '../hooks/useAttendance';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import { useToast } from '../components/Toast';
-import { YearContext, ScopeContext } from '../layouts/DashboardLayout';
+import { YearContext, ScopeContext } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext';
 import Pagination from '../components/Pagination';
 import { attendanceRate } from '../lib/attendanceRate';
@@ -97,7 +97,7 @@ export default function Reports() {
     return (classSections || [])
       .filter(s => s.homeroom_teacher_id === profile.id)
       .map(s => s.id);
-  }, [classSections, isTeacher, profile?.id]);
+  }, [classSections, isTeacher, profile]);
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
@@ -106,7 +106,7 @@ export default function Reports() {
   const myClasses = useMemo(() => {
     if (!profile?.id) return [];
     return classSections.filter(s => s.homeroom_teacher_id === profile.id);
-  }, [classSections, profile?.id]);
+  }, [classSections, profile]);
   const assignedClassLabel = myClasses.map(c => `Year ${c.year_num} ${c.name}`).join(', ');
 
   // Scoped: teacher's homerooms only when scopeToMine; otherwise pass-through.
@@ -124,6 +124,9 @@ export default function Reports() {
 
   // Per-student attendance rate over the loaded range, via the shared utility
   // ((present + late) / total). Students with no records stay out of the map.
+  // Deliberately MARKED-ONLY: only the summary rates (headline card, class
+  // comparison, PDF summary) apply the honest rule where unmarked students
+  // count as absent; per-student panels keep their existing behaviour.
   const ratesByStudent = useMemo(() => {
     const byStudent = {};
     scopedRecords.forEach(r => {
@@ -145,13 +148,30 @@ export default function Reports() {
     return scopedRecords.filter(r => r.date === todayStr);
   }, [scopedRecords, todayStr]);
 
+  // School days in the loaded range: count of distinct dates present in records.
+  // Defined here because the honest Attendance Rate denominator needs it below.
+  const schoolDays = useMemo(() => {
+    const set = new Set();
+    scopedRecords.forEach(r => { if (r.date) set.add(r.date); });
+    return set.size;
+  }, [scopedRecords]);
+
   const present = todayRecords.filter(r => r.status === 'present').length;
   const absent = todayRecords.filter(r => r.status === 'absent').length;
   const late = todayRecords.filter(r => r.status === 'late').length;
-  // Attendance Rate stat: shared utility over the FULL selected range
-  // ((present + late) / total), not just today's records.
-  const { rate: rangeRate } = attendanceRate(scopedRecords);
-  const totalRate = rangeRate != null ? Math.round(rangeRate) : 0;
+  // Attendance Rate stat: HONEST rate over the FULL selected range, not just
+  // today's records. Rule: every enrolled student in scope is expected present
+  // or late on every school day (any day with a record in range), and UNMARKED
+  // student-days count as ABSENT. So the rate is (present + late records) /
+  // (enrolled students x school days): 91 students with 6 present and 85
+  // unmarked on one day is 6/91 = 6.6% -> 7%, never 100%.
+  // null (no enrolled students or no school days in range) renders as an em
+  // dash, never a computed %.
+  const { present: rangePresent, late: rangeLate } = attendanceRate(scopedRecords);
+  const rangeEnrolled = scopedStudents.length;
+  const totalRate = rangeEnrolled > 0 && schoolDays > 0
+    ? Math.round(((rangePresent + rangeLate) / (rangeEnrolled * schoolDays)) * 100)
+    : null;
 
   const pieData = [
     { name: 'Present', value: present },
@@ -183,26 +203,34 @@ export default function Reports() {
     return bucket;
   }, [scopedRecords]);
 
-  // Monthly trend: weekly buckets across the loaded range, showing rate %.
+  // Monthly trend: one point per SCHOOL DAY (any day with at least one record
+  // in range — the same school-day definition the headline card uses), showing
+  // that day's HONEST attendance rate. Same rule as the headline card and
+  // Class Comparison: every enrolled student in scope is expected present or
+  // late, and UNMARKED students count as ABSENT — each day's rate =
+  // (present + late marks that day) / (enrolled students in scope): 91
+  // enrolled with 6 of them marked on a day is 6/91 = 6.6% -> 7%, never 100%.
+  // Days with no marks at all are not school days and get no point. When no
+  // enrolled students are in scope every rate is null (the line renders a
+  // gap, never a computed %). Per-student panels elsewhere stay MARKED-ONLY
+  // by contract (see ratesByStudent).
   const monthlyData = useMemo(() => {
-    const groups = {};
+    const enrolled = scopedStudents.length;
+    const byDate = {};
     scopedRecords.forEach(r => {
       if (!r.date) return;
-      const d = new Date(r.date + 'T00:00:00');
-      // Week-of-month key (YYYY-MM-W).
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-W${Math.ceil(d.getDate() / 7)}`;
-      if (!groups[key]) groups[key] = { present: 0, total: 0 };
-      groups[key].total += 1;
-      if (r.status === 'present' || r.status === 'late') groups[key].present += 1;
+      if (!byDate[r.date]) byDate[r.date] = { present: 0, late: 0 };
+      if (r.status === 'present') byDate[r.date].present += 1;
+      else if (r.status === 'late') byDate[r.date].late += 1;
     });
-    return Object.keys(groups).sort().map((k, i) => {
-      const g = groups[k];
-      return {
-        week: `W${i + 1}`,
-        rate: g.total > 0 ? Math.round((g.present / g.total) * 100) : 0,
-      };
-    });
-  }, [scopedRecords]);
+    return Object.keys(byDate).sort().map(date => ({
+      date,
+      day: date.slice(8), // day-of-month label for the X axis
+      rate: enrolled > 0
+        ? Math.round(((byDate[date].present + byDate[date].late) / enrolled) * 100)
+        : null,
+    }));
+  }, [scopedRecords, scopedStudents]);
 
   // Monthly Trend Y-axis: fit the plotted rates with ±5 padding, clamped 0-100.
   const monthlyDomain = useMemo(() => {
@@ -214,8 +242,22 @@ export default function Reports() {
     ];
   }, [monthlyData]);
 
-  // Class comparison: rate per class section for today's records.
+  // Class comparison chart: HONEST per-class rate for today's records.
+  // Rule: every student enrolled in the class is expected marked today, and
+  // UNMARKED students count as ABSENT — rate = (present + late marks today) /
+  // (students enrolled in the class). A class with 6 of 91 marked shows
+  // 6/91 = 6.6% -> 7%, never 100%. Classes still appear only when at least
+  // one record exists today (unchanged); the denominator never drops below
+  // the students actually marked today so inconsistent data (marks whose
+  // student rows are missing from the enrollment list) cannot push a rate
+  // past 100%.
   const classCompareData = useMemo(() => {
+    const enrolledByName = {};
+    scopedStudents.forEach(s => {
+      const cname = s.class_section?.name || classNameById[s.class_section_id];
+      if (!cname) return;
+      enrolledByName[cname] = (enrolledByName[cname] || 0) + 1;
+    });
     const buckets = {};
     todayRecords.forEach(r => {
       const sid = r.student_id;
@@ -226,12 +268,16 @@ export default function Reports() {
       if (!buckets[cname]) buckets[cname] = [];
       buckets[cname].push(r);
     });
-    // Shared utility counts late as attended, matching every other page.
-    return Object.keys(buckets).map(name => {
-      const { rate } = attendanceRate(buckets[name]);
-      return { name, rate: rate != null ? Math.round(rate) : 0 };
+    return Object.keys(buckets).sort().map(name => {
+      const bucket = buckets[name];
+      // Numerator still comes from the shared utility, which counts late as
+      // attended. Denominator = enrolled students (floored at the marked
+      // count; see comment above).
+      const { present, late } = attendanceRate(bucket);
+      const denom = Math.max(enrolledByName[name] || 0, bucket.length);
+      return { name, rate: Math.round(((present + late) / denom) * 100) };
     });
-  }, [todayRecords, studentsById, classNameById]);
+  }, [todayRecords, studentsById, classNameById, scopedStudents]);
 
   // "Needs Attention" + "Perfect Attendance" — driven by per-student rates in range.
   const studentRows = useMemo(() => {
@@ -247,12 +293,16 @@ export default function Reports() {
     () => studentRows.filter(s => s.attendanceRate > 0 && s.attendanceRate < 85).sort((a, b) => a.attendanceRate - b.attendanceRate).slice(0, 5),
     [studentRows]
   );
+  // Cap the honor roll like "Needs Attention" above: these panels are summary
+  // cards, and an uncapped list makes the card (and its grid twin) grow
+  // unbounded, which also blows up the percentage-based cut-paper clip-path.
   const perfectStudents = useMemo(
-    () => studentRows.filter(s => s.attendanceRate >= 95).sort((a, b) => b.attendanceRate - a.attendanceRate),
+    () => studentRows.filter(s => s.attendanceRate >= 95).sort((a, b) => b.attendanceRate - a.attendanceRate).slice(0, 5),
     [studentRows]
   );
 
   // Detailed table rows: today's records, sorted/filtered by class.
+  // attendanceRate stays null when the student has no records in range.
   const detailedRows = useMemo(() => {
     return todayRecords.map(r => {
       const stu = studentsById[r.student_id] || r.student || {};
@@ -263,32 +313,10 @@ export default function Reports() {
         class: cname,
         status: r.status,
         timeIn: r.arrival_time || '-',
-        attendanceRate: ratesByStudent[r.student_id] != null ? ratesByStudent[r.student_id] : 0,
+        attendanceRate: ratesByStudent[r.student_id] != null ? ratesByStudent[r.student_id] : null,
       };
     });
   }, [todayRecords, studentsById, classNameById, ratesByStudent]);
-
-  const filteredAttendance = useMemo(() => {
-    const base = detailedRows.filter(a => filterClass === 'all' || a.class === filterClass);
-    if (!sortCol) return base;
-    const sorted = [...base].sort((a, b) => {
-      const av = a[sortCol] != null ? a[sortCol] : '';
-      const bv = b[sortCol] != null ? b[sortCol] : '';
-      const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-    return sorted;
-  }, [detailedRows, filterClass, sortCol, sortDir]);
-
-  const totalPages = Math.ceil(filteredAttendance.length / PER_PAGE);
-  const paged = filteredAttendance.slice((page - 1) * PER_PAGE, page * PER_PAGE);
-
-  // School days in the loaded range: count of distinct dates present in records.
-  const schoolDays = useMemo(() => {
-    const set = new Set();
-    scopedRecords.forEach(r => { if (r.date) set.add(r.date); });
-    return set.size;
-  }, [scopedRecords]);
 
   // Class list for the filter dropdown — hook-loaded sections only. When the
   // sections query fails or returns nothing, the dropdown stays honestly empty
@@ -301,11 +329,27 @@ export default function Reports() {
     return Array.from(new Set(sectionsForList.map(cs => cs.name).filter(Boolean)));
   }, [classSections, scopeToMine, myClassSectionIds]);
 
-  // Reset class filter if the previously chosen class falls outside scope.
-  useEffect(() => {
-    if (filterClass === 'all') return;
-    if (!classList.includes(filterClass)) setFilterClass('all');
-  }, [classList, filterClass]);
+  // Class filter as actually applied: a previously chosen class that falls
+  // outside the current list (scope or year change) filters as "all" instead
+  // of being reset with a setState-in-effect.
+  const activeFilterClass = filterClass !== 'all' && !classList.includes(filterClass)
+    ? 'all'
+    : filterClass;
+
+  const filteredAttendance = useMemo(() => {
+    const base = detailedRows.filter(a => activeFilterClass === 'all' || a.class === activeFilterClass);
+    if (!sortCol) return base;
+    const sorted = [...base].sort((a, b) => {
+      const av = a[sortCol] != null ? a[sortCol] : '';
+      const bv = b[sortCol] != null ? b[sortCol] : '';
+      const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+  }, [detailedRows, activeFilterClass, sortCol, sortDir]);
+
+  const totalPages = Math.ceil(filteredAttendance.length / PER_PAGE);
+  const paged = filteredAttendance.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   const handleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -313,7 +357,8 @@ export default function Reports() {
     setPage(1);
   };
 
-  const SortIcon = ({ col }) => {
+  // Sort indicator (plain render function, not a component, so it is not recreated during render)
+  const renderSortIcon = (col) => {
     if (sortCol !== col) return null;
     return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
@@ -422,9 +467,10 @@ export default function Reports() {
 
     // Summary stats subheader
     const totalStudents = scopedStudents.length;
-    // Same shared formula as the on-screen stat: (present + late) / total.
-    const { rate: overall } = attendanceRate(scopedRecords);
-    const overallRate = overall != null ? Math.round(overall) : 0;
+    // Same honest rate as the on-screen headline stat: (present + late) over
+    // every enrolled student-day in range; UNMARKED student-days count as
+    // ABSENT. With no enrolled students or no school days, print an em dash.
+    const overallLabel = totalRate != null ? `${totalRate}%` : '—';
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12);
@@ -432,7 +478,7 @@ export default function Reports() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
     doc.text(`Total Students: ${totalStudents}`, marginX, 130);
-    doc.text(`Attendance Rate: ${overallRate}%`, marginX + 180, 130);
+    doc.text(`Attendance Rate: ${overallLabel}`, marginX + 180, 130);
     doc.text(`School Days in Range: ${schoolDays}`, marginX + 360, 130);
 
     // Table
@@ -463,7 +509,14 @@ export default function Reports() {
           <h1>
             <span className="word k">Attendance</span>{' '}
             <span className="word b">Reports</span>
-            {selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}
+            {/* F2: the badge mirrors the data actually shown. A teacher scoped
+                to their homerooms never sees the whole school, so the badge
+                says "My Classes" instead of the misleading "All Years". */}
+            {selectedYear
+              ? <span className="year-badge">Year {selectedYear}</span>
+              : scopeToMine
+                ? <span className="year-badge">My Classes</span>
+                : <span className="year-badge year-badge-all">All Years</span>}
           </h1>
           <p className="reports-subtitle">
             {isTeacher && hasHomeroom
@@ -501,7 +554,7 @@ export default function Reports() {
         <div className="stat-card s-green tilt-l">
           <span className="tape tl" />
           <div className="icon-box"><TrendingUp size={22} /></div>
-          <div className="stat-info"><h3>{loading ? '—' : `${totalRate}%`}</h3><p>Attendance Rate</p></div>
+          <div className="stat-info"><h3>{loading || totalRate == null ? '—' : `${totalRate}%`}</h3><p>Attendance Rate</p></div>
         </div>
         <div className="stat-card s-blue tilt-r">
           <div className="icon-box"><Users size={22} /></div>
@@ -575,9 +628,11 @@ export default function Reports() {
             <div className="reports-empty">No attendance recorded for this range yet.</div>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={monthlyData}>
+              {/* Top margin keeps the 100% dot (r=6 + 2px stroke) inside the SVG
+                  when the fitted domain tops out at exactly 100. */}
+              <LineChart data={monthlyData} margin={{ top: 12, right: 8, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
-                <XAxis dataKey="week" fontSize={12} stroke="#1F1A12" />
+                <XAxis dataKey="day" fontSize={12} stroke="#1F1A12" />
                 <YAxis fontSize={12} domain={monthlyDomain} stroke="#1F1A12" />
                 <Tooltip />
                 <Line type="monotone" dataKey="rate" stroke="#2F75C9" strokeWidth={3} dot={{ fill: '#F2C744', stroke: '#1F1A12', strokeWidth: 2, r: 6 }} activeDot={{ r: 8, fill: '#E04A3F', stroke: '#1F1A12', strokeWidth: 2 }} />
@@ -651,7 +706,7 @@ export default function Reports() {
           <div>
             <h2>Detailed Records</h2>
           </div>
-          <select className="search-input report-class-select" value={filterClass} onChange={e => setFilterClass(e.target.value)}>
+          <select className="search-input report-class-select" value={activeFilterClass} onChange={e => setFilterClass(e.target.value)}>
             <option value="all">All Classes</option>
             {classList.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -659,11 +714,11 @@ export default function Reports() {
         <table>
           <thead>
             <tr>
-              <th className="sortable" onClick={() => handleSort('name')}>Student <SortIcon col="name" /></th>
-              <th className="sortable" onClick={() => handleSort('class')}>Class <SortIcon col="class" /></th>
-              <th className="sortable" onClick={() => handleSort('status')}>Status <SortIcon col="status" /></th>
-              <th className="sortable" onClick={() => handleSort('attendanceRate')}>Attendance Rate <SortIcon col="attendanceRate" /></th>
-              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In <SortIcon col="timeIn" /></th>
+              <th className="sortable" onClick={() => handleSort('name')}>Student {renderSortIcon('name')}</th>
+              <th className="sortable" onClick={() => handleSort('class')}>Class {renderSortIcon('class')}</th>
+              <th className="sortable" onClick={() => handleSort('status')}>Status {renderSortIcon('status')}</th>
+              <th className="sortable" onClick={() => handleSort('attendanceRate')}>Attendance Rate {renderSortIcon('attendanceRate')}</th>
+              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In {renderSortIcon('timeIn')}</th>
             </tr>
           </thead>
           <tbody>
@@ -672,7 +727,9 @@ export default function Reports() {
             ) : paged.length === 0 ? (
               <tr><td colSpan={5} className="empty-state">No records match your filter.</td></tr>
             ) : paged.map((a, i) => {
-              const rate = a.attendanceRate || 0;
+              // null = student has no attendance records in range: show an em
+              // dash instead of a computed percentage.
+              const rate = a.attendanceRate;
               const av = AVA_COLORS[i % AVA_COLORS.length];
               const initials = (a.name || '—').split(' ').map(n => n[0]).join('').slice(0, 2);
               return (
@@ -687,8 +744,8 @@ export default function Reports() {
                   <td><span className={`badge badge-${a.status}`}>{a.status ? a.status.charAt(0).toUpperCase() + a.status.slice(1) : '—'}</span></td>
                   <td>
                     <div className="report-cell-rate">
-                      <div className="report-progress"><div className="report-progress-fill" style={{ width: `${rate}%`, background: rateColor(rate) }} /></div>
-                      <span className="report-rate-value mono">{rate}%</span>
+                      <div className="report-progress"><div className="report-progress-fill" style={{ width: rate == null ? 0 : `${rate}%`, background: rateColor(rate || 0) }} /></div>
+                      <span className="report-rate-value mono">{rate == null ? '—' : `${rate}%`}</span>
                     </div>
                   </td>
                   <td className="mono">{a.timeIn}</td>
@@ -701,7 +758,7 @@ export default function Reports() {
       </div>
 
       {/* MOST ABSENT + PERFECT */}
-      <div className="grid-2">
+      <div className="grid-2 report-list-grid">
         <div className="card list-card list-attention">
           <span className="tape tl" />
           <div className="chart-head">

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, RefreshCw, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
+import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classColors } from '../data/mockData';
 import useProfiles from '../hooks/useProfiles';
@@ -15,37 +15,50 @@ import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { SkeletonTable } from '../components/Skeleton';
 import Pagination from '../components/Pagination';
+import EnrollmentCamera from '../components/EnrollmentCamera';
 import './AdminPanel.css';
 
 const PER_PAGE = 8;
 
-// System Settings defaults — mirror the seeded values in migration
-// 0005_app_settings_and_checkout.sql (single app_settings row, id = 1).
+// System Settings defaults: mirror the seeded values in migrations
+// 0005_app_settings_and_checkout.sql, 0010_autorestart_setting.sql and
+// 0012_classroom_label.sql (single app_settings row, id = 1).
 const SETTINGS_DEFAULTS = {
   school_name: 'PRISM-AI Primary School',
   late_cutoff: '08:00',
   det_size: 320,
   match_threshold: 0.4,
+  classroom_label: 'CLASS_1A',
+  autorestart_ai: true,
 };
 // Face-detection input sizes the AI service accepts (pixels).
 const DET_SIZE_OPTIONS = [320, 640, 960, 1280];
 
+// Normalizes the GET /api/ai/process body for this panel. orphan/note flag
+// an unsupervised AI child that survived a server restart and still holds
+// the camera port (the force-stop control); autorestart_enabled and
+// autorestarts_recent back the AI tab status line. Fields an older server
+// does not send stay null so the UI can fall back to the settings row.
+const readAiProcDetail = (d) => ({
+  orphan: Boolean(d?.orphan),
+  note: typeof d?.note === 'string' ? d.note : '',
+  autorestartEnabled: typeof d?.autorestart_enabled === 'boolean' ? d.autorestart_enabled : null,
+  autorestartsRecent: Number.isFinite(Number(d?.autorestarts_recent))
+    ? Number(d.autorestarts_recent)
+    : null,
+});
+
 export default function AdminPanel() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = useMemo(() => ['users', 'settings', 'logs', 'ai', 'faces'], []);
   const queryTab = searchParams.get('tab');
-  const [tab, setTab] = useState(() => (queryTab && validTabs.includes(queryTab) ? queryTab : 'users'));
-
-  useEffect(() => {
-    const t = searchParams.get('tab');
-    if (t && validTabs.includes(t)) {
-      setTab(t);
-    }
-  }, [searchParams, validTabs]);
+  const tab = ['users', 'settings', 'logs', 'ai', 'faces'].includes(queryTab) ? queryTab : 'users';
 
   const handleTabClick = (newTab) => {
-    setTab(newTab);
-    setSearchParams({ tab: newTab });
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.set('tab', newTab);
+      return next;
+    });
   };
   const [showModal, setShowModal] = useState(false);
   const [logFilter, setLogFilter] = useState('all');
@@ -69,7 +82,7 @@ export default function AdminPanel() {
   const [formRole, setFormRole] = useState('teacher');
   const [formPhone, setFormPhone] = useState('');
   const [formAvatarUrl, setFormAvatarUrl] = useState('');
-  const [formClass, setFormClass] = useState('');
+  const [, setFormClass] = useState(''); // formClass value is unused; only the setter resets the field
   const [formErrors, setFormErrors] = useState({});
   const [formSubmitting, setFormSubmitting] = useState(false);
 
@@ -93,7 +106,15 @@ export default function AdminPanel() {
   // Face enrollment state (admin-only panel)
   const [enrollStudentId, setEnrollStudentId] = useState('');
   const [enrolling, setEnrolling] = useState(false);
-  const [enrollStatus, setEnrollStatus] = useState(null);
+  // Active browser-camera enrollment session (null when idle):
+  // { sessionId, studentName, requiredCaptures }. Set once
+  // POST /api/ai/enroll/session succeeds; the EnrollmentCamera
+  // component rendered in the card takes over from there.
+  const [enrollSession, setEnrollSession] = useState(null);
+  // Inline reason a session could not start (no consent, session
+  // already active, GPU offline, helper down). Toasted and shown
+  // under the picker.
+  const [enrollNotice, setEnrollNotice] = useState(null);
   // Lets the per-card "Register Face" buttons scroll the operator up to the
   // enrollment card after preselecting the student in its picker.
   const enrollCardRef = useRef(null);
@@ -126,13 +147,39 @@ export default function AdminPanel() {
   const [uptimeSeconds, setUptimeSeconds] = useState(null);
   // null = still checking, true = reachable, false = unreachable ('Offline').
   const [serverOnline, setServerOnline] = useState(null);
+  // Detail from the same GET /api/ai/process call (orphan force-stop control
+  // and the AI tab auto-restart status line).
+  const [aiProcDetail, setAiProcDetail] = useState({
+    orphan: false,
+    note: '',
+    autorestartEnabled: null,
+    autorestartsRecent: null,
+  });
+  // POST /api/ai/restart in flight: stop + start reloads the model, up to
+  // ~30s, so every card's Restart button stays disabled until it settles.
+  const [aiRestarting, setAiRestarting] = useState(false);
+  // DELETE /api/ai/process (orphan force stop) in flight.
+  const [killingOrphan, setKillingOrphan] = useState(false);
+  // Set by the AI tab's 'Re-enroll Faces' button: switch to the Face
+  // Registration tab first, then an effect scrolls to the enrollment card
+  // once it has mounted. A ref keeps this out of render state so the
+  // reset never counts as setState inside the effect.
+  const pendingEnrollScrollRef = useRef(false);
+  // Bumped after an orphan force stop so the AI tab refetches the process
+  // snapshot immediately instead of waiting for the next tab open.
+  const [procRefreshTick, setProcRefreshTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     const token = session?.access_token;
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     fetch('/api/ai/process', { headers })
       .then(r => (r.ok ? r.json() : null))
-      .then(d => { if (!cancelled && d) setAiProcRunning(Boolean(d.running)); })
+      .then(d => {
+        if (!cancelled && d) {
+          setAiProcRunning(Boolean(d.running));
+          setAiProcDetail(readAiProcDetail(d));
+        }
+      })
       .catch(() => { /* server offline — card stays at 0 */ });
     fetch('/api/health', { headers })
       .then(r => (r.ok ? r.json() : null))
@@ -149,6 +196,26 @@ export default function AdminPanel() {
       });
     return () => { cancelled = true; };
   }, [session?.access_token]);
+
+  // AI tab opened (or an orphan force stop just ran): pull a fresh process
+  // snapshot so the status line and the orphan control reflect now, not
+  // page load. Same .then shape as the Overview fetch above; the setStates
+  // stay inside the callbacks so they are never synchronous effect work.
+  useEffect(() => {
+    if (tab !== 'ai' || !isAdmin) return;
+    let cancelled = false;
+    const token = session?.access_token;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch('/api/ai/process', { headers })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d) return;
+        setAiProcRunning(Boolean(d.running));
+        setAiProcDetail(readAiProcDetail(d));
+      })
+      .catch(() => { /* bridge offline: keep the last known detail */ });
+    return () => { cancelled = true; };
+  }, [tab, isAdmin, procRefreshTick, session?.access_token]);
 
   // Derived from /api/ai/enrolled (which reads enrolled_students.json on the
   // server). Maps student.id → true if their full_name (lowercased) appears
@@ -238,8 +305,8 @@ export default function AdminPanel() {
     setUserPage(1);
   };
 
-  // Sort indicator
-  const SortIcon = ({ col }) => {
+  // Sort indicator (plain render function, not a component, so it is not recreated during render)
+  const renderSortIcon = (col) => {
     if (sortCol !== col) return null;
     return sortDir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
@@ -344,7 +411,17 @@ export default function AdminPanel() {
           return;
         }
 
-        toast(`Invite sent to ${payload.email}. They'll set their password via the link.`, 'success');
+        // The server creates the account straight away and returns the password
+        // it generated, if it generated one. Surface it so the admin can hand
+        // it to the user.
+        const created = await res.json().catch(() => null);
+        const tempPassword = created?.temporary_password;
+        toast(
+          tempPassword
+            ? `User created. Temporary password: ${tempPassword}. Hand it to the user; they change it after signing in.`
+            : `User created for ${payload.email}.`,
+          'success'
+        );
         setShowModal(false);
         resetForm();
         refreshProfiles();
@@ -447,7 +524,8 @@ export default function AdminPanel() {
   // class sections from Supabase (P7) — groups with no students are skipped.
   const getProgressData = () => {
     const filteredYears = faceYearFilter === 'all' ? years.map(y => y.year_num) : [Number(faceYearFilter)];
-    const filteredClasses = faceClassFilter === 'all' ? classSections.map(c => c.name) : [faceClassFilter];
+    // class_sections holds one row per section, so class names repeat across years; dedupe them.
+    const filteredClasses = faceClassFilter === 'all' ? [...new Set(classSections.map(c => c.name))] : [faceClassFilter];
     const groups = [];
     filteredYears.forEach(y => {
       filteredClasses.forEach(c => {
@@ -501,6 +579,23 @@ export default function AdminPanel() {
     toast(`${student.full_name} selected — click Start Enrollment when ready.`, 'info');
   };
 
+  // The model cards used to carry a 'Retrain' stub; no in-app retraining
+  // exists, so that button is gone. 'Re-enroll Faces' hands the operator to
+  // the real thing instead: the enrollment card on the Face Registration
+  // tab. The card only mounts with the tab, so the scroll is deferred: the
+  // effect above completes it after the switch has rendered (same
+  // scrollIntoView the Register Face buttons use).
+  const handleReenrollFaces = () => {
+    pendingEnrollScrollRef.current = true;
+    handleTabClick('faces');
+  };
+
+  useEffect(() => {
+    if (!pendingEnrollScrollRef.current || tab !== 'faces') return;
+    pendingEnrollScrollRef.current = false;
+    enrollCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [tab]);
+
   // Delete the stored face embedding for a student (admin-only endpoint).
   // Re-enrolling afterwards is just the normal Register Face flow.
   const handleRemoveFace = async (student) => {
@@ -535,10 +630,91 @@ export default function AdminPanel() {
     }
   };
 
-  // Trigger the Python enrollment script for the selected student.
-  // Blocks for ~5–10s while the script captures faces. The Express endpoint
-  // only returns once the Python child exits, so the button stays disabled
-  // and a status banner is shown to the operator throughout.
+  // Start an in-browser enrollment session for the selected student.
+  // Consent stays a client-side check for instant feedback (the server
+  // enforces it too). On success the EnrollmentCamera component takes
+  // over and drives /api/ai/enroll/frame + /api/ai/enroll/complete.
+  // Error bodies carry operator-friendly messages (GPU offline, helper
+  // down, session already active), so prefer them for the toast.
+  const enrollErrorMessage = async (res) => {
+    try {
+      const body = await res.json();
+      return body?.message || body?.error || `Request failed (${res.status})`;
+    } catch {
+      return `Request failed (${res.status})`;
+    }
+  };
+
+  // Restart the single supervised AI process (stop + start = model reload,
+  // up to ~30s). Every model card carries a Restart button but they all
+  // drive the same one AI process; aiRestarting disables all of them until
+  // the request settles so a second click cannot double-fire it. Error
+  // bodies carry operator-facing text (GPU refusals, restart already in
+  // progress), so the toast repeats the server's words verbatim. The busy
+  // flag clears after the try/catch, never in a finally block: a setState
+  // in finally silently disables the React Compiler lint for this file.
+  const handleRestartAi = async () => {
+    if (aiRestarting) return;
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      return;
+    }
+    setAiRestarting(true);
+    try {
+      const res = await fetch('/api/ai/restart', {
+        method: 'POST',
+        headers: apiHeaders(),
+      });
+      if (res.ok) {
+        toast('AI service restarted', 'success');
+      } else {
+        const msg = await enrollErrorMessage(res);
+        toast(msg, 'error', 5000);
+      }
+    } catch (err) {
+      console.error('AI restart failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+    }
+    setAiRestarting(false);
+  };
+
+  // Force-stop an orphaned AI process. GET /api/ai/process sets orphan=true
+  // when port 5174 is held by an AI child the current server run does not
+  // supervise (one that survived a server restart); DELETE /api/ai/process
+  // stops whatever PID holds the port. Confirmed like remove-face, then the
+  // process snapshot refreshes so the control disappears with the orphan.
+  // No finally block here either (see handleRestartAi): the flag clears and
+  // the refresh runs after the try/catch on every path.
+  const handleForceStopOrphan = async () => {
+    if (killingOrphan) return;
+    if (!isAdmin || !session?.access_token) {
+      toast('Stopping the AI process is admin-only.', 'error');
+      return;
+    }
+    const ok = window.confirm(
+      'Force stop the orphaned AI process? The camera stays offline until the AI service is started again.',
+    );
+    if (!ok) return;
+    setKillingOrphan(true);
+    try {
+      const res = await fetch('/api/ai/process', {
+        method: 'DELETE',
+        headers: apiHeaders(),
+      });
+      if (res.ok) {
+        toast('Orphaned AI process stopped.', 'success');
+      } else {
+        const msg = await enrollErrorMessage(res);
+        toast(msg, 'error', 5000);
+      }
+    } catch (err) {
+      console.error('orphan force stop failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+    }
+    setKillingOrphan(false);
+    setProcRefreshTick(t => t + 1);
+  };
+
   const handleStartEnrollment = async () => {
     if (!enrollStudentId) {
       toast('Pick a student first.', 'error');
@@ -554,33 +730,49 @@ export default function AdminPanel() {
     }
     const target = studentList.find(s => s.id === enrollStudentId);
     setEnrolling(true);
-    setEnrollStatus('Python is opening the camera. Look at the camera and stay still for ~5 seconds. The window will close when capture is complete.');
+    setEnrollNotice(null);
     try {
-      const res = await fetch('/api/ai/enroll', {
+      const res = await fetch('/api/ai/enroll/session', {
         method: 'POST',
         headers: apiHeaders(),
         body: JSON.stringify({ student_id: enrollStudentId }),
       });
       if (!res.ok) {
-        const msg = await parseApiError(res);
+        const msg = await enrollErrorMessage(res);
         toast(msg, 'error', 5000);
-        setEnrollStatus(null);
+        setEnrollNotice(msg);
         setEnrolling(false);
         return;
       }
       const body = await res.json().catch(() => ({}));
-      toast(body.message || `Enrolled ${target?.full_name || 'student'}`, 'success');
-      setEnrollStatus(null);
+      setEnrollSession({
+        sessionId: body.session_id,
+        studentName: body.student_name || target?.full_name || 'student',
+        requiredCaptures: body.required_captures || 5,
+      });
       setEnrolling(false);
-      // Refresh the enrolled set so the just-enrolled student flips to
-      // "Registered" in the grid without waiting for the 30s poll.
-      refreshEnrolledFaces();
     } catch (err) {
-      console.error('enroll failed', err);
-      toast('Could not reach the server. Is the API running?', 'error');
-      setEnrollStatus(null);
+      console.error('enroll session failed', err);
+      const msg = 'Could not reach the server. Is the API running?';
+      toast(msg, 'error');
+      setEnrollNotice(msg);
       setEnrolling(false);
     }
+  };
+
+  // The camera component finished a full capture set: the server has
+  // already replaced the stored face, so refresh the enrolled set and
+  // return the card to its idle picker state.
+  const handleEnrollSuccess = (message) => {
+    setEnrollSession(null);
+    setEnrollNotice(null);
+    toast(message || `Enrolled ${enrollSession?.studentName || 'student'}.`, 'success', 5000);
+    refreshEnrolledFaces();
+  };
+
+  const handleEnrollCancel = () => {
+    setEnrollSession(null);
+    toast('Enrollment cancelled.', 'info');
   };
 
   const classColorMap = { Bestari: 'b', Bijak: 'r', Cerdik: 'g', Cerdas: 'o', Pandai: 'y' };
@@ -599,7 +791,7 @@ export default function AdminPanel() {
     let cancelled = false;
     supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data, error: queryError }) => {
@@ -615,6 +807,8 @@ export default function AdminPanel() {
             late_cutoff: (data.late_cutoff || SETTINGS_DEFAULTS.late_cutoff).slice(0, 5),
             det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
             match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+            classroom_label: data.classroom_label ?? SETTINGS_DEFAULTS.classroom_label,
+            autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
           });
         }
         // No row yet → keep the defaults in the form; saving will report
@@ -639,6 +833,8 @@ export default function AdminPanel() {
       late_cutoff: settingsForm.late_cutoff || SETTINGS_DEFAULTS.late_cutoff,
       det_size: Number(settingsForm.det_size),
       match_threshold: Number(settingsForm.match_threshold),
+      classroom_label: settingsForm.classroom_label,
+      autorestart_ai: Boolean(settingsForm.autorestart_ai),
     };
     const { data, error: updateError } = await supabase
       .from('app_settings')
@@ -713,6 +909,12 @@ export default function AdminPanel() {
       Math.min(100, Math.ceil(Math.max(...values) + 2)),
     ];
   }, [accuracyHistory]);
+
+  // Auto-restart status for the AI tab line: prefer the live value from
+  // GET /api/ai/process; fall back to the settings row the toggle writes.
+  const autoRestartOn = aiProcDetail.autorestartEnabled != null
+    ? aiProcDetail.autorestartEnabled
+    : Boolean(settingsForm.autorestart_ai);
 
   const overviewStats = [
     { label: 'Total Users', value: profiles.length, icon: Users, variant: 's-blue', tape: 'tl' },
@@ -809,11 +1011,17 @@ export default function AdminPanel() {
           ) : profilesError ? (
             <div className="empty-state admin-empty">Could not load users. Please try again.</div>
           ) : (
+            /* RS-C: the users table keeps its natural ~660px width at phone
+               sizes, which used to escape the ~302px card entirely. The
+               wrapper scrolls it inside the card instead — same pattern as
+               the Students and Dashboard tables — so the ACTION buttons stay
+               reachable via the in-card scroll. */
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
-                  <th className="sortable" onClick={() => handleSort('full_name')}>User <SortIcon col="full_name" /></th>
-                  <th className="sortable" onClick={() => handleSort('role')}>Role <SortIcon col="role" /></th>
+                  <th className="sortable" onClick={() => handleSort('full_name')}>User {renderSortIcon('full_name')}</th>
+                  <th className="sortable" onClick={() => handleSort('role')}>Role {renderSortIcon('role')}</th>
                   <th>Phone</th>
                   <th>Email</th>
                   {isAdmin && <th>Actions</th>}
@@ -865,6 +1073,7 @@ export default function AdminPanel() {
                 )}
               </tbody>
             </table>
+            </div>
           )}
           {!profilesLoading && !profilesError && totalUserPages > 1 && (
             <Pagination currentPage={userPage} totalPages={totalUserPages} onPageChange={setUserPage} />
@@ -944,6 +1153,38 @@ export default function AdminPanel() {
                       <span>{Math.round(settingsForm.match_threshold * 100)}% (current)</span>
                       <span>60%</span>
                     </div>
+                  </div>
+                </div>
+
+                <div className="settings-section">
+                  <h3>AI Service</h3>
+                  <div className="form-group">
+                    <label className="admin-check">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsForm.autorestart_ai)}
+                        onChange={e => setSettingsForm(f => ({ ...f, autorestart_ai: e.target.checked }))}
+                        disabled={!isAdmin || settingsSaving}
+                      />
+                      <span>Restart AI automatically after a crash</span>
+                    </label>
+                    <p className="admin-check-note">
+                      A crashed AI service is started again after 3 seconds.
+                      GPU refusals are never retried, and the server allows at
+                      most 5 restarts in any 10 minutes.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label>Classroom label</label>
+                    <input
+                      type="text"
+                      value={settingsForm.classroom_label}
+                      onChange={e => setSettingsForm(f => ({ ...f, classroom_label: e.target.value }))}
+                      disabled={!isAdmin || settingsSaving}
+                    />
+                    <p className="admin-check-note">
+                      Stamped on attendance and engagement data from this camera.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1066,6 +1307,29 @@ export default function AdminPanel() {
       )}
       {tab === 'ai' && isAdmin && (
         <div>
+          {/* Live AI process line (GET /api/ai/process): running state and
+              crash auto-restart status, plus the force-stop control when an
+              unsupervised AI child is holding the camera port. */}
+          <div className="card admin-card ai-process-card">
+            <span className="tape tl" />
+            <div className="ai-process-row">
+              <span className={`ai-status-indicator ${aiProcRunning ? '' : 'is-stopped'}`} />
+              <span className="ai-process-text">
+                AI process: <strong>{aiProcRunning ? 'Running' : 'Stopped'}</strong>
+              </span>
+              <span className="ai-process-status mono">
+                {`Auto-restart: ${autoRestartOn ? 'ON' : 'OFF'}${aiProcDetail.autorestartsRecent != null ? ` (${aiProcDetail.autorestartsRecent} recent)` : ''}`}
+              </span>
+              {aiProcDetail.orphan && (
+                <div className="ai-orphan-box">
+                  {aiProcDetail.note && <p className="ai-orphan-note">{aiProcDetail.note}</p>}
+                  <button className="btn btn-danger" onClick={handleForceStopOrphan} disabled={killingOrphan}>
+                    <Power size={14} /> {killingOrphan ? 'Stopping...' : 'Force stop orphaned AI'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           {modelsLoading ? (
             <div className="ai-status-grid">
               <div className="card admin-card"><div className="skeleton-line w-40" /><div className="skeleton-line w-60" /><div className="skeleton-line w-30" /></div>
@@ -1097,8 +1361,14 @@ export default function AdminPanel() {
                       </div>
                     )}
                     <div className="ai-actions">
-                      <button className="btn btn-outline" onClick={() => toast('Coming soon', 'info')}><Power size={14} /> Restart</button>
-                      <button className="btn btn-yellow" onClick={() => toast('Coming soon', 'info')}><RefreshCw size={14} /> Retrain</button>
+                      {/* Every card's Restart button drives the same single AI
+                          process; aiRestarting keeps them from double-firing. */}
+                      <button className="btn btn-outline" onClick={handleRestartAi} disabled={aiRestarting}>
+                        <Power size={14} /> {aiRestarting ? 'Restarting...' : 'Restart'}
+                      </button>
+                      <button className="btn btn-yellow" onClick={handleReenrollFaces}>
+                        <ScanFace size={14} /> Re-enroll Faces
+                      </button>
                     </div>
                   </div>
                 );
@@ -1118,7 +1388,9 @@ export default function AdminPanel() {
               <div className="empty-state admin-empty">No model accuracy data yet.</div>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={accuracyHistory}>
+                {/* Right margin keeps the last x-axis label ('30 JUN') clear of
+                    the card edge instead of clipping to '3 JU'. */}
+                <LineChart data={accuracyHistory} margin={{ top: 8, right: 28, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(31,26,18,0.18)" />
                   <XAxis dataKey="date" fontSize={12} stroke="#1F1A12" />
                   <YAxis fontSize={12} domain={accuracyDomain} stroke="#1F1A12" />
@@ -1159,16 +1431,16 @@ export default function AdminPanel() {
                   </div>
                   <p className="face-enroll-blurb">
                     Pick a student, then click <strong>Start Enrollment</strong>.
-                    A Python window will open the camera and capture five
-                    frames. Keep the student facing the camera and still until
-                    the window closes.
+                    Your browser opens the camera and captures five frames.
+                    Keep the student facing the camera and still until the
+                    captures finish.
                   </p>
                   <div className="face-enroll-row">
                     <select
                       className="face-enroll-select"
                       value={enrollStudentId}
                       onChange={e => setEnrollStudentId(e.target.value)}
-                      disabled={enrolling}
+                      disabled={enrolling || Boolean(enrollSession)}
                     >
                       <option value="">— Pick a student —</option>
                       {studentList
@@ -1184,15 +1456,24 @@ export default function AdminPanel() {
                     <button
                       className="btn btn-green"
                       onClick={handleStartEnrollment}
-                      disabled={enrolling || !enrollStudentId}
+                      disabled={enrolling || !enrollStudentId || Boolean(enrollSession)}
                     >
-                      <Camera size={16} /> {enrolling ? 'Enrolling…' : 'Start Enrollment'}
+                      <Camera size={16} /> {enrolling ? 'Starting…' : 'Start Enrollment'}
                     </button>
                   </div>
-                  {enrollStatus && (
+                  {enrollNotice && !enrollSession && (
                     <div className="face-enroll-status">
-                      <ScanFace size={18} /> {enrollStatus}
+                      <ScanFace size={18} /> {enrollNotice}
                     </div>
+                  )}
+                  {enrollSession && (
+                    <EnrollmentCamera
+                      sessionId={enrollSession.sessionId}
+                      studentName={enrollSession.studentName}
+                      requiredCaptures={enrollSession.requiredCaptures}
+                      onSuccess={handleEnrollSuccess}
+                      onCancel={handleEnrollCancel}
+                    />
                   )}
                 </div>
               )}
@@ -1422,8 +1703,9 @@ export default function AdminPanel() {
             )}
             {modalMode === 'add' && (
               <p className="user-form-note">
-                An invite email will be sent to the address above. The user sets their own
-                password via the link in the email.
+                The account is created straight away. After saving, a temporary
+                password is shown; hand it to the user so they can sign in and
+                set their own.
               </p>
             )}
             <div className="admin-modal-footer">

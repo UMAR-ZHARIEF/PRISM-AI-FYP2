@@ -1,11 +1,13 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Phone, UserCheck, UserX, Clock, Edit2, Trash2, X, AlertTriangle } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classColors } from '../data/mockData';
 import useStudent from '../hooks/useStudent';
 import useAttendance from '../hooks/useAttendance';
 import useTeacherNotes from '../hooks/useTeacherNotes';
 import useEnrolledFaces from '../hooks/useEnrolledFaces';
+import useStudentEngagementTrend from '../hooks/useStudentEngagementTrend';
 import AttendanceCalendar from '../components/AttendanceCalendar';
 import './Engagement.css';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,6 +23,29 @@ const WORD_COLOR_MAP = {
   Cerdas:  'o',
   Pandai:  'y',
 };
+
+// Risk band chip label per API band value ('low' | 'watch' | 'high').
+const RISK_BAND_LABELS = { low: 'Low', watch: 'Watch', high: 'High' };
+
+// students.gender stores 'male'/'female' (the add/edit form's select values,
+// migration 0001, nullable). Exact-letter comparisons ('m'/'M') matched no
+// real row and rendered '—' even when gender data existed, so normalize like
+// Students.jsx: any M*/F* value gets a label, everything else renders '—'.
+function genderLabel(value) {
+  const g = String(value || '').trim().toUpperCase();
+  if (g.startsWith('M')) return 'Male';
+  if (g.startsWith('F')) return 'Female';
+  return '—';
+}
+
+// Short axis tick label for a trend day: "5 Mar" style, matching the en-GB
+// date usage elsewhere in the app. Unparseable dates fall back to the raw ISO
+// string so the axis never renders empty slots.
+function shortDayLabel(iso) {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
 
 function timeAgo(timestamp) {
   const now = Date.now();
@@ -64,7 +89,6 @@ export default function StudentProfile() {
   const { user, profile } = useAuth();
   const toast = useToast();
   const isAdmin = profile?.role === 'admin';
-  const isTeacher = profile?.role === 'teacher';
 
   // ── Real parent contacts (parent_students -> profiles) ──
   // The shared useStudent hook is intentionally untouched (ParentPortal and
@@ -200,7 +224,9 @@ export default function StudentProfile() {
       const key = String(row.date ?? row.summary_date ?? row.day ?? '').slice(0, 10);
       if (!key) return;
       const raw = row.attentive_pct ?? row.attentivePercent ?? row.attentive_percent;
-      const pct = raw == null ? null : Number(String(raw).replace('%', ''));
+      // engagement_summaries stores *_pct as a 0-1 fraction (0.85 = 85%),
+      // so scale to a 0-100 percent before the >= 50 checks below.
+      const pct = raw == null ? null : Math.round(Number(String(raw).replace('%', '')) * 100);
       byDate.set(key, {
         pct: Number.isNaN(pct) ? null : pct,
         atRisk: Boolean(row.at_risk ?? row.atRisk),
@@ -222,6 +248,27 @@ export default function StudentProfile() {
 
     return { days, avg, atRisk, hasData: byDate.size > 0 };
   }, [engagementRows]);
+
+  // ── Risk band + disengagement trend (Express bridge, staff-only) ──
+  // The 30-day strip above still reads engagement_summaries directly; the
+  // chip and the chart below use GET /api/engagement/trends instead. The
+  // trend is optional decoration: while it loads or if the bridge is down,
+  // the section shows only the strip, never an error block.
+  const {
+    days: trendDays,
+    latest: latestRisk,
+    loading: trendLoading,
+  } = useStudentEngagementTrend(studentId, 30);
+
+  // Chart rows keep only days with a usable disengaged percentage; the chart
+  // itself is skipped entirely below 2 points (a line needs two dots).
+  const trendChartRows = useMemo(
+    function pickChartRows() { return trendDays.filter(function hasPct(d) { return d.pct != null; }); },
+    [trendDays]
+  );
+  const bandKey = latestRisk && Object.prototype.hasOwnProperty.call(RISK_BAND_LABELS, latestRisk.band)
+    ? latestRisk.band
+    : null;
 
   // Note composer state
   const [noteText, setNoteText] = useState('');
@@ -338,13 +385,19 @@ export default function StudentProfile() {
     if (deletingNote) return;
     if (!window.confirm('Delete this note? This cannot be undone.')) return;
     setDeletingNote(true);
-    const { error: deleteErr } = await supabase
+    // An RLS-blocked delete resolves with no error and zero affected rows, so
+    // the error object alone is not evidence the note is gone: ask for the
+    // deleted rows back (.select on the delete) and treat an empty result as
+    // a failed delete instead of silently refreshing an unchanged list.
+    const { data: deletedRows, error: deleteErr } = await supabase
       .from('teacher_notes')
       .delete()
-      .eq('id', note.id);
+      .eq('id', note.id)
+      .select('id');
     setDeletingNote(false);
-    if (deleteErr) {
-      if (toast) toast('Could not delete note.', 'error');
+    if (deleteErr || !deletedRows || deletedRows.length === 0) {
+      if (deleteErr) console.error('StudentProfile: note delete failed', deleteErr);
+      if (toast) toast('Could not delete the note.', 'error');
       return;
     }
     if (refreshNotes) refreshNotes();
@@ -487,27 +540,8 @@ export default function StudentProfile() {
     );
   }
 
-  // Not found or unauthorized
+  // Not found
   if (!student) {
-    if (isTeacher) {
-      return (
-        <div className="sprofile-page">
-          <Link to="/dashboard/students" className="pencil-link sprofile-back">
-            <ArrowLeft size={18} /> Back to Students
-          </Link>
-          <div className="card sprofile-notfound">
-            <span className="tape tl" />
-            <UserX size={48} />
-            <h3>Student Access Restricted</h3>
-            <p>You do not have permission to view this student profile. Teachers can only access students enrolled in their assigned class.</p>
-            <Link to="/dashboard/students" className="btn btn-primary">
-              <ArrowLeft size={16} /> Back to My Students
-            </Link>
-          </div>
-        </div>
-      );
-    }
-
     return (
       <div className="sprofile-page">
         <Link to="/dashboard/students" className="pencil-link sprofile-back">
@@ -597,13 +631,7 @@ export default function StudentProfile() {
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Gender</span>
-              <span className="sprofile-info-value">
-                {student.gender === 'm' || student.gender === 'M'
-                  ? 'Male'
-                  : student.gender === 'f' || student.gender === 'F'
-                    ? 'Female'
-                    : '—'}
-              </span>
+              <span className="sprofile-info-value">{genderLabel(student.gender)}</span>
             </div>
             <div className="sprofile-info-item">
               <span className="sprofile-info-label">Year</span>
@@ -749,10 +777,54 @@ export default function StudentProfile() {
               <div className="eng-strip-meta">
                 <span>Avg: <span className="mono">{engagement.avg == null ? '—' : `${engagement.avg}%`}</span> attentive</span>
                 <span>At-risk: {engagement.atRisk ? <span className="eng-risk-yes">Yes</span> : <span className="mono">No</span>}</span>
+                {bandKey && (
+                  <span>
+                    Band: <span className={`eng-risk-chip ${bandKey}`}>{RISK_BAND_LABELS[bandKey]}</span>
+                  </span>
+                )}
               </div>
             </>
           ) : (
             <p className="eng-overview-empty">No engagement data yet</p>
+          )}
+          {/* Bridge-derived extras sit outside the strip ternary on purpose:
+              the chip needs the strip (it hangs next to the At-risk flag),
+              but the reason sentence and the trend chart survive a strip with
+              no client-side rows, and they never block the strip's loading. */}
+          {!engagementLoading && bandKey && latestRisk.reason && (
+            <p className="eng-risk-reason">{latestRisk.reason}</p>
+          )}
+          {!engagementLoading && !trendLoading && trendChartRows.length >= 2 && (
+            <div className="eng-trend-chart">
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={trendChartRows} margin={{ top: 10, right: 12, bottom: 0, left: -18 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1F1A12" strokeOpacity={0.18} />
+                  <XAxis
+                    dataKey="date"
+                    fontSize={11}
+                    stroke="#1F1A12"
+                    interval={4}
+                    tickFormatter={shortDayLabel}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    fontSize={11}
+                    stroke="#1F1A12"
+                    tickFormatter={(v) => `${v}%`}
+                  />
+                  <Tooltip formatter={(value) => [`${value}%`, 'Disengaged']} />
+                  <Line
+                    type="monotone"
+                    dataKey="pct"
+                    name="Disengaged"
+                    stroke="#E04A3F"
+                    strokeWidth={3}
+                    dot={{ fill: '#E04A3F', r: 3 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
       </div>

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Search, Plus, Upload, X, User, Grid3X3, List, CheckCircle, XCircle, Eye, Edit3, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear } from '../layouts/DashboardLayout';
+import { useYear } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import Pagination from '../components/Pagination';
 import useStudents from '../hooks/useStudents';
@@ -42,7 +42,7 @@ export default function Students() {
   const [viewMode, setViewMode] = useState('grid');
   const [selectedStudent, setSelectedStudent] = useState(null);
 
-  // Table pagination
+  // Pagination (D5: grid and table views share one page index and size)
   const [page, setPage] = useState(1);
   const PER_PAGE = 8;
 
@@ -78,8 +78,12 @@ export default function Students() {
   }, [teacherClassSections]);
   const teacherClassName = teacherClassSections.map(s => `Year ${s.year_num} ${s.name}`).join(', ');
 
-  // Sync filterYear when global selectedYear changes or when teacher assigned year is resolved
-  useEffect(() => {
+  // Sync filterYear when global selectedYear changes, during render via the
+  // guarded state-mirror pattern instead of an effect (per
+  // react-hooks/set-state-in-effect).
+  const [prevSelectedYear, setPrevSelectedYear] = useState(selectedYear);
+  if (prevSelectedYear !== selectedYear) {
+    setPrevSelectedYear(selectedYear);
     if (isTeacher && teacherYears.length > 0) {
       if (selectedYear && teacherYears.includes(selectedYear)) {
         setFilterYear(String(selectedYear));
@@ -89,7 +93,7 @@ export default function Students() {
     } else {
       setFilterYear(selectedYear ? String(selectedYear) : 'all');
     }
-  }, [selectedYear, isTeacher, teacherYears]);
+  }
 
   // Load students from Supabase. When filterYear === 'all', pass undefined so the hook returns all years.
   const hookYear = filterYear === 'all' ? undefined : Number(filterYear);
@@ -108,7 +112,9 @@ export default function Students() {
   useEffect(function fetchParents() {
     const ids = (dbStudents || []).map(row => row.id);
     if (ids.length === 0) {
-      setParentsByStudent(new Map());
+      // No-op reset deletion (per react-hooks/set-state-in-effect): with no
+      // students scoped, nothing renders rows to look up, so the map is never
+      // read here; the next successful fetch replaces it wholesale anyway.
       return undefined;
     }
 
@@ -139,7 +145,9 @@ export default function Students() {
   useEffect(function fetchAttendanceRates() {
     const ids = (dbStudents || []).map(row => row.id);
     if (ids.length === 0) {
-      setRatesByStudent(new Map());
+      // No-op reset deletion (per react-hooks/set-state-in-effect): with no
+      // students scoped, nothing renders rows to look up, so the map is never
+      // read here; the next successful fetch replaces it wholesale anyway.
       return undefined;
     }
 
@@ -239,10 +247,26 @@ export default function Students() {
     return matchYear && matchSearch && matchClass && matchFace;
   });
 
-  // Reset page to 1 when search/filters change
-  useEffect(() => {
+  // Reset page to 1 when search/filters change, during render via the
+  // guarded state-mirror pattern instead of an effect (per
+  // react-hooks/set-state-in-effect). On mount page is already 1, matching
+  // the old effect's no-op first run.
+  // Reset page to 1 when search/filters/view mode change, during render via
+  // the guarded state-mirror pattern instead of an effect (per
+  // react-hooks/set-state-in-effect). On mount page is already 1, matching
+  // the old effect's no-op first run. viewMode is included so each view
+  // starts from page 1 (D5) instead of inheriting the other view's page.
+  const [pageKey, setPageKey] = useState({ search, filterClass, filterFace, filterYear, viewMode });
+  if (
+    pageKey.search !== search ||
+    pageKey.filterClass !== filterClass ||
+    pageKey.filterFace !== filterFace ||
+    pageKey.filterYear !== filterYear ||
+    pageKey.viewMode !== viewMode
+  ) {
+    setPageKey({ search, filterClass, filterFace, filterYear, viewMode });
     setPage(1);
-  }, [search, filterClass, filterFace, filterYear]);
+  }
 
   // Sort filtered data for table view
   const sorted = useMemo(() => {
@@ -264,6 +288,13 @@ export default function Students() {
 
   // Paginate sorted data for table view
   const paged = sorted.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+  // Grid view pagination (D5): same page size, shared page index. gridPage is
+  // clamped so a stale index (data shrank after a delete) can never slice an
+  // empty page out of the middle of the grid.
+  const gridTotalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
+  const gridPage = Math.min(page, gridTotalPages);
+  const gridPaged = filtered.slice((gridPage - 1) * PER_PAGE, gridPage * PER_PAGE);
 
   const handleSort = (col) => {
     if (sortCol === col) {
@@ -528,9 +559,10 @@ export default function Students() {
           <p>No students match your search or filter.</p>
         </div>
       ) : viewMode === 'grid' ? (
-        /* GRID VIEW — paper polaroids */
+        /* GRID VIEW — paper polaroids (D5: paginated like the table view) */
+        <>
         <div className="students-grid">
-          {filtered.map((s, index) => {
+          {gridPaged.map((s, index) => {
             const colors = ['r', 'y', 'b', 'g', 'o'];
             const tapeSpots = ['tl', 'tr', 'br', 'bl'];
             const avatarColor = colors[index % colors.length];
@@ -579,10 +611,13 @@ export default function Students() {
             );
           })}
         </div>
+        <Pagination currentPage={gridPage} totalPages={gridTotalPages} onPageChange={setPage} />
+        </>
       ) : (
-        /* TABLE VIEW */
+        /* TABLE VIEW (D13: scroll wrapper keeps every column reachable) */
         <>
           <div className="card">
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -595,7 +630,7 @@ export default function Students() {
                   <th>Phone</th>
                   <th>Face</th>
                   <th className="sortable" onClick={() => handleSort('attendanceRate')}>Attendance {renderSortIcon('attendanceRate')}</th>
-                  <th>Actions</th>
+                  <th className="col-actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -622,7 +657,7 @@ export default function Students() {
                         <span className="table-attendance-text">{hasRate ? `${s.attendanceRate}%` : '—'}</span>
                       </div>
                     </td>
-                    <td>
+                    <td className="col-actions">
                       <div className="table-actions">
                         <button className="btn btn-secondary btn-sm-table" onClick={() => setSelectedStudent(s)}>View</button>
                         {isAdmin && (
@@ -638,8 +673,9 @@ export default function Students() {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
-          <Pagination currentPage={page} totalPages={Math.ceil(filtered.length / PER_PAGE)} onPageChange={setPage} />
+          <Pagination currentPage={page} totalPages={Math.ceil(sorted.length / PER_PAGE)} onPageChange={setPage} />
         </>
       )}
 

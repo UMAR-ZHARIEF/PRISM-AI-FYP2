@@ -73,7 +73,9 @@
   font-family: var(--display);
   font-size: 40px;
   font-weight: 900;
-  line-height: 1;
+  /* 1.1 so tall Fraunces digits ('91', '95.5%') keep clear of the tight
+     line box instead of reading as shaved at the card top. */
+  line-height: 1.1;
   margin: 0 0 4px;
 }
 .admin-page .stat-card .stat-info p {
@@ -88,7 +90,8 @@
    ========================================================================== */
 .admin-tabs {
   display: flex;
-  gap: 14px;
+  /* 12px so all five tabs fit one row at 1280px with the sidebar open. */
+  gap: 12px;
   margin: 30px 0 22px;
   flex-wrap: wrap;
   padding-bottom: 6px;
@@ -99,7 +102,9 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 22px;
+  /* 14px horizontal padding keeps the five labels inside the content
+     column at 1280px; the row still wraps below that. */
+  padding: 12px 14px;
   font-family: var(--body);
   font-size: 16px;
   font-weight: 700;
@@ -152,6 +157,17 @@
 .admin-logs-card     { transform: rotate(-0.3deg); }
 .admin-chart-card    { transform: rotate(0.3deg); }
 
+/* Chart blowout guard: when a recharts width measurement goes stale (rendered
+   on a wide viewport, then the window shrinks) the wrapper keeps an inline px
+   width far larger than the card and escapes it (Stage 3 / RCH-1: AI tab
+   chart escaped by 1585px, page 1945px wide at 390px). clip on the x axis
+   only traps that escape inside the card without touching the y axis, so the
+   corner tape overhang stays visible; the chart re-renders at the real card
+   width via its ResizeObserver. Mirrors the .classdetail-chart-card guard. */
+.admin-chart-card {
+  overflow-x: clip;
+}
+
 .admin-card .card-header {
   display: flex;
   justify-content: space-between;
@@ -182,6 +198,23 @@
 /* ==========================================================================
    USERS TABLE
    ========================================================================== */
+/* RS-C: five columns hold ~660px of content that a ~302px phone card cannot
+   fit; without this wrapper the table escaped the card by ~340px. The
+   wrapper scrolls the table inside the card (same always-on pattern as the
+   Students table and the Dashboard attendance table), keeping every column
+   — including ACTION — reachable via the in-card scroll. No display or
+   min-width overrides are needed: AdminPanel.css has no phone
+   `table { display: block }` hack, and the table's natural min-content
+   width already keeps the columns intact while the wrapper scrolls. */
+.admin-users-card .table-scroll { overflow-x: auto; }
+/* FIX-7D: Dashboard.css's former unscoped `table { display: block }` phone
+   hack is now scoped to .dashboard-page, so the table here keeps native
+   `display: table` at every width; the RS-C `display: table; min-width:
+   620px` override against that leak was removed as dead weight. Verified at
+   390x844: the five columns' natural min-content (~660px) still exceeds the
+   ~302px card, so the wrapper alone keeps every column — including ACTION —
+   reachable via the in-card scroll, same as the Students table (D13). */
+
 .admin-user-cell {
   display: flex;
   align-items: center;
@@ -350,6 +383,55 @@
   background: var(--paper-deep);
 }
 
+/* Auto-restart checkbox (AI Service settings section): cut-paper tick box,
+   same scissors-edge square the ClassComparison scope row uses. The label is
+   scoped past .settings-section .form-group label so flex layout survives. */
+.settings-section .form-group .admin-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  font-family: var(--body);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  user-select: none;
+}
+.settings-section .form-group .admin-check input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--ink);
+  background: var(--paper-light);
+  cursor: pointer;
+  position: relative;
+  clip-path: polygon(8% 0, 96% 4%, 100% 92%, 4% 100%);
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+}
+.settings-section .form-group .admin-check input[type="checkbox"]:checked {
+  background: var(--ink);
+}
+.settings-section .form-group .admin-check input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 7px;
+  height: 12px;
+  border: solid var(--paper-light);
+  border-width: 0 2.5px 2.5px 0;
+  transform: rotate(45deg);
+}
+.admin-check-note {
+  margin: 8px 0 0;
+  font-family: var(--body);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
 /* ==========================================================================
    LOGS — timeline list
    ========================================================================== */
@@ -494,9 +576,56 @@
   flex-wrap: wrap;
 }
 
+/* Live AI process line at the top of the AI tab: running dot (the same
+   .ai-status-indicator the model cards use, flipped red when stopped), the
+   crash auto-restart status, and the orphan force-stop control. */
+.ai-process-card { transform: rotate(-0.4deg); }
+.ai-process-row {
+  display: flex;
+  align-items: center;
+  gap: 14px 20px;
+  flex-wrap: wrap;
+}
+.ai-process-row .ai-status-indicator { margin-bottom: 0; }
+.ai-status-indicator.is-stopped {
+  background: var(--red);
+  animation: none;
+}
+.ai-process-text {
+  font-family: var(--body);
+  font-size: 16px;
+  color: var(--ink);
+}
+.ai-process-status {
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.ai-orphan-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-left: auto;
+  padding: 10px 14px;
+  background: var(--paper-deep);
+  border: 2px dashed var(--red);
+  clip-path: var(--cut-2);
+}
+.ai-orphan-note {
+  margin: 0;
+  font-family: var(--body);
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
 .ai-metric {
   display: grid;
-  grid-template-columns: 130px 1fr 70px;
+  /* G2: fixed 130px/70px side columns plus 12px gaps left the 1fr bar 1px at
+     a 225px tile and overflowed the row by 3px at 1280 (min-content 228 vs
+     cw 225). Rebalanced tracks with a floored shrinkable middle keep the bar
+     visible and the row inside its tile at every width. */
+  grid-template-columns: 110px minmax(28px, 1fr) 60px;
   align-items: center;
   gap: 12px;
   margin-bottom: 14px;
@@ -588,7 +717,7 @@
   font-family: var(--display);
   font-size: 40px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 1.1;
   margin: 0 0 4px;
 }
 .face-stats-row .stat-card .stat-info p {
@@ -658,7 +787,9 @@
 }
 .face-progress-row {
   display: grid;
-  grid-template-columns: 140px 1fr 60px 55px;
+  /* The two right columns must hold '100%' and '10/10' without squeezing;
+     the bar column absorbs the extra width. */
+  grid-template-columns: 140px 1fr 72px 64px;
   align-items: center;
   gap: 14px;
   padding: 8px 4px;
@@ -694,12 +825,14 @@
   font-size: 13px;
   color: var(--ink);
   text-align: right;
+  white-space: nowrap;
 }
 .face-progress-pct {
   font-size: 13px;
   font-weight: 700;
   color: var(--ink-soft);
   text-align: right;
+  white-space: nowrap;
 }
 .face-progress-pct.pct-full {
   color: var(--green);
@@ -1114,7 +1247,7 @@
     align-items: flex-start;
   }
   .face-progress-row {
-    grid-template-columns: 110px 1fr 50px 45px;
+    grid-template-columns: 110px 1fr 58px 52px;
     gap: 10px;
   }
   .face-student-grid {

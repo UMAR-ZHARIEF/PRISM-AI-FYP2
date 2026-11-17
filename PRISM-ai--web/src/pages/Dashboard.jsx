@@ -1,21 +1,19 @@
-import { useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck, X,
-  CalendarDays, Server, Cpu, Wifi, Shield, Power, Download, ScanFace, Settings,
-  UserCog, Users, CheckCircle2, ChevronRight
+  Camera, AlertTriangle, Activity, UserCheck, X,
+  CalendarDays, Server, Cpu, Power, Download, ScanFace, Settings, ChevronDown
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear, ScopeContext } from '../layouts/DashboardLayout';
-import Pagination from '../components/Pagination';
+import { useYear } from '../layouts/dashboardContexts';
+import DashboardAttendance from './DashboardAttendance';
 import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skeleton';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
 import useEngagement, { computeEngagementStats } from '../hooks/useEngagement';
-import useProfiles from '../hooks/useProfiles';
 import useEnrolledFaces from '../hooks/useEnrolledFaces';
 import Papa from 'papaparse';
 import './Engagement.css';
@@ -44,16 +42,42 @@ function bucketArrival(t) {
   return `${String(h).padStart(2, '0')}:${String(half).padStart(2, '0')}`;
 }
 
-// Relative "5m ago" label from an ISO timestamp (same shape as StudentProfile's).
-function timeAgo(iso) {
-  if (!iso) return '';
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+// First non-empty string among the alias keys (watchlist rows).
+function pickFirstStr(row, keys) {
+  for (const key of keys) {
+    const raw = row[key];
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  }
+  return null;
+}
+
+// First numeric-ish value among the alias keys (watchlist rows); tolerates
+// "78%"-style strings the same way useEngagement's row reading does.
+function pickFirstNum(row, keys) {
+  for (const key of keys) {
+    const raw = row[key];
+    if (raw == null) continue;
+    const n = Number(String(raw).replace('%', '').trim());
+    if (!Number.isNaN(n)) return n;
+  }
+  return null;
+}
+
+// One /api/engagement/risk row -> { id, name, className, score, band },
+// snake/camel tolerant like useEngagement. Rows without a student id are
+// dropped: the card links to the profile by id, so an id-less row can only
+// render a dead link.
+function normalizeWatchRow(row) {
+  if (!row || typeof row !== 'object') return null;
+  const id = row.student_id ?? row.studentId ?? row.id;
+  if (id == null) return null;
+  return {
+    id: String(id),
+    name: pickFirstStr(row, ['full_name', 'name', 'student_name', 'studentName']) || 'Unknown student',
+    className: pickFirstStr(row, ['class', 'class_name', 'className', 'class_section']),
+    score: pickFirstNum(row, ['risk_score', 'riskScore', 'score']),
+    band: String(pickFirstStr(row, ['risk_band', 'riskBand', 'band']) || '').toLowerCase(),
+  };
 }
 
 export default function Dashboard() {
@@ -76,10 +100,10 @@ export default function Dashboard() {
   const [editTimeOut, setEditTimeOut] = useState('');
   const [editSaving, setEditSaving] = useState(false);
 
-  // Year context (safe fallback if context not yet available)
-  let yearCtx;
-  try { yearCtx = useYear(); } catch { yearCtx = { selectedYear: null }; }
-  const { selectedYear } = yearCtx;
+  // Year context (safe fallback if context not yet available). The hook call
+  // is unconditional: outside the layout provider useYear() returns undefined
+  // (createContext default), never throws, so the fallback is a value check.
+  const { selectedYear } = useYear() || { selectedYear: null };
 
   // Today and the 7-day window ending today (anchored to local-time date math).
   const today = useMemo(() => isoDate(new Date()), []);
@@ -95,7 +119,7 @@ export default function Dashboard() {
   // the "AI Online / AI Offline" badge on the Live Camera Feed card.
   const [aiStatus, setAiStatus] = useState('offline');
   const [liveAiCount, setLiveAiCount] = useState(0);
-  const [serverOnline, setServerOnline] = useState(true);
+  const [serverOnline, setServerOnline] = useState(null);
   const fetchAiStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/health');
@@ -129,6 +153,14 @@ export default function Dashboard() {
   // Today's emotion-engine summary — powers the compact engagement card below
   // (green >70%, yellow 40-70%, red <40% class attentive average).
   const { summaries: engagementSummaries, loading: engagementLoading } = useEngagement(today);
+  // ── Engagement watchlist state (GET /api/engagement/risk, today) ──
+  // Local fetch + state on purpose: the shared risk hook belongs to the
+  // Engagement page (sibling package), and this card needs one unscoped read
+  // for today. Failure is silent: the card shows a quiet note, never an error
+  // banner on the dashboard.
+  const [watchlistRows, setWatchlistRows] = useState([]);
+  const [watchlistLoading, setWatchlistLoading] = useState(true);
+  const [watchlistError, setWatchlistError] = useState(null);
   const engagementStats = computeEngagementStats(engagementSummaries);
   const engagementTone = engagementStats.attentiveAvg == null ? ''
     : engagementStats.attentiveAvg > 70 ? 'g'
@@ -179,13 +211,62 @@ export default function Dashboard() {
     return weekRecords.filter(r => r.student?.year_num === selectedYear);
   }, [weekRecords, selectedYear]);
 
-  // ---------- View scope (My Classes vs All School) -----------------------
-  // Admins always see all-school data; teachers (the only other role) default
-  // to their homeroom(s) and can opt in to all-school via a toggle.
-  const { session, profile, user } = useAuth();
+  // Admins see the selected school scope; teachers stay within assigned classes.
+  const { profile, user, session, loading: authLoading } = useAuth();
+  const watchToken = session?.access_token;
   const role = profile?.role;
   const isAdmin = role === 'admin';
   const isTeacher = role === 'teacher';
+
+  // Watchlist fetch: held until the auth session is known so the card never
+  // renders a false "unavailable" from a pre-session 401 (same rule the
+  // engagement hooks follow).
+  useEffect(function fetchWatchlist() {
+    if (authLoading) return undefined;
+
+    let cancelled = false;
+
+    async function load() {
+      setWatchlistLoading(true);
+      setWatchlistError(null);
+      try {
+        const res = await fetch(`/api/engagement/risk?date=${encodeURIComponent(today)}`, {
+          headers: watchToken ? { Authorization: `Bearer ${watchToken}` } : {},
+        });
+        if (!res.ok) throw new Error(`GET /api/engagement/risk responded ${res.status}`);
+        const body = await res.json();
+        if (cancelled) return;
+        const list = Array.isArray(body)
+          ? body
+          : ((body && (body.rows || body.data || body.summaries || body.students)) || []);
+        setWatchlistRows(list.map(normalizeWatchRow).filter(Boolean));
+        setWatchlistError(null);
+        setWatchlistLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('Dashboard: /api/engagement/risk fetch failed', err);
+        setWatchlistRows([]);
+        setWatchlistError(err);
+        setWatchlistLoading(false);
+      }
+    }
+
+    load();
+
+    return function cleanup() {
+      cancelled = true;
+    };
+  }, [authLoading, today, watchToken]);
+
+  // Up to five watch/high students, worst score first (null scores sort last).
+  const watchlist = useMemo(function rankWatchlist() {
+    const visibleStudents = new Set(dbStudents.map(student => String(student.id)));
+    return watchlistRows
+      .filter(row => (!isTeacher && !selectedYear) || visibleStudents.has(row.id))
+      .filter(function flagged(r) { return r.band === 'watch' || r.band === 'high'; })
+      .sort(function byScoreDesc(a, b) { return (b.score ?? -1) - (a.score ?? -1); })
+      .slice(0, 5);
+  }, [watchlistRows, dbStudents, isTeacher, selectedYear]);
 
   // null == "no client-side filter" (admin / non-teacher).
   // [] (empty array) == teacher with no homeroom assignment.
@@ -198,23 +279,7 @@ export default function Dashboard() {
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
-  // Shared view scope from the layout (ScopeContext): the "My Classes" vs
-  // "All School" choice now survives navigation between pages. Safe fallback
-  // mirrors the year context pattern above; falls back to all-school.
-  const scopeCtx = useContext(ScopeContext) || {};
-  const viewScope = scopeCtx.scope || 'all';
-  const setViewScope = useMemo(() => scopeCtx.setScope || (() => {}), [scopeCtx.setScope]);
-
-  // If the teacher loads in before classSections resolve, snap to "all" once
-  // we discover they have no homeroom (and keep them there).
-  useEffect(() => {
-    if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
-      setViewScope('all');
-    }
-  }, [isTeacher, myClassSectionIds, setViewScope]);
-
-  // Whether we should actually narrow the client-side data right now.
-  const scopeToMine = viewScope === 'mine' && hasHomeroom;
+  const scopeToMine = isTeacher;
   const myClasses = useMemo(() => {
     if (!profile?.id) return [];
     return classSections.filter(s => s.homeroom_teacher_id === profile.id);
@@ -230,6 +295,7 @@ export default function Dashboard() {
       ? classSections.filter(s => myClassSectionIds.includes(s.id))
       : classSections
   ), [classSections, myClassSectionIds, scopeToMine]);
+
 
   // Scoped students + records. When not scoping, these are pass-throughs.
   const scopedStudents = useMemo(() => {
@@ -250,6 +316,23 @@ export default function Dashboard() {
     [scopedRecords, today]
   );
 
+  // D1: attendance rows embed `student:students(*)` (useAttendance), which
+  // does not include the nested class_section row, so
+  // r.student.class_section is always undefined on this page and the
+  // Today's Attendance table fell back to the dash placeholder even for
+  // students whose class is known. Resolve the class name from the students
+  // hook instead (same query the Students page uses, embeds intact). The
+  // placeholder in the table stays reserved for students that genuinely
+  // have no class assignment in the data.
+  const classByStudentId = useMemo(() => {
+    const map = new Map();
+    for (const s of dbStudents) {
+      const sectionName = s.class_section?.name;
+      if (s.id && sectionName) map.set(s.id, sectionName);
+    }
+    return map;
+  }, [dbStudents]);
+
   // Today's counts straight off the records.
   const present = useMemo(() => todayRecords.filter(r => r.status === 'present').length, [todayRecords]);
   const absent = useMemo(() => todayRecords.filter(r => r.status === 'absent').length, [todayRecords]);
@@ -261,13 +344,12 @@ export default function Dashboard() {
 
   // Active teachers count for admin executive KPI: unique homeroom teachers assigned across class sections
   const activeTeacherCount = useMemo(() => {
-    if (!classSections || classSections.length === 0) return 15;
     const teacherIds = new Set(classSections.map(s => s.homeroom_teacher_id).filter(Boolean));
-    return teacherIds.size || 15;
+    return teacherIds.size;
   }, [classSections]);
 
   // Biometric enrolment status & coverage rate
-  const { enrolledNames, enrolled: enrolledList } = useEnrolledFaces();
+  const { enrolledNames, enrolled: enrolledList, loading: enrollmentLoading, error: enrollmentError } = useEnrolledFaces();
   const enrolledStudentsCount = useMemo(() => {
     if (!scopedStudents || scopedStudents.length === 0) return enrolledList?.length || 0;
     return scopedStudents.filter(s => enrolledNames.has((s.full_name || '').toLowerCase().trim())).length;
@@ -398,7 +480,9 @@ export default function Dashboard() {
   const recentActivity = useMemo(() => {
     return todayRecords.map(r => {
       const name = r.student?.full_name || 'Unknown student';
-      const cls = r.student?.class_section?.name || '';
+      // D1: resolve through the students hook — the attendance embed does
+      // not carry the class_section row (see classByStudentId above).
+      const cls = r.student?.class_section?.name || classByStudentId.get(r.student_id) || '';
       const where = r.student?.year_num
         ? ` (Year ${r.student.year_num}${cls ? ` ${cls}` : ''})`
         : (cls ? ` (${cls})` : '');
@@ -416,7 +500,7 @@ export default function Dashboard() {
     })
       .sort((a, b) => b.time.localeCompare(a.time))
       .slice(0, 12);
-  }, [todayRecords]);
+  }, [todayRecords, classByStudentId]);
 
   // Map class_section_id to section name as an instant fallback
   const classSectionNameById = useMemo(() => {
@@ -433,16 +517,16 @@ export default function Dashboard() {
   const todayRows = useMemo(() => todayRecords.map(r => ({
     studentId: r.student_id,
     name: r.student?.full_name || '',
-    class: r.student?.class_section?.name || classSectionNameById[r.student?.class_section_id] || '',
+    class: r.student?.class_section?.name || classByStudentId.get(r.student_id) || classSectionNameById[r.student?.class_section_id] || '',
     year: r.student?.year_num,
     status: r.status,
     // HH:MM (24h) everywhere — Postgres returns time columns as HH:MM:SS.
     timeIn: (r.arrival_time || '').slice(0, 5),
     timeOut: (r.time_out || '').slice(0, 5),
     record: r,
-  })), [todayRecords, classSectionNameById]);
+  })), [todayRecords, classByStudentId, classSectionNameById]);
 
-  // Export School Report (MOE format CSV) for Administrator
+  // Export the current attendance scope as a CSV (not an official MOE template).
   const handleExportSchoolReport = () => {
     if (todayRows.length === 0) {
       toast('No attendance records available for today', 'info');
@@ -462,39 +546,13 @@ export default function Dashboard() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `PRISM-AI_MOE_Attendance_${today}.csv`;
+    a.download = `PRISM-AI_Attendance_${today}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast(`Exported MOE School Attendance report (${todayRows.length} records)`, 'success');
+    toast(`Exported attendance CSV (${todayRows.length} records)`, 'success');
   };
-
-  // School Watchlist (top at-risk students flagged by emotion or attendance)
-  const watchlist = useMemo(() => {
-    const fromEngagement = (engagementSummaries || [])
-      .filter(s => s.atRisk || (typeof s.disengagedPct === 'number' && s.disengagedPct >= 40) || (typeof s.attentivePct === 'number' && s.attentivePct < 60))
-      .map(s => ({
-        id: String(s.id),
-        name: s.name,
-        className: s.className,
-        score: s.disengagedPct != null ? `${s.disengagedPct}% disengaged` : 'At Risk',
-        band: (s.atRisk || (s.disengagedPct != null && s.disengagedPct >= 50)) ? 'high' : 'watch',
-      }));
-
-    if (fromEngagement.length > 0) return fromEngagement.slice(0, 5);
-
-    return todayRows
-      .filter(r => r.status === 'absent' || r.status === 'late')
-      .slice(0, 5)
-      .map(r => ({
-        id: String(r.studentId || r.name),
-        name: r.name,
-        className: r.class,
-        score: r.status === 'absent' ? 'Absent Today' : `Late (${r.timeIn || '—'})`,
-        band: r.status === 'absent' ? 'high' : 'watch',
-      }));
-  }, [engagementSummaries, todayRows]);
 
   // Class filter options come from the real class_sections table (P7),
   // narrowed to the current view scope (see scopedSections) and deduped by
@@ -549,10 +607,6 @@ export default function Dashboard() {
     setPage(1);
   };
 
-  const renderSortIcon = (col) => {
-    if (sortCol !== col) return null;
-    return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
-  };
 
   const teacherStatCards = [
     { label: 'Total Students', value: totalStudents, tone: 's-blue',   change: `${totalStudents} enrolled` },
@@ -575,16 +629,16 @@ export default function Dashboard() {
       change: `${classSections?.length || 0} classes across all grades`,
     },
     {
-      label: 'Active Teaching Staff',
+      label: 'Assigned Homeroom Teachers',
       value: activeTeacherCount,
       tone: 's-yellow',
-      change: 'Assigned homeroom teachers',
+      change: 'Unique teachers in the selected classes',
     },
     {
       label: 'Biometric Coverage',
-      value: `${biometricCoverageRate}%`,
+      value: enrollmentLoading ? '…' : enrollmentError ? '—' : `${biometricCoverageRate}%`,
       tone: biometricCoverageRate >= 80 ? 's-green' : 's-orange',
-      change: `${enrolledStudentsCount}/${totalStudents} enrolled (${unenrolledCount} pending)`,
+      change: enrollmentLoading ? 'Checking enrollment' : enrollmentError ? 'Enrollment service unavailable' : `${enrolledStudentsCount}/${totalStudents} enrolled · ${unenrolledCount} pending`,
     },
   ];
 
@@ -644,6 +698,10 @@ export default function Dashboard() {
     // that is the button's contract. Late status is only derived on the AI
     // camera path (checked against app_settings.late_cutoff); per-row fixes
     // go through the Edit modal instead.
+    // No client marked_at (defect L8, same rule as useMarkAttendance): the
+    // browser clock is not trustworthy, so the column's DB default (now())
+    // stamps server time on insert; an existing row keeps its original
+    // server timestamp.
     const rows = roster.map(s => ({
       student_id: s.id,
       date: today,
@@ -651,7 +709,6 @@ export default function Dashboard() {
       arrival_time: arrivalByStudent.get(s.id) ?? null, // keep any AI check-in time
       notes: 'Marked all present (bulk)',
       marked_by: user ? user.id : null,
-      marked_at: new Date().toISOString(),
     }));
 
     // Chunked upsert so one oversized payload can't fail the whole batch.
@@ -765,10 +822,12 @@ export default function Dashboard() {
     if (!editRecord || editSaving) return;
     setEditSaving(true);
     const prevStatus = editRecord.status;
+    // No client marked_at (defect L8, same rule as useMarkAttendance): the
+    // browser clock is not trusted, so the update leaves the row's existing
+    // server timestamp in place.
     const payload = {
       status: editStatus,
       marked_by: user ? user.id : null,
-      marked_at: new Date().toISOString(),
     };
     // Departure is optional: only write time_out when a value was provided,
     // so editing just the status never disturbs an existing checkout.
@@ -843,11 +902,25 @@ export default function Dashboard() {
     if (refreshAttendance) refreshAttendance();
   };
 
+  const attendancePanel = (
+    <DashboardAttendance
+      rows={paged} total={filtered.length} page={page} totalPages={totalPages}
+      pageSize={PER_PAGE} onPageChange={setPage} search={search} onSearchChange={setSearch}
+      filterClass={filterClass} onClassChange={setFilterClass} classes={classFilterOptions}
+      selectedYear={selectedYear} sortCol={sortCol} sortDir={sortDir} onSort={handleSort}
+      onEdit={openEditModal}
+    />
+  );
+
   return (
-    <div className="dashboard-page">
+    <div className={`dashboard-page ${isAdmin ? 'dashboard-admin' : 'dashboard-teacher'}`}>
       <div className="page-header">
         <div>
-          <h1><span className="word k">{isAdmin ? 'School Overview' : 'Dashboard'}</span>{selectedYear ? <span className="year-badge">Year {selectedYear}</span> : <span className="year-badge year-badge-all">All Years</span>}</h1>
+          <h1><span className="word k">{isAdmin ? 'School Overview' : 'Dashboard'}</span>{selectedYear
+            ? <span className="year-badge">Year {selectedYear}</span>
+            : scopeToMine
+              ? <span className="year-badge">My Classes</span>
+              : <span className="year-badge year-badge-all">All Years</span>}</h1>
           <p className="page-subtitle">
             {isAdmin
               ? `Executive Management Console • ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`
@@ -870,15 +943,20 @@ export default function Dashboard() {
         <div className="page-header-actions">
           {isAdmin ? (
             <>
-              <button className="btn btn-outline" onClick={handleExportSchoolReport}>
-                <Download size={16} /> Export MOE Report
-              </button>
-              <button className="btn btn-yellow" onClick={() => navigate('/dashboard/admin?tab=faces')}>
+              <button className="btn btn-primary" onClick={() => navigate('/dashboard/admin?tab=faces')}>
                 <ScanFace size={16} /> Quick Face Enroll
               </button>
-              <button className="btn btn-primary" onClick={() => navigate('/dashboard/admin?tab=settings')}>
-                <Settings size={16} /> System Controls
-              </button>
+              <details className="dashboard-actions-menu">
+                <summary className="btn btn-outline">More actions <ChevronDown size={16} /></summary>
+                <div className="dashboard-actions-popover">
+                  <button className="btn btn-outline" onClick={(event) => { handleExportSchoolReport(); event.currentTarget.closest('details').open = false; }}>
+                    <Download size={16} /> Export Attendance CSV
+                  </button>
+                  <button className="btn btn-outline" onClick={() => navigate('/dashboard/admin?tab=settings')}>
+                    <Settings size={16} /> System Controls
+                  </button>
+                </div>
+              </details>
             </>
           ) : (
             <>
@@ -913,17 +991,18 @@ export default function Dashboard() {
       )}
 
       {/* CAMERA / INFRASTRUCTURE + CLASS BREAKDOWN */}
+      {isTeacher && attendancePanel}
       <div className="dashboard-grid section-gap">
         {isAdmin ? (
           <div className="card tilt-l admin-system-card">
             <span className="tape tr" />
             <div className="card-header">
               <div>
-                <h2>AI & System Infrastructure</h2>
-                <p className="card-subtitle-small">Classroom camera pipeline & biometric engine</p>
+                <h2>System & Enrollment</h2>
+                <p className="card-subtitle-small">Camera service and face registration</p>
               </div>
               <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}>
-                <span className="live-dot" /> {aiStatus === 'online' ? 'Camera Online (30 FPS)' : 'AI Standby'}
+                <span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Standby'}
               </span>
             </div>
 
@@ -932,7 +1011,7 @@ export default function Dashboard() {
                 <div className="infra-icon-wrap"><Server size={20} className="node-icon server-icon" /></div>
                 <div className="infra-info">
                   <span className="infra-label">Express Bridge</span>
-                  <strong className="infra-val mono">{serverOnline ? 'Port 3001 • Online' : 'Offline'}</strong>
+                  <strong className="infra-val mono">{serverOnline == null ? 'Checking…' : serverOnline ? 'Connected' : 'Unavailable'}</strong>
                 </div>
               </div>
 
@@ -940,7 +1019,7 @@ export default function Dashboard() {
                 <div className="infra-icon-wrap"><Cpu size={20} className="node-icon gpu-icon" /></div>
                 <div className="infra-info">
                   <span className="infra-label">AI Engine</span>
-                  <strong className="infra-val mono">{aiStatus === 'online' ? 'DirectML GPU Active' : 'GPU Standby'}</strong>
+                  <strong className="infra-val mono">{aiStatus === 'online' ? 'Recognition online' : 'Not running'}</strong>
                 </div>
               </div>
 
@@ -948,20 +1027,20 @@ export default function Dashboard() {
                 <div className="infra-icon-wrap"><ScanFace size={20} className="node-icon face-icon" /></div>
                 <div className="infra-info">
                   <span className="infra-label">Face Database</span>
-                  <strong className="infra-val mono">{enrolledStudentsCount} Indexed Faces</strong>
+                  <strong className="infra-val mono">{enrollmentLoading ? 'Checking…' : enrollmentError ? 'Unavailable' : `${enrolledStudentsCount} enrolled students`}</strong>
                 </div>
               </div>
 
               <div className="infra-node">
                 <div className="infra-icon-wrap"><Activity size={20} className="node-icon speed-icon" /></div>
                 <div className="infra-info">
-                  <span className="infra-label">Realtime Speed</span>
-                  <strong className="infra-val mono">{aiStatus === 'online' ? '30 FPS • ~33ms' : 'Idle'}</strong>
+                  <span className="infra-label">Live Detections</span>
+                  <strong className="infra-val mono">{serverOnline ? `${liveAiCount} students tracked` : 'Unavailable'}</strong>
                 </div>
               </div>
             </div>
 
-            {(unenrolledCount > 0 || pendingConsentCount > 0) && (
+            {!enrollmentLoading && !enrollmentError && (unenrolledCount > 0 || pendingConsentCount > 0) && (
               <div className="admin-enroll-alert">
                 <div className="alert-content">
                   <AlertTriangle size={18} className="alert-icon" />
@@ -1001,8 +1080,9 @@ export default function Dashboard() {
             </div>
             <div className="camera-feed">
               <Camera size={56} />
-              <p>{aiStatus === 'online' ? 'AI Face Recognition is actively detecting students' : 'Start face_recognition.py to begin detection'}</p>
-              <small>{aiStatus === 'online' ? `Sending data every 10 seconds — ${liveAiCount} student(s) detected` : 'Waiting for AI connection...'}</small>
+              <p>{aiStatus === 'online' ? 'Face recognition is online' : 'Ready for your next class'}</p>
+              <small>{aiStatus === 'online' ? `${liveAiCount} student(s) tracked by the bridge` : 'Open Take Attendance to start the camera.'}</small>
+              <Link className="btn btn-primary btn-sm" to="/dashboard/camera">Open Take Attendance</Link>
             </div>
           </div>
         )}
@@ -1022,14 +1102,36 @@ export default function Dashboard() {
               <div className="empty-state">No classes to display.</div>
             ) : filteredClassAttendance.map((c, i) => {
               const rate = c.total > 0 ? Math.round((c.present / c.total) * 100) : 0;
+              // D3: a rate computed off a handful of students reads as
+              // "perfect" when it is really a tiny sample (evidence:
+              // 1-3-student classes showing 100%). Flag any class smaller
+              // than ten students so the rate is read with its sample size.
+              const smallSample = c.total > 0 && c.total < 10;
               const linkYear = selectedYear || c.year || 1;
               return (
                 <div key={c.id || i} className={`class-card class-card-${i % 4}`} style={{ '--cc': classColors[c.class] }}>
                   <div className="class-card-header">
-                    <Link to={`/dashboard/class/${linkYear}/${c.class}`} className="class-link" style={{ color: classColors[c.class] }}>
-                      <strong>{!selectedYear && c.year ? `Y${c.year} ` : ''}{c.class}</strong>
-                    </Link>
-                    <span className="class-rate mono">{rate}%</span>
+                    {/* R5 (same family as the table below): only link when a
+                        real class name exists; an empty name would produce a
+                        /dashboard/class/N/ URL with an empty slug. */}
+                    {c.class ? (
+                      <Link to={`/dashboard/class/${linkYear}/${c.class}`} className="class-link" style={{ color: classColors[c.class] }}>
+                        <strong>{!selectedYear && c.year ? `Y${c.year} ` : ''}{c.class}</strong>
+                      </Link>
+                    ) : (
+                      <strong>&mdash;</strong>
+                    )}
+                    <span className="class-rate-wrap">
+                      <span
+                        className="class-rate mono"
+                        title={smallSample ? `Small sample — only ${c.total} student${c.total === 1 ? '' : 's'} in this class` : undefined}
+                      >
+                        {rate}%
+                      </span>
+                      {smallSample && (
+                        <span className="class-rate-sample mono">of {c.total}</span>
+                      )}
+                    </span>
                   </div>
                   <div className="class-counts">
                     <span className="cc-present">{c.present} present</span>
@@ -1072,16 +1174,24 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-
-        {/* SCHOOL WATCHLIST — at risk student overview */}
+        {/* ENGAGEMENT WATCHLIST: today's risk model output, worst first.
+            Rows link straight to the student profile. */}
         <div className="card watchlist-card">
           <span className="tape bl" />
           <div className="card-header">
-            <h2>School Watchlist</h2>
+            <h2>{isAdmin ? 'School Watchlist' : 'Class Watchlist'}</h2>
             <AlertTriangle size={18} aria-hidden="true" />
           </div>
-          {watchlist.length === 0 ? (
-            <p className="eng-overview-empty">No students currently flagged at risk.</p>
+          {watchlistLoading ? (
+            <div className="watchlist-skeleton">
+              <div className="skeleton-line w-60" />
+              <div className="skeleton-line w-40" />
+              <div className="skeleton-line w-60" />
+            </div>
+          ) : watchlistError ? (
+            <p className="eng-overview-empty">Watchlist unavailable.</p>
+          ) : watchlist.length === 0 ? (
+            <p className="eng-overview-empty">No students at risk.</p>
           ) : (
             <div className="watchlist">
               {watchlist.map((w) => (
@@ -1100,7 +1210,7 @@ export default function Dashboard() {
       </div>
 
       {/* CHARTS */}
-      <div className="dashboard-grid section-gap">
+      <div className="dashboard-grid dashboard-charts section-gap">
         <div className="card tilt-r">
           <span className="tape bl" />
           <div className="card-header"><h2>Arrival Time Distribution</h2></div>
@@ -1122,7 +1232,9 @@ export default function Dashboard() {
         <div className="card tilt-l">
           <span className="tape br" />
           <div className="card-header"><h2>Weekly Trend</h2></div>
-          <ResponsiveContainer width="100%" height={250}>
+          {scopedRecords.length === 0 ? (
+            <div className="empty-state">No attendance recorded this week.</div>
+          ) : <ResponsiveContainer width="100%" height={250}>
             <LineChart data={weeklyAttendance}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1F1A12" strokeOpacity={0.18} />
               <XAxis dataKey="day" fontSize={11} stroke="#1F1A12" />
@@ -1132,89 +1244,11 @@ export default function Dashboard() {
               <Line type="monotone" dataKey="absent"  stroke="#E04A3F" strokeWidth={3} dot={{ fill: '#E04A3F', r: 5 }} />
               <Line type="monotone" dataKey="late"    stroke="#EA8534" strokeWidth={3} dot={{ fill: '#EA8534', r: 5 }} />
             </LineChart>
-          </ResponsiveContainer>
+          </ResponsiveContainer>}
         </div>
       </div>
 
-      {/* ATTENDANCE TABLE */}
-      <div className="card section-gap dashboard-table-card">
-        <span className="tape tl" />
-        <div className="card-header">
-          <h2>Today's Attendance</h2>
-          <div className="filter-row">
-            <select
-              className="search-input filter-select"
-              value={filterClass}
-              onChange={e => setFilterClass(e.target.value)}
-            >
-              <option value="all">All Classes</option>
-              {classFilterOptions.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <div className="search-wrapper">
-              <Search size={16} className="search-icon" />
-              <input
-                className="search-input search-input-with-icon"
-                placeholder="Search student..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th className="sortable" onClick={() => handleSort('name')}>Student {renderSortIcon('name')}</th>
-              <th className="sortable" onClick={() => handleSort('class')}>Class {renderSortIcon('class')}</th>
-              <th className="sortable" onClick={() => handleSort('status')}>Status {renderSortIcon('status')}</th>
-              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In {renderSortIcon('timeIn')}</th>
-              <th>Time Out</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paged.length === 0 ? (
-              <tr><td colSpan={6} className="empty-state">No students match your search or filter.</td></tr>
-            ) : paged.map((a, idx) => {
-              const colors = ['r', 'y', 'g', 'o', 'k'];
-              const c = colors[idx % colors.length];
-              return (
-                <tr key={a.studentId}>
-                  <td>
-                    <div className="student-cell">
-                      <div className={`avatar ${c}`}>{a.name.split(' ').map(n => n[0]).join('')}</div>
-                      {a.name}
-                    </div>
-                  </td>
-                  <td>
-                    {a.class ? (
-                      <Link to={`/dashboard/class/${selectedYear || a.year || 1}/${a.class}`} className="class-link">
-                        <span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>
-                          {a.class}
-                        </span>
-                      </Link>
-                    ) : (
-                      <span className="class-chip mono" style={{ borderColor: 'var(--ink-faint)', color: 'var(--ink-faint)' }}>
-                        —
-                      </span>
-                    )}
-                  </td>
-                  <td><span className={`badge badge-${a.status}`}>{a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span></td>
-                  <td className="mono">{a.timeIn}</td>
-                  <td className="mono">{a.timeOut || '—'}</td>
-                  <td><button className="btn btn-outline btn-sm" onClick={() => openEditModal(a.record)}>Edit</button></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <div className="table-footer mono">
-          <span>Showing {filtered.length === 0 ? 0 : (page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} students</span>
-        </div>
-        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
-      </div>
+      {!isTeacher && attendancePanel}
 
       {/* ACTIVITY + NOTIFICATIONS + SCHOOL EVENTS */}
       <div className="dashboard-grid">
@@ -1254,7 +1288,15 @@ export default function Dashboard() {
                 <AlertTriangle size={18} />
                 <div>
                   <p>{n.title && <strong>{n.title}</strong>}{n.title && n.body ? ' — ' : ''}{n.body}</p>
-                  <small className="mono">{timeAgo(n.created_at)}</small>
+                  {/* D2: format exactly like the topbar bell
+                      (DashboardLayout) so the same notification does not
+                      read as "5:41 PM" in one surface and "115d ago" in
+                      the other. */}
+                  <small className="mono">
+                    {n.created_at
+                      ? new Date(n.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+                      : ''}
+                  </small>
                 </div>
               </div>
             ))}

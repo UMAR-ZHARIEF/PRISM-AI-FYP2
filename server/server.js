@@ -22,12 +22,19 @@ const { spawn, exec } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 3001;
 
 // Middleware
 app.use(cors());
+// Browser-enrollment frames (Phase 1) arrive as base64 JPEG data URLs, which
+// easily pass the default 100 KB JSON body cap, so this one route gets its
+// own larger limit. It must be registered above the global parser: whichever
+// parser consumes the stream first wins, and body-parser skips a request
+// once the stream has been read.
+app.use('/api/ai/enroll/frame', express.json({ limit: '10mb' }));
 app.use(express.json());
 
 // ── Supabase Client ──────────────────────────────────────────────────────────
@@ -58,6 +65,14 @@ const SETTINGS_DEFAULTS = Object.freeze({
   late_cutoff: '08:00',
   det_size: 320,
   match_threshold: 0.40,
+  // Classroom label the Python edge stamps on outgoing detections
+  // (migration 0012). Default keeps the label the payload hardcoded
+  // before it became configurable, so existing data stays continuous.
+  classroom_label: 'CLASS_1A',
+  // Crash auto-restart admin toggle (migration 0010). Default ON per user
+  // decision 2026-10-21: a crashed recognizer respawns by itself unless an
+  // admin turns it off here.
+  autorestart_ai: true,
 });
 const SETTINGS_TTL_MS = 60 * 1000;
 const settingsCache = { values: { ...SETTINGS_DEFAULTS }, fetchedAt: 0 };
@@ -69,7 +84,7 @@ async function getAppSettings() {
   try {
     const { data, error } = await supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label')
       .eq('id', 1)
       .maybeSingle();
     if (error) throw error;
@@ -79,6 +94,8 @@ async function getAppSettings() {
         late_cutoff: data.late_cutoff ?? SETTINGS_DEFAULTS.late_cutoff,
         det_size: data.det_size ?? SETTINGS_DEFAULTS.det_size,
         match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
+        classroom_label: data.classroom_label ?? SETTINGS_DEFAULTS.classroom_label,
+        autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
       };
     }
   } catch (e) {
@@ -148,6 +165,95 @@ let aiLastError = null;
 // (must stay in sync with gpu_check.GPU_REQUIRED_MSG).
 const AI_EXIT_GPU_REQUIRED = 3;
 const GPU_REQUIRED_MSG = 'Incompatible hardware — GPU required';
+
+// ── Crash Auto-Restart State ─────────────────────────────────────────────────
+// When the Python child exits on its own (a crash), the server starts it
+// again after a short delay. Four gates decide, all checked in
+// scheduleCrashAutoRestart below: (i) the exit was not operator-driven
+// (aiIntentionalStop is latched by the stop/restart/force-kill paths and
+// consumed here), (ii) the exit code is not the GPU refusal (a respawn
+// would refuse the same way), (iii) app_settings.autorestart_ai is true
+// (default ON per user decision 2026-10-21), and (iv) the rolling-window
+// circuit breaker has room: at most AI_AUTORESTART_MAX auto-restarts in
+// any AI_AUTORESTART_WINDOW_MS.
+let aiIntentionalStop = false;   // latched before an operator-driven kill, consumed by the exit handler
+let aiRestartInProgress = false; // guards POST /api/ai/restart against concurrent restarts
+let aiAutoRestartTimer = null;   // handle to the pending crash auto-restart setTimeout (#2)
+const aiAutoRestartTimes = [];   // timestamps of recent auto-restart attempts (rolling breaker window)
+const AI_AUTORESTART_DELAY_MS = 3 * 1000;
+const AI_AUTORESTART_WINDOW_MS = 10 * 60 * 1000;
+const AI_AUTORESTART_MAX = 5;
+
+// Drop breaker timestamps older than the window, then return the count that
+// still counts against the circuit breaker. GET /api/ai/process reports this
+// as autorestarts_recent so the UI can show how close the breaker is.
+function recentAutoRestartCount() {
+  const cutoff = Date.now() - AI_AUTORESTART_WINDOW_MS;
+  while (aiAutoRestartTimes.length > 0 && aiAutoRestartTimes[0] < cutoff) {
+    aiAutoRestartTimes.shift();
+  }
+  return aiAutoRestartTimes.length;
+}
+
+// Cancel a pending crash auto-restart, if one is armed. Called from the
+// operator-driven stop / force-kill paths: an explicit stop during the 3s
+// window between a crash exit and its respawn must not be undone by the
+// still-armed timer (defect #2 — the aiIntentionalStop latch cannot cover
+// this, because at stop time there is no child exit left to consume it).
+function cancelPendingAutoRestart() {
+  if (aiAutoRestartTimer) {
+    clearTimeout(aiAutoRestartTimer);
+    aiAutoRestartTimer = null;
+    console.log('[AI] Pending crash auto-restart cancelled by explicit stop/force-kill');
+  }
+}
+
+// Crash auto-restart: called from the AI child's exit handler for EVERY
+// exit; filters and schedules as described in the state block above. Never
+// throws: the whole body is guarded, and spawn failures are logged and
+// surfaced through aiLastError (which GET /api/ai/process reports).
+async function scheduleCrashAutoRestart(exitCode) {
+  try {
+    if (aiIntentionalStop) {
+      // Operator asked for this exit (stop/restart/force-kill): consume the
+      // latch exactly once so a genuine crash afterwards can still restart.
+      aiIntentionalStop = false;
+      console.log('[AI] Auto-restart skipped: exit was an explicit stop or restart');
+      return;
+    }
+    if (exitCode === AI_EXIT_GPU_REQUIRED) {
+      // Hardware refusal: the respawn would refuse the same way, never loop.
+      console.log('[AI] Auto-restart skipped: GPU-required exit (code 3), not retrying');
+      return;
+    }
+    const settings = await getAppSettings();
+    if (!settings.autorestart_ai) {
+      console.log('[AI] Auto-restart skipped: disabled by settings (autorestart_ai = false)');
+      return;
+    }
+    const recent = recentAutoRestartCount();
+    if (recent >= AI_AUTORESTART_MAX) {
+      aiLastError = `Auto-restart paused: circuit breaker tripped (${recent} auto-restarts in the last 10 minutes)`;
+      console.warn(`[AI] Auto-restart skipped: ${aiLastError}`);
+      return;
+    }
+    aiAutoRestartTimes.push(Date.now());
+    console.log(`[AI] Crash detected (exit code ${exitCode ?? 'unknown'}): auto-restarting in ${AI_AUTORESTART_DELAY_MS / 1000}s (attempt ${aiAutoRestartTimes.length} of ${AI_AUTORESTART_MAX} per 10-minute window)`);
+    aiAutoRestartTimer = setTimeout(() => {
+      aiAutoRestartTimer = null; // fired — the handle would otherwise point at a dead timer
+      startAiProcess(null) // no req: there is no caller to audit
+        .then(({ pid }) => {
+          console.log(`[AI] Auto-restart succeeded: new AI child pid ${pid}`);
+        })
+        .catch((e) => {
+          console.error('[AI] Auto-restart failed:', e.message);
+          if (!aiLastError) aiLastError = `Auto-restart failed: ${e.message}`;
+        });
+    }, AI_AUTORESTART_DELAY_MS);
+  } catch (e) {
+    console.error('[AI] Auto-restart scheduling failed:', e);
+  }
+}
 
 function aiPaths() {
   const aiDir = path.join(__dirname, '..', 'ai-service', 'edge');
@@ -522,7 +628,9 @@ async function aggregateEngagementForStudent(studentId, dateStr) {
           (sum, r) => sum + (Number(r.disengaged_pct) || 0),
           0
         ) / classRows.length;
-        if (classAvg > ENGAGEMENT_CLASS_GATE_PCT) {
+        // engagement_summaries stores the *_pct columns as 0-1 fractions,
+        // so compare in fraction space; the constant keeps its percent scale.
+        if (classAvg > ENGAGEMENT_CLASS_GATE_PCT / 100) {
           const { error: unflagErr } = await supabase
             .from('engagement_summaries')
             .update({ at_risk: false })
@@ -552,7 +660,8 @@ async function aggregateEngagementForStudent(studentId, dateStr) {
     if (!teacherId) return;
 
     const studentName = summary.student?.full_name || 'A student';
-    const pct = Math.round(Number(summary.disengaged_pct) || 0);
+    // disengaged_pct is a 0-1 fraction in the DB; scale to percent for text.
+    const pct = Math.round((Number(summary.disengaged_pct) || 0) * 100);
     const { error: nErr } = await supabase.from('notifications').insert({
       recipient_id: teacherId,
       scope: 'user',
@@ -563,6 +672,165 @@ async function aggregateEngagementForStudent(studentId, dateStr) {
     if (nErr) console.warn('[engagement] at-risk notification failed:', nErr.message);
   } catch (e) {
     console.error('[engagement] aggregation pipeline threw:', e);
+  }
+}
+
+// ── Rolling risk scoring (fire-and-forget) ──────────────────────────────────
+// Where the same-day summary answers "how did today go", the risk score
+// answers "where is this student heading": a two-week rolling view over
+// engagement_summaries, rebuilt on every tick right after the day
+// summary, that teachers read on the dashboard risk panel
+// (GET /api/engagement/risk, GET /api/engagement/trends).
+
+// Lookback window: the target date + the 13 days before it. The fewer
+// than 3 available days the data cannot support a trend, so the score
+// stays null until then (low band, reason text says why).
+const RISK_WINDOW_DAYS = 14;
+const RISK_MIN_DAYS = 3;
+// Band cutoffs. The 60 high cutoff is the same line the same-day
+// summary uses (engagement_at_risk_threshold defaults to 0.60 in the
+// 0008 migration), so "at risk today" and "high risk trend" mean the
+// same intensity of disengagement.
+const RISK_BAND_HIGH = 60;
+const RISK_BAND_WATCH = 35;
+
+// Pure math, no DB: build the risk columns from one student's ascending
+// engagement_summaries rows inside the window (days WITH data only).
+// Kept separate from the queries so the trends endpoint can reuse it
+// for its compute-on-demand path. *_pct inputs are 0-1 fractions, the
+// engagement_summaries storage scale.
+function computeRiskStats(windowRows) {
+  const n = windowRows.length;
+  if (n < RISK_MIN_DAYS) {
+    return {
+      rolling: null,
+      recent: null,
+      slope: null,
+      risk_score: null,
+      risk_band: 'low',
+      trigger_reason: `Not enough history yet (${n} day(s))`,
+    };
+  }
+
+  const mean = (arr) => arr.reduce((sum, v) => sum + v, 0) / arr.length;
+  const rolling = mean(windowRows.map((r) => Number(r.disengaged_pct) || 0));
+  const recent = mean(windowRows.slice(-3).map((r) => Number(r.disengaged_pct) || 0));
+
+  // Ordinary least squares slope of disengaged_pct against the day
+  // index (0, 1, 2, ...) over the available days: fraction per day.
+  const yMean = rolling;
+  const xMean = (n - 1) / 2;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    const y = Number(windowRows[i].disengaged_pct) || 0;
+    num += (i - xMean) * (y - yMean);
+    den += (i - xMean) * (i - xMean);
+  }
+  const slope = den === 0 ? 0 : num / den;
+
+  const level = 0.55 * rolling + 0.35 * recent;
+  const trendFactor = Math.max(-1, Math.min(1, slope * 10));
+  const riskScore = Math.round(Math.min(100, Math.max(0, level * 100 + 25 * trendFactor)));
+  const riskBand = riskScore >= RISK_BAND_HIGH ? 'high' : riskScore >= RISK_BAND_WATCH ? 'watch' : 'low';
+
+  const trendWord = slope > 0.005 ? 'worsening' : slope < -0.005 ? 'improving' : 'flat';
+  // Fractions -> human text: whole-number percents, slope in
+  // percentage points per day with 1 decimal.
+  const slopeText = (Math.round(slope * 1000) / 10).toFixed(1);
+  const triggerReason = `Two-week average ${Math.round(rolling * 100)}%, recent three days ${Math.round(recent * 100)}%, trend ${trendWord} (slope ${slopeText} points/day)`;
+
+  return {
+    rolling,
+    recent,
+    slope,
+    risk_score: riskScore,
+    risk_band: riskBand,
+    trigger_reason: triggerReason,
+  };
+}
+
+// Read one student's window, compute the stats and upsert today's row.
+// Returns the stats; throws on DB failure so each caller decides how to
+// degrade (the tick chain logs, the lazy loop skips, trends reports).
+async function computeRiskForStudent(studentId, dateStr) {
+  const start = new Date(`${dateStr}T00:00:00`);
+  start.setDate(start.getDate() - (RISK_WINDOW_DAYS - 1));
+
+  const { data: windowRows, error } = await supabase
+    .from('engagement_summaries')
+    .select('date, disengaged_pct')
+    .eq('student_id', studentId)
+    .gte('date', localDateStr(start))
+    .lte('date', dateStr)
+    .order('date', { ascending: true });
+  if (error) throw new Error(`risk window query failed: ${error.message}`);
+
+  const stats = computeRiskStats(windowRows || []);
+
+  const { error: upErr } = await supabase
+    .from('engagement_risk_scores')
+    .upsert({
+      student_id: studentId,
+      date: dateStr,
+      window_days: RISK_WINDOW_DAYS,
+      rolling_disengaged: stats.rolling,
+      recent_disengaged: stats.recent,
+      trend_slope: stats.slope,
+      risk_score: stats.risk_score,
+      risk_band: stats.risk_band,
+      trigger_reason: stats.trigger_reason,
+      computed_at: new Date().toISOString(),
+    }, { onConflict: 'student_id,date,window_days' });
+  if (upErr) throw new Error(`risk upsert failed: ${upErr.message}`);
+
+  return stats;
+}
+
+// Rolling risk score + the cross-day trend alert. Called from the bridge
+// tick chain right after aggregateEngagementForStudent, so it inherits
+// the same fire-and-forget discipline: it runs inside its own try/catch,
+// every failure logs, and nothing it does can reach the attendance
+// response.
+async function updateRiskScore(studentId, dateStr) {
+  try {
+    if (!supabase) return;
+    const stats = await computeRiskForStudent(studentId, dateStr);
+
+    // The alert marks the DAY the trend first crosses the high line: a
+    // watch -> high flip fires once, a high -> high day stays silent.
+    if (stats.risk_band !== 'high') return;
+    const { data: prior } = await supabase
+      .from('engagement_risk_scores')
+      .select('risk_band')
+      .eq('student_id', studentId)
+      .lt('date', dateStr)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (prior && prior.risk_band === 'high') return;
+
+    // Recipient is the homeroom teacher ONLY, never an admin copy
+    // (explicit user decision 2026-10-21).
+    const { data: student } = await supabase
+      .from('students')
+      .select('full_name, class_section:class_sections(homeroom_teacher_id)')
+      .eq('id', studentId)
+      .maybeSingle();
+    const teacherId = student?.class_section?.homeroom_teacher_id || null;
+    if (!teacherId) return; // no homeroom teacher on the section: skip silently
+
+    const name = student?.full_name || 'A student';
+    const { error: nErr } = await supabase.from('notifications').insert({
+      recipient_id: teacherId,
+      scope: 'user',
+      type: 'engagement',
+      title: `${name} at-risk trend`,
+      body: `${stats.trigger_reason}. Their two-week engagement trend has crossed the high-risk line.`,
+    });
+    if (nErr) console.warn('[risk] trend notification failed:', nErr.message);
+  } catch (e) {
+    console.error('[risk] updateRiskScore threw:', e);
   }
 }
 
@@ -597,6 +865,10 @@ async function persistEngagementBatch(detections, classroomId, dateStr) {
     console.log(`[engagement] sampled ${sampled.size} student(s) for ${dateStr}`);
     for (const sid of sampled.keys()) {
       await aggregateEngagementForStudent(sid, dateStr);
+      // Rolling two-week risk + the cross-day trend alert, rebuilt on
+      // the same data the summary just landed. Fire-and-forget like the
+      // aggregation step: updateRiskScore catches everything itself.
+      await updateRiskScore(sid, dateStr);
     }
   } catch (e) {
     console.error('[engagement] batch persistence threw:', e);
@@ -660,6 +932,14 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
   for (const det of detections) {
     const studentKey = det.student_name;
 
+    // Synthetic engagement-only rows (engagement_only: true, emitted by
+    // the Python edge's 60-second absence rule) are NOT real camera
+    // sightings: they must never mark attendance or push a live-feed
+    // row. The engagement sampler below still reads them (their
+    // engagement_state 'no_face' is a real sample), so the skip lives
+    // ONLY in this attendance pass.
+    if (det.engagement_only === true) continue;
+
     // Skip if already marked present today
     if (presentToday.has(studentKey)) continue;
     presentToday.add(studentKey);
@@ -676,11 +956,11 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
       hour: '2-digit', minute: '2-digit', hour12: true
     });
 
-    // Year/class start null on purpose: the AI payload's student_year is
-    // hardcoded to 1 Python-side, so it is never trusted. The async DB
-    // resolution below patches the row with the real students.year_num +
-    // class_sections.name as soon as it lands (Camera renders empty until
-    // then, which is honest).
+    // Year/class start null on purpose: the AI payload carries no year at
+    // all (the old hardcoded student_year was removed Python-side), so the
+    // async DB resolution below patches the row with the real
+    // students.year_num + class_sections.name as soon as it lands (Camera
+    // renders empty until then, which is honest).
     liveData.attendanceToday.push({
       studentId: liveData.attendanceToday.length + 1,
       name: det.student_name,
@@ -707,12 +987,18 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
     totalPresent: presentToday.size,
   });
 
-  // ── Persist to Supabase (fire-and-forget) ────────────────────────────────
+  // ── Persist to Supabase (fire-and-forget) ────────────────────────────────────
   // Runs AFTER the response is sent so the Python POST returns fast. A failure
   // here only logs — it never crashes the response or the in-memory store.
-  if (!supabase || freshDetections.length === 0) return;
-
+  // NEG-1: the "nothing fresh to mark" early return used to live HERE, at
+  // handler level, which silently dropped the engagement capture below: after
+  // each student's first sighting of the day every later tick arrived with
+  // freshDetections empty and was discarded before sampling could run. The
+  // guard now lives inside the detached block, so it skips only the attendance
+  // persistence and the handler always falls through to the engagement block.
   (async () => {
+    if (!supabase || freshDetections.length === 0) return;
+
     for (const { det, status, now } of freshDetections) {
       try {
         // 1) Strip any trailing "(...)" suffix from the name. The Python script
@@ -752,7 +1038,7 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
         // 3) Name-based fallback: look up the student by full_name
         //    (case-insensitive), together with the REAL year + class section —
         //    the DB row is the source of truth for both (the AI payload
-        //    hardcodes student_year to 1).
+        //    carries no year field at all).
         if (!student) {
           const { data: matches, error: lookupErr } = await supabase
             .from('students')
@@ -860,7 +1146,7 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
             if (recipients.size > 0) {
               const title = `${ctx.full_name} marked ${status}`;
               const body = `AI face recognition detected ${ctx.full_name} at ${arrivalTime} on ${isoDate}.`;
-              const rows = Array.from(recipients).map((rid) => ({
+              let rows = Array.from(recipients).map((rid) => ({
                 recipient_id: rid,
                 scope: 'user',
                 type: 'attendance',
@@ -868,9 +1154,54 @@ app.post('/api/attendance', requireBridgeKey, async (req, res) => {
                 body,
               }));
 
-              const { error: nErr } = await supabase.from('notifications').insert(rows);
-              if (nErr) {
-                console.warn('[notification fanout] insert failed:', nErr.message);
+              // Dedupe guard (#5): the presentToday gate above dies with the
+              // server process, so a resubmit after a restart re-fires this
+              // fanout for students already notified today. Skip recipients
+              // who already have an identical row (same type + title) created
+              // today. created_at is timestamptz, so compare against local
+              // midnight as ISO — a bare 'YYYY-MM-DD' would mean UTC midnight
+              // (08:00 MYT) and miss the early-morning window.
+              try {
+                const dayStartIso = new Date(
+                  now.getFullYear(), now.getMonth(), now.getDate()
+                ).toISOString();
+                const { data: existing, error: dupErr } = await supabase
+                  .from('notifications')
+                  .select('recipient_id')
+                  .in('recipient_id', Array.from(recipients))
+                  .eq('type', 'attendance')
+                  .eq('title', title)
+                  .gte('created_at', dayStartIso);
+                if (dupErr) {
+                  // Fail open: a transient lookup error must not suppress a
+                  // legitimate notification; a rare duplicate is the lesser
+                  // failure and is what this guard normally prevents.
+                  console.warn('[notification fanout] dedupe lookup failed, inserting anyway:', dupErr.message);
+                } else if (existing && existing.length > 0) {
+                  const already = new Set(existing.map((r) => r.recipient_id));
+                  rows = rows.filter((r) => !already.has(r.recipient_id));
+                }
+              } catch (e) {
+                console.warn('[notification fanout] dedupe check threw, inserting anyway:', e);
+              }
+
+              if (rows.length === 0) {
+                console.log('[notification fanout] skipped: identical notification already sent today');
+              } else {
+                // Never chain .select() onto this insert (keep the default
+                // minimal return). A representation return makes PostgREST
+                // re-read the new row under notifications_select_for_me,
+                // which hides a row addressed to someone else from the
+                // inserting staff user; combined RLS semantics then surface
+                // a misleading 42501 "new row violates row-level security
+                // policy" even though notifications_insert_staff passed.
+                // Evidence: .pi/work-reports/ft-phase3-rls.md Finding 3 and
+                // ft-rls-suite.mjs assertion 13 (measured with
+                // Prefer: return=minimal for this exact reason).
+                const { error: nErr } = await supabase.from('notifications').insert(rows);
+                if (nErr) {
+                  console.warn('[notification fanout] insert failed:', nErr.message);
+                }
               }
             }
           }
@@ -946,8 +1277,10 @@ app.get('/api/engagement/summary', requireStaff, async (req, res) => {
       student_id: row.student_id,
       student_name: row.student?.full_name || null,
       class_name: row.student?.class_section?.name || null,
-      attentive_pct: row.attentive_pct,
-      disengaged_pct: row.disengaged_pct,
+      // Response boundary only: DB stores the *_pct columns as 0-1
+      // fractions, but the UI renders these keys as 0-100 percentages.
+      attentive_pct: Math.round((Number(row.attentive_pct) || 0) * 100),
+      disengaged_pct: Math.round((Number(row.disengaged_pct) || 0) * 100),
       at_risk: row.at_risk,
       dominant_emotion: row.dominant_emotion,
     }));
@@ -958,15 +1291,239 @@ app.get('/api/engagement/summary', requireStaff, async (req, res) => {
   }
 });
 
+// GET /api/engagement/risk?date=YYYY-MM-DD: one day's rolling two-week
+// risk scores per student (computed by updateRiskScore in the tick
+// chain). Staff-only. Same service-key + teacher_class_ids + JS filter
+// scoping as /api/engagement/summary: the server queries with the
+// service key, so RLS cannot scope the rows. If no risk rows exist for
+// the date yet, they are built lazily for every student that has an
+// engagement summary that day: sequential, one student at a time, each
+// failure logged and skipped so one bad student cannot block a class.
+app.get('/api/engagement/risk', requireStaff, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  const dateStr = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+    ? req.query.date
+    : null;
+  if (req.query.date && !dateStr) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  }
+  const day = dateStr || localDateStr(new Date());
+
+  try {
+    const { data: existing, error: exErr } = await supabase
+      .from('engagement_risk_scores')
+      .select('id')
+      .eq('date', day)
+      .limit(1);
+    if (exErr) {
+      console.error('[risk] probe query failed:', exErr.message);
+      return res.status(500).json({ error: 'Failed to load risk scores' });
+    }
+
+    if (!existing || existing.length === 0) {
+      // First read of the day: score every student with an engagement
+      // summary for the date. Bounded by that day's roster, sequential
+      // by design (one query per student), failures skipped.
+      const { data: summaries, error: sumErr } = await supabase
+        .from('engagement_summaries')
+        .select('student_id')
+        .eq('date', day);
+      if (sumErr) {
+        console.error('[risk] summary lookup failed:', sumErr.message);
+        return res.status(500).json({ error: 'Failed to load engagement summaries' });
+      }
+      const studentIds = [...new Set((summaries || []).map((s) => s.student_id))];
+      for (const sid of studentIds) {
+        try {
+          await computeRiskForStudent(sid, day);
+        } catch (e) {
+          console.error(`[risk] lazy compute failed for ${sid}:`, e.message);
+        }
+      }
+    }
+
+    const { data: rows, error } = await supabase
+      .from('engagement_risk_scores')
+      .select('student_id, risk_score, risk_band, rolling_disengaged, recent_disengaged, trend_slope, student:students(full_name, class_section_id, class_section:class_sections(name))')
+      .eq('date', day);
+    if (error) {
+      console.error('[risk] query failed:', error.message);
+      return res.status(500).json({ error: 'Failed to load risk scores' });
+    }
+
+    let list = rows || [];
+
+    if (req.actor.role === 'teacher') {
+      // Service-key query: resolve the sections this teacher may see,
+      // then scope manually (RLS is bypassed by the service key).
+      const { data: classIds, error: tcErr } = await supabase
+        .rpc('teacher_class_ids', { uid: req.actor.id });
+      if (tcErr) {
+        console.error('[risk] teacher_class_ids failed:', tcErr.message);
+        return res.status(500).json({ error: 'Failed to resolve teacher classes' });
+      }
+      const ids = (Array.isArray(classIds) ? classIds : []).filter(Boolean);
+      if (ids.length === 0) return res.json([]); // teacher with no sections
+      list = list.filter((r) => ids.includes(r.student?.class_section_id));
+    }
+
+    // days_of_data is not a stored column: count the student's
+    // engagement summaries inside the same 14-day window (one grouped
+    // query for the whole response). A count failure only degrades this
+    // one field, so it logs instead of failing the endpoint.
+    const winStart = new Date(`${day}T00:00:00`);
+    winStart.setDate(winStart.getDate() - (RISK_WINDOW_DAYS - 1));
+    const { data: winRows, error: winErr } = await supabase
+      .from('engagement_summaries')
+      .select('student_id')
+      .gte('date', localDateStr(winStart))
+      .lte('date', day);
+    const dayCounts = new Map();
+    if (winErr) {
+      console.error('[risk] window count failed:', winErr.message);
+    } else {
+      for (const r of winRows || []) {
+        dayCounts.set(r.student_id, (dayCounts.get(r.student_id) || 0) + 1);
+      }
+    }
+
+    const out = list.map((row) => ({
+      student_id: row.student_id,
+      student_name: row.student?.full_name || null,
+      class_name: row.student?.class_section?.name || null,
+      risk_score: row.risk_score, // null while history is under 3 days
+      risk_band: row.risk_band,
+      // Response boundary: the DB stores 0-1 fractions and a
+      // fraction-per-day slope; the UI gets 0-100 integers and
+      // percentage points per day (same conversion as the summary
+      // endpoint, where a missing fraction reads as 0).
+      rolling_disengaged: Math.round((Number(row.rolling_disengaged) || 0) * 100),
+      recent_disengaged: Math.round((Number(row.recent_disengaged) || 0) * 100),
+      trend_slope: Math.round((Number(row.trend_slope) || 0) * 1000) / 10,
+      days_of_data: dayCounts.get(row.student_id) || 0,
+    }));
+    return res.json(out);
+  } catch (e) {
+    console.error('[risk] endpoint threw:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/engagement/trends?student_id=&days=30: one student's daily
+// disengagement line plus their latest risk verdict. Staff-only;
+// teachers only their own students (403 otherwise), admins unrestricted.
+app.get('/api/engagement/trends', requireStaff, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  const studentId = typeof req.query.student_id === 'string' ? req.query.student_id.trim() : '';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(studentId)) {
+    return res.status(400).json({ error: 'student_id must be a UUID' });
+  }
+
+  // days is clamped into 1..90 so a bad client cannot pull an
+  // unbounded history dump.
+  const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
+
+  try {
+    if (req.actor.role === 'teacher') {
+      // Service key bypasses RLS, so the membership check the database
+      // would enforce on a teacher client is done by hand here.
+      const { data: classIds, error: tcErr } = await supabase
+        .rpc('teacher_class_ids', { uid: req.actor.id });
+      if (tcErr) {
+        console.error('[trends] teacher_class_ids failed:', tcErr.message);
+        return res.status(500).json({ error: 'Failed to resolve teacher classes' });
+      }
+      const ids = (Array.isArray(classIds) ? classIds : []).filter(Boolean);
+      const { data: stu, error: sErr } = await supabase
+        .from('students')
+        .select('class_section_id')
+        .eq('id', studentId)
+        .maybeSingle();
+      if (sErr) {
+        console.error('[trends] student lookup failed:', sErr.message);
+        return res.status(500).json({ error: 'Failed to load student' });
+      }
+      if (!stu || !ids.includes(stu.class_section_id)) {
+        return res.status(403).json({ error: 'Student not in your classes' });
+      }
+    }
+
+    const today = localDateStr(new Date());
+    const start = new Date(`${today}T00:00:00`);
+    start.setDate(start.getDate() - (days - 1));
+
+    const { data: rows, error } = await supabase
+      .from('engagement_summaries')
+      .select('date, disengaged_pct, at_risk')
+      .eq('student_id', studentId)
+      .gte('date', localDateStr(start))
+      .lte('date', today)
+      .order('date', { ascending: true });
+    if (error) {
+      console.error('[trends] summaries query failed:', error.message);
+      return res.status(500).json({ error: 'Failed to load engagement summaries' });
+    }
+
+    // Latest verdict: the most recent stored risk row wins. A student
+    // with no risk row at all (new to the pipeline) gets today's
+    // computed on demand so the panel is never blank while they are
+    // actively being sampled. No alert side effects here: the alert
+    // belongs to the tick chain only.
+    const { data: latestRow } = await supabase
+      .from('engagement_risk_scores')
+      .select('risk_score, risk_band, trigger_reason')
+      .eq('student_id', studentId)
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let latest = latestRow || null;
+    if (!latest) {
+      try {
+        latest = await computeRiskForStudent(studentId, today);
+      } catch (e) {
+        console.error('[trends] on-demand risk compute failed:', e.message);
+      }
+    }
+
+    return res.json({
+      days: (rows || []).map((r) => ({
+        date: r.date,
+        // 0-1 fraction in the DB, 0-100 integer on the wire (same
+        // boundary conversion as the summary endpoint).
+        disengaged_pct: Math.round((Number(r.disengaged_pct) || 0) * 100),
+        at_risk: r.at_risk,
+      })),
+      latest: latest
+        ? {
+            risk_score: latest.risk_score,
+            risk_band: latest.risk_band,
+            trigger_reason: latest.trigger_reason,
+          }
+        : null,
+    });
+  } catch (e) {
+    console.error('[trends] endpoint threw:', e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ── Admin: User Management ───────────────────────────────────────────────────
 // Backs the Admin Panel's Add / Edit / Delete user controls. All three require
 // the caller to be authenticated AND hold role==='admin'. Every successful
 // mutation appends an entry to audit_logs (fire-and-forget).
 
-// POST /api/admin/users — invite a new user by email.
-// Body: { email, full_name, role, phone? }
+// POST /api/admin/users — create a new user directly (defect S1).
+// Body: { email, full_name, role, phone?, password? }
+// The old inviteUserByEmail flow failed for every address because no SMTP is
+// configured on this project ('Email address ... is invalid'), so the user is
+// created directly instead: email confirmed at creation, password set here.
+// The password comes from the request body when supplied; otherwise a strong
+// random one is generated and returned once (temporary_password) so the admin
+// can hand it to the user.
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
-  const { email, full_name, role, phone } = req.body || {};
+  const { email, full_name, role, phone, password } = req.body || {};
 
   if (!email || typeof email !== 'string' || !EMAIL_RE.test(email.trim())) {
     return res.status(400).json({ error: 'Valid email is required' });
@@ -980,34 +1537,46 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   if (phone != null && typeof phone !== 'string') {
     return res.status(400).json({ error: 'phone must be a string' });
   }
+  // Optional explicit password (Supabase's default minimum is 6 characters);
+  // validated here so a weak attempt fails fast with 400 instead of a
+  // Supabase error surfacing as 500.
+  if (password != null && (typeof password !== 'string' || password.length < 6)) {
+    return res.status(400).json({ error: 'password must be a string of at least 6 characters' });
+  }
 
   const cleanEmail = email.trim();
   const cleanName = full_name.trim();
+  const initialPassword = password || crypto.randomBytes(18).toString('base64url');
 
   try {
-    const { data: invited, error: inviteErr } =
-      await supabase.auth.admin.inviteUserByEmail(cleanEmail, {
-        data: { full_name: cleanName, role },
-      });
+    const { data: created, error: createErr } = await supabase.auth.admin.createUser({
+      email: cleanEmail,
+      password: initialPassword,
+      // Confirmed at creation: no invite email is ever sent (no SMTP on this
+      // project), so the user can sign in with the handed-over password right
+      // away.
+      email_confirm: true,
+      user_metadata: { full_name: cleanName, role },
+    });
 
-    if (inviteErr) {
-      const msg = (inviteErr.message || '').toLowerCase();
+    if (createErr) {
+      const msg = (createErr.message || '').toLowerCase();
       // Supabase surfaces duplicate-email cases via several phrasings — match liberally.
       if (
         msg.includes('already') ||
         msg.includes('registered') ||
         msg.includes('exists') ||
-        inviteErr.status === 422
+        createErr.status === 422
       ) {
         return res.status(409).json({ error: 'Email already in use' });
       }
-      console.error('[admin/users] invite failed:', inviteErr);
-      return res.status(500).json({ error: inviteErr.message || 'Invite failed' });
+      console.error('[admin/users] create failed:', createErr);
+      return res.status(500).json({ error: createErr.message || 'Create user failed' });
     }
 
-    const invitedUser = invited?.user;
-    if (!invitedUser?.id) {
-      return res.status(500).json({ error: 'Invite returned no user' });
+    const createdUser = created?.user;
+    if (!createdUser?.id) {
+      return res.status(500).json({ error: 'Create user returned no user' });
     }
 
     // The handle_new_user trigger has already inserted a profile row. If a phone
@@ -1016,20 +1585,23 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       const { error: phoneErr } = await supabase
         .from('profiles')
         .update({ phone: phone.trim() })
-        .eq('id', invitedUser.id);
+        .eq('id', createdUser.id);
       if (phoneErr) {
         console.warn('[admin/users] phone update failed:', phoneErr.message);
       }
     }
 
     res.status(201).json({
-      id: invitedUser.id,
-      email: invitedUser.email || cleanEmail,
+      id: createdUser.id,
+      email: createdUser.email || cleanEmail,
       full_name: cleanName,
       role,
+      // Echo the generated password back once, only when the server chose it
+      // (an admin-supplied password is already known to its owner).
+      ...(password ? {} : { temporary_password: initialPassword }),
     });
 
-    logAudit(req.actor.id, 'user.invite', invitedUser.id, {
+    logAudit(req.actor.id, 'user.invite', createdUser.id, {
       email: cleanEmail,
       full_name: cleanName,
       role,
@@ -1226,13 +1798,18 @@ app.get('/api/admin/users/list', requireAdmin, async (req, res) => {
 // If our own child is gone but port 5174 is still occupied, Python survived a
 // server restart (orphan) — report running:true with an explanatory note so
 // the UI can offer the force-kill endpoint instead of a dead "Start" button.
-app.get('/api/ai/process', requireStaff, (req, res) => {
+app.get('/api/ai/process', requireStaff, async (req, res) => {
   const running = !!(aiProcess && aiProcess.exitCode === null);
+  const settings = await getAppSettings(); // cached, fail-safe defaults
   const baseState = {
     startedAt: aiStartedAt,
     lastExitCode: aiLastExitCode,
     lastExitAt: aiLastExitAt,
     lastError: aiLastError,
+    // Crash auto-restart state: the admin toggle plus how many auto-restart
+    // attempts still count against the circuit breaker's rolling window.
+    autorestart_enabled: !!settings.autorestart_ai,
+    autorestarts_recent: recentAutoRestartCount(),
   };
   if (running) {
     return res.json({ running, orphan: false, pid: aiProcess.pid, ...baseState });
@@ -1309,113 +1886,218 @@ app.delete('/api/ai/enrolled/:name', requireAdmin, (req, res) => {
   }
 });
 
-// POST /api/ai/start — spawn the Python face-recognition service.
-app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
+// Shared spawn path for the AI child: POST /api/ai/start, POST /api/ai/restart
+// and the crash auto-restart all go through this one function, so there is a
+// single source of truth for the settings read, the spawn args, the ai.pid
+// write, the stdout/stderr GPU scan and the exit handler. `req` is optional:
+// HTTP callers pass it (the audit log needs req.actor), the auto-restart
+// passes null. Throws an Error tagged with .status (and .pid when already
+// running) so HTTP callers can reply with exactly the response shapes
+// /api/ai/start has always produced: 409 already running, 500 missing
+// venv/script. Resolves { pid, startedAt } on success.
+async function startAiProcess(req) {
   if (aiProcess && aiProcess.exitCode === null) {
-    return res.status(409).json({
-      error: 'AI service already running',
-      pid: aiProcess.pid,
-    });
+    const err = new Error('AI service already running');
+    err.status = 409;
+    err.pid = aiProcess.pid;
+    throw err;
   }
+  const { aiDir, pythonExe, script } = aiPaths();
+  if (!fs.existsSync(pythonExe)) {
+    const err = new Error(`Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`);
+    err.status = 500;
+    throw err;
+  }
+  if (!fs.existsSync(script)) {
+    const err = new Error(`Script not found at ${script}`);
+    err.status = 500;
+    throw err;
+  }
+
+  // Detection size + match threshold come from the Admin Panel's settings
+  // row (cached, fail-safe defaults), so the admin tunes them without code.
+  const settings = await getAppSettings();
+  console.log(`[AI] start: det_size=${settings.det_size} threshold=${settings.match_threshold}`);
+
+  const cameraIndex = process.env.CAMERA_INDEX || '0';
+  const child = spawn(pythonExe, [
+    '-u', script,
+    '--camera', cameraIndex,
+    '--det-size', String(settings.det_size),
+    '--threshold', String(settings.match_threshold),
+    '--classroom', String(settings.classroom_label),
+  ], {
+    cwd: aiDir,
+    windowsHide: false, // let the OpenCV window be visible
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      // Force UTF-8 stdout so Python doesn't crash trying to print
+      // unicode arrows / em-dashes on Windows' default cp1252 codepage.
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+    },
+  });
+
+  aiProcess = child;
+  aiStartedAt = new Date().toISOString();
+  aiLastExitCode = null;
+  aiLastExitAt = null;
+  aiLastError = null;
+
+  // Persist the child PID so the NEXT server run can recognize (and reap)
+  // this Python process if this Express process dies first (#15 zombies).
   try {
-    const { aiDir, pythonExe, script } = aiPaths();
-    if (!fs.existsSync(pythonExe)) {
-      return res.status(500).json({
-        error: `Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`,
-      });
-    }
-    if (!fs.existsSync(script)) {
-      return res.status(500).json({
-        error: `Script not found at ${script}`,
-      });
-    }
-
-    // Detection size + match threshold come from the Admin Panel's settings
-    // row (cached, fail-safe defaults) — the admin tunes them without code.
-    const settings = await getAppSettings();
-    console.log(`[AI] start: det_size=${settings.det_size} threshold=${settings.match_threshold}`);
-
-    const child = spawn(pythonExe, [
-      '-u', script,
-      '--camera', '0',
-      '--det-size', String(settings.det_size),
-      '--threshold', String(settings.match_threshold),
-    ], {
-      cwd: aiDir,
-      windowsHide: false, // let the OpenCV window be visible
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        // Force UTF-8 stdout so Python doesn't crash trying to print
-        // unicode arrows / em-dashes on Windows' default cp1252 codepage.
-        PYTHONIOENCODING: 'utf-8',
-        PYTHONUTF8: '1',
-      },
-    });
-
-    aiProcess = child;
-    aiStartedAt = new Date().toISOString();
-    aiLastExitCode = null;
-    aiLastExitAt = null;
-    aiLastError = null;
-
-    // Persist the child PID so the NEXT server run can recognize (and reap)
-    // this Python process if this Express process dies first (#15 zombies).
-    try {
-      fs.writeFileSync(aiPaths().pidPath, String(child.pid), 'utf-8');
-    } catch (e) {
-      console.warn('[AI] Could not write ai.pid:', e.message);
-    }
-
-    child.stdout.on('data', (chunk) => {
-      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      lines.forEach((l) => {
-        console.log(`[AI:stdout] ${l}`);
-        if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
-      });
-    });
-    child.stderr.on('data', (chunk) => {
-      const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
-      lines.forEach((l) => {
-        console.warn(`[AI:stderr] ${l}`);
-        if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
-      });
-    });
-    child.on('exit', (code, signal) => {
-      console.log(`[AI] Python child exited code=${code} signal=${signal}`);
-      aiLastExitCode = code;
-      aiLastExitAt = new Date().toISOString();
-      if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
-      if (aiProcess === child) aiProcess = null;
-      clearAiPid(); // child is gone — the recorded PID is stale now
-    });
-    child.on('error', (err) => {
-      console.error('[AI] Spawn error:', err);
-      if (aiProcess === child) aiProcess = null;
-    });
-
-    logAudit(req.actor.id, 'ai.start', null, { pid: child.pid });
-    return res.json({ success: true, pid: child.pid, startedAt: aiStartedAt });
+    fs.writeFileSync(aiPaths().pidPath, String(child.pid), 'utf-8');
   } catch (e) {
+    console.warn('[AI] Could not write ai.pid:', e.message);
+  }
+
+  child.stdout.on('data', (chunk) => {
+    const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+    lines.forEach((l) => {
+      console.log(`[AI:stdout] ${l}`);
+      if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
+    });
+  });
+  child.stderr.on('data', (chunk) => {
+    const lines = chunk.toString().split(/\r?\n/).filter(Boolean);
+    lines.forEach((l) => {
+      console.warn(`[AI:stderr] ${l}`);
+      if (l.includes('GPU_REQUIRED')) aiLastError = GPU_REQUIRED_MSG;
+    });
+  });
+  child.on('exit', (code, signal) => {
+    console.log(`[AI] Python child exited code=${code} signal=${signal}`);
+    aiLastExitCode = code;
+    aiLastExitAt = new Date().toISOString();
+    if (code === AI_EXIT_GPU_REQUIRED && !aiLastError) aiLastError = GPU_REQUIRED_MSG;
+    if (aiProcess === child) aiProcess = null;
+    clearAiPid(); // child is gone — the recorded PID is stale now
+    // The AI link is gone until the next child POSTs (#4): flip the health
+    // pill offline here so crashes, stops and force-kills all stop claiming
+    // 'AI Online'. A successful auto-restart flips it back on its first POST.
+    liveData.aiStatus = 'offline';
+    // Crash auto-restart evaluates every exit; operator-driven exits are
+    // filtered out inside (see scheduleCrashAutoRestart).
+    scheduleCrashAutoRestart(code);
+  });
+  child.on('error', (err) => {
+    console.error('[AI] Spawn error:', err);
+    if (aiProcess === child) aiProcess = null;
+  });
+
+  if (req) logAudit(req.actor.id, 'ai.start', null, { pid: child.pid });
+  return { pid: child.pid, startedAt: aiStartedAt };
+}
+
+// POST /api/ai/start — spawn the Python face-recognition service.
+// The spawn itself lives in the shared startAiProcess() above, which the
+// restart endpoint and the crash auto-restart reuse.
+app.post('/api/ai/start', requireAdminOrTeacher, async (req, res) => {
+  try {
+    const { pid, startedAt } = await startAiProcess(req);
+    return res.json({ success: true, pid, startedAt });
+  } catch (e) {
+    // Deliberate failures carry .status: reply with the same shapes as before
+    // the shared-function refactor (409 already running, 500 missing files).
+    if (e.status) return res.status(e.status).json(e.pid ? { error: e.message, pid: e.pid } : { error: e.message });
     console.error('[AI start] failed:', e);
     return res.status(500).json({ error: e.message || 'Failed to start AI service' });
   }
 });
 
+// Stop the supervised child and resolve once its exit handler has actually
+// run. /api/ai/stop is fire-and-forget, but the restart flow must not spawn
+// the replacement while the old child still holds the webcam and the stream
+// port, so this waits for the real exit. Latches aiIntentionalStop first so
+// the exit is never mistaken for a crash. Resolves false when nothing is
+// running or the child ignored the kill for AI_STOP_GRACE_MS.
+const AI_STOP_GRACE_MS = 10 * 1000;
+function stopAiProcessAndWait() {
+  return new Promise((resolve) => {
+    // An armed crash auto-restart must not outlive an operator stop/restart:
+    // when no child is running this call is the ONLY thing standing between
+    // the still-armed timer and a respawn the operator just tried to prevent.
+    cancelPendingAutoRestart();
+    if (!aiProcess || aiProcess.exitCode !== null) return resolve(false);
+    const child = aiProcess;
+    aiIntentionalStop = true; // consumed by the exit handler
+    let settled = false;
+    const finish = (stopped) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(grace);
+      resolve(stopped);
+    };
+    const grace = setTimeout(() => finish(false), AI_STOP_GRACE_MS);
+    // The shared spawn registered its own exit handler first, so by the time
+    // this fires, aiProcess is already cleared and the pid file removed.
+    child.once('exit', () => finish(true));
+    try {
+      child.kill();
+    } catch (e) {
+      // The kill never landed: release the latch so a later crash can still
+      // auto-restart, and report failure.
+      aiIntentionalStop = false;
+      console.error('[AI] restart: stop failed:', e.message);
+      finish(false);
+    }
+  });
+}
+
+// POST /api/ai/restart — stop the running child (waiting for a real exit),
+// then start a fresh one through the shared spawn path. With no child
+// running it simply starts one: restart is an idempotent convenience.
+// Admin/teacher, like start/stop.
+app.post('/api/ai/restart', requireAdminOrTeacher, async (req, res) => {
+  if (aiRestartInProgress) {
+    return res.status(409).json({ error: 'A restart is already in progress' });
+  }
+  aiRestartInProgress = true;
+  try {
+    if (aiProcess && aiProcess.exitCode === null) {
+      const stopped = await stopAiProcessAndWait();
+      if (!stopped) {
+        return res.status(500).json({ error: 'Existing AI process did not exit; try POST /api/ai/stop or DELETE /api/ai/process' });
+      }
+    }
+    const { pid } = await startAiProcess(req);
+    logAudit(req.actor.id, 'ai.restart', null, { pid });
+    return res.json({ restarted: true, pid });
+  } catch (e) {
+    // startAiProcess tags its deliberate failures (.status), so restart
+    // answers with the same shapes start would (409 running, 500 venv).
+    if (e.status) return res.status(e.status).json(e.pid ? { error: e.message, pid: e.pid } : { error: e.message });
+    console.error('[AI restart] failed:', e);
+    return res.status(500).json({ error: e.message || 'Failed to restart AI service' });
+  } finally {
+    aiRestartInProgress = false;
+  }
+});
+
 // POST /api/ai/stop — terminate the running Python child.
 app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
+  // Explicit operator intent: cancel any pending crash auto-restart first.
+  // Done before the not-running check on purpose — that branch is exactly
+  // the stop-vs-auto-restart race window (#2): child already dead, 3s timer
+  // still armed, operator clicking Stop must not be answered with a respawn.
+  cancelPendingAutoRestart();
   if (!aiProcess || aiProcess.exitCode !== null) {
     return res.status(404).json({ error: 'AI service is not running' });
   }
   const pid = aiProcess.pid;
+  aiIntentionalStop = true; // the exit handler consumes this: an explicit stop never auto-restarts
   try {
     // On Windows, SIGTERM is mapped to a terminate; this typically works.
     // For really stuck cases the admin can fall back to the force-kill below.
     aiProcess.kill();
     clearAiPid(); // the exit handler removes it too — belt and braces
+    liveData.aiStatus = 'offline'; // link is going down; the exit handler also flips it (#4)
     logAudit(req.actor.id, 'ai.stop', null, { pid });
     return res.json({ success: true, pid });
   } catch (e) {
+    aiIntentionalStop = false; // kill never landed: a later crash may still auto-restart
     console.error('[AI stop] failed:', e);
     return res.status(500).json({ error: e.message || 'Failed to stop AI service' });
   }
@@ -1429,12 +2111,23 @@ app.post('/api/ai/stop', requireAdminOrTeacher, (req, res) => {
 // when it is the one being killed.
 app.delete('/api/ai/process', requireAdmin, (req, res) => {
   findPortPid(AI_PORT, (portPid) => {
+    // Operator force-kill: a pending crash auto-restart must not resurrect
+    // whatever we are about to kill (or re-arm after the 404 below) (#2).
+    cancelPendingAutoRestart();
     if (!portPid) {
       return res.status(404).json({ error: `No process found listening on port ${AI_PORT}` });
     }
     try {
+      // When the target is our own supervised child, latch the intentional
+      // stop first so its exit handler does not mistake this operator-driven
+      // kill for a crash and respawn the process the admin just killed.
+      // Orphans keep the flag untouched (no exit handler will fire for them).
+      if (aiProcess && aiProcess.exitCode === null && aiProcess.pid === portPid) {
+        aiIntentionalStop = true;
+      }
       process.kill(portPid, 'SIGTERM');
       console.log(`[AI] Force-killed PID ${portPid} holding port ${AI_PORT} (by admin ${req.actor.id})`);
+      liveData.aiStatus = 'offline'; // whatever POSTed is now dead (#4)
       logAudit(req.actor.id, 'ai.force_kill', null, { pid: portPid, port: AI_PORT });
       return res.json({ success: true, killed: portPid });
     } catch (e) {
@@ -1460,6 +2153,26 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
     .eq('id', student_id)
     .maybeSingle();
   if (error || !student) return res.status(404).json({ error: 'Student not found' });
+
+  // Server-side PDPA consent gate (defect L2: this legacy endpoint used to
+  // trust the client for this). Mirrors /api/ai/enroll/session exactly: the
+  // LATEST non-revoked biometric_consents row decides; a missing row counts
+  // as pending and is refused too.
+  const { data: consentRows, error: consentErr } = await supabase
+    .from('biometric_consents')
+    .select('granted')
+    .eq('student_id', student_id)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (consentErr) {
+    console.error('[ai/enroll] consent lookup failed:', consentErr.message);
+    return res.status(500).json({ error: 'Failed to check biometric consent' });
+  }
+  const consented = Array.isArray(consentRows) && consentRows.length > 0 && consentRows[0].granted === true;
+  if (!consented) {
+    return res.status(403).json({ error: 'Parent biometric consent not granted' });
+  }
 
   // Don't allow concurrent enrollments alongside the recognition script.
   // Both grab the same webcam (/dev/video0) and would deadlock.
@@ -1523,6 +2236,369 @@ app.post('/api/ai/enroll', requireAdmin, async (req, res) => {
   child.on('error', (e) => res.status(500).json({ error: e.message }));
 });
 
+// ── Browser enrollment sessions (Phase 1) ────────────────────────────────
+// In-browser enrollment: the admin's webcam (in the React page) captures the
+// frames, this server relays them to a local headless Python helper
+// (enroll_server.py) that holds InsightFace, and on completion this server
+// writes enrolled_students.json itself. The classroom webcam (held by the
+// face_recognition.py child) is NOT involved, so a session is deliberately
+// ALLOWED while the recognition AI is running. The CLI fallback (POST
+// /api/ai/enroll above) stays untouched for machines without the helper.
+
+// Module-level single-session state: only one browser enrollment at a time.
+let enrollSession = null; // { id, studentId, studentName, studentClass, child, port, startedAt }
+
+// Matches enroll_student.py's default --captures (5). The helper announces
+// the authoritative per-frame count; this is only what /api/ai/enroll/session
+// returns so the UI can show a target before the first frame arrives.
+const ENROLL_REQUIRED_CAPTURES = 5;
+
+// enroll_server.py prints "ENROLL_READY port=<P>" on stdout once its HTTP
+// server is listening, and refuses without CUDA/DirectML by printing
+// GPU_REQUIRED and exiting with code 3 (same contract as the other AI
+// children, mapped to the same user-facing message below).
+const ENROLL_HELPER_START_TIMEOUT_MS = 45 * 1000;
+
+// Serialize writes to enrolled_students.json through a promise chain. The CLI
+// fallback (POST /api/ai/enroll) is the only other writer, and it can never
+// overlap a browser session: it is refused while the recognition AI runs
+// (409 rule), and this chain additionally orders concurrent completions.
+let enrollJsonWriteChain = Promise.resolve();
+function withEnrollJsonLock(fn) {
+  const run = enrollJsonWriteChain.then(fn, fn);
+  enrollJsonWriteChain = run.then(() => {}, () => {});
+  return run;
+}
+
+// time.strftime("%Y-%m-%dT%H:%M:%S") equivalent in LOCAL time, the exact
+// enrolled_at format enroll_student.py writes (toISOString would be UTC).
+function localEnrollTimestamp(d) {
+  const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+  return `${localDateStr(d)}T${t}`;
+}
+
+// If Express exits while a helper is up, take the helper down with it so no
+// headless Python process outlives the server (the helper also idle-exits
+// after 10 minutes on its own).
+process.on('exit', () => {
+  if (enrollSession && enrollSession.child.exitCode === null) {
+    try { enrollSession.child.kill(); } catch (_) { /* best effort */ }
+  }
+});
+
+// POST /api/ai/enroll/session - start a browser-enrollment session for one
+// student. Admin-only, same reasoning as POST /api/ai/enroll: this path ends
+// in face embeddings being written, which is a sensitive operation.
+app.post('/api/ai/enroll/session', requireAdmin, async (req, res) => {
+  const { student_id } = req.body || {};
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (!supabase) return res.status(503).json({ error: 'Supabase not configured' });
+
+  // Look up the student's id, name + class section name from Supabase.
+  const { data: student, error } = await supabase
+    .from('students')
+    .select('id, full_name, class_section:class_sections(name)')
+    .eq('id', student_id)
+    .maybeSingle();
+  if (error || !student) return res.status(404).json({ error: 'Student not found' });
+
+  // Server-side PDPA consent gate (the legacy CLI endpoint /api/ai/enroll
+  // now enforces this identical gate). Mirrors the client rule in AdminPanel.jsx
+  // (consentStatusFor(studentId) === 'granted'): the LATEST non-revoked
+  // biometric_consents row decides; a missing row counts as pending and is
+  // refused too.
+  const { data: consentRows, error: consentErr } = await supabase
+    .from('biometric_consents')
+    .select('granted')
+    .eq('student_id', student_id)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (consentErr) {
+    console.error('[ai/enroll-session] consent lookup failed:', consentErr.message);
+    return res.status(500).json({ error: 'Failed to check biometric consent' });
+  }
+  const consented = Array.isArray(consentRows) && consentRows.length > 0 && consentRows[0].granted === true;
+  if (!consented) {
+    return res.status(403).json({ error: 'Parent biometric consent not granted' });
+  }
+
+  // One helper at a time. A session whose helper already died does not block
+  // a new one; the frame endpoint clears the stale state on its next call.
+  if (enrollSession && enrollSession.child.exitCode === null) {
+    return res.status(409).json({ error: 'An enrollment session is already active' });
+  }
+
+  // Not blocked while the recognition AI runs: enrollment uses the admin's
+  // browser camera, not the classroom webcam the AI child holds.
+
+  const settings = await getAppSettings(); // det_size from Admin settings (cached, fail-safe default 320)
+  const { aiDir, pythonExe } = aiPaths();
+  const script = path.join(aiDir, 'enroll_server.py');
+  if (!fs.existsSync(pythonExe)) {
+    return res.status(500).json({
+      error: `Python venv not found at ${pythonExe}. Run "python -m venv venv" + "pip install -r requirements.txt" inside ai-service/edge first.`,
+    });
+  }
+  if (!fs.existsSync(script)) {
+    return res.status(500).json({ error: 'Enrollment helper missing (ai-service/edge/enroll_server.py)' });
+  }
+
+  const child = spawn(pythonExe, [
+    '-u', script,
+    // Port 0 = the helper picks a free ephemeral port and announces it on
+    // stdout, so there is no fixed port to collide with.
+    '--port', '0',
+    '--det-size', String(settings.det_size),
+  ], {
+    cwd: aiDir,
+    windowsHide: true, // headless helper, nothing to show on screen
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+  });
+
+  // Log everything the helper says for its whole lifetime, watch for the
+  // ready line and the GPU refusal, and keep a stderr tail for the
+  // startup-failure response below.
+  let readyPort = null;
+  let gpuSignalled = false;
+  let stderrTail = '';
+  child.stdout.on('data', (d) => {
+    const s = d.toString();
+    s.split(/\r?\n/).filter(Boolean).forEach((l) => console.log(`[AI:enroll-server:stdout] ${l}`));
+    const m = s.match(/ENROLL_READY\s+port=(\d+)/);
+    if (m) readyPort = parseInt(m[1], 10);
+    if (s.includes('GPU_REQUIRED')) gpuSignalled = true;
+  });
+  child.stderr.on('data', (d) => {
+    const s = d.toString();
+    stderrTail = (stderrTail + s).slice(-2000);
+    s.split(/\r?\n/).filter(Boolean).forEach((l) => console.warn(`[AI:enroll-server:stderr] ${l}`));
+    if (s.includes('GPU_REQUIRED')) gpuSignalled = true;
+  });
+  child.on('exit', (code, signal) => {
+    // Session state is intentionally left in place so the frame endpoint can
+    // return its dedicated "helper stopped" answer; this is just the log line.
+    console.log(`[AI:enroll-server] helper exited code=${code} signal=${signal}`);
+  });
+
+  // Wait for ENROLL_READY, a GPU refusal (exit 3 / GPU_REQUIRED marker), a
+  // spawn error, or the startup deadline, whichever comes first.
+  const outcome = await new Promise((resolve) => {
+    let settled = false;
+    let spawnErr = null;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(() => finish({ ok: false, reason: 'timeout' }), ENROLL_HELPER_START_TIMEOUT_MS);
+    child.on('error', (e) => { spawnErr = e; });
+    const poll = setInterval(() => {
+      if (spawnErr) finish({ ok: false, reason: 'error', message: spawnErr.message });
+      else if (readyPort !== null) finish({ ok: true, port: readyPort });
+      else if (child.exitCode !== null) finish({
+        ok: false,
+        reason: 'exit',
+        code: child.exitCode,
+        gpu: gpuSignalled || child.exitCode === AI_EXIT_GPU_REQUIRED,
+      });
+    }, 100);
+  });
+
+  if (!outcome.ok) {
+    try { child.kill(); } catch (_) { /* already gone */ }
+    if (outcome.reason === 'exit' && outcome.gpu) {
+      // Same hardware refusal as the CLI path: surface the real reason
+      // instead of a generic "failed to start".
+      return res.status(503).json({ error: GPU_REQUIRED_MSG });
+    }
+    return res.status(500).json({
+      error: 'Enrollment helper failed to start',
+      stderr: outcome.reason === 'error' ? String(outcome.message || '') : stderrTail.slice(-500),
+    });
+  }
+
+  enrollSession = {
+    id: `es_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
+    studentId: student.id,
+    studentName: student.full_name,
+    studentClass: student.class_section?.name || 'Unknown',
+    child,
+    port: outcome.port,
+    startedAt: new Date().toISOString(),
+  };
+
+  return res.json({
+    session_id: enrollSession.id,
+    student_name: student.full_name,
+    required_captures: ENROLL_REQUIRED_CAPTURES,
+  });
+});
+
+// POST /api/ai/enroll/frame - relay one browser-camera frame to the helper.
+// Body: { session_id, image, mode? } where image is a data URL or a raw
+// base64 JPEG and mode is 'preview' (default) or 'capture'. The helper's
+// verdict JSON is relayed to the client unchanged, status code included.
+app.post('/api/ai/enroll/frame', requireAdmin, async (req, res) => {
+  const { session_id, image, mode } = req.body || {};
+  if (!session_id || !image) return res.status(400).json({ error: 'session_id and image required' });
+  if (!enrollSession || enrollSession.id !== session_id) {
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+  if (enrollSession.child.exitCode !== null) {
+    enrollSession = null; // dead helper: drop the stale session
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+  // Accept both data URLs ("data:image/jpeg;base64,...") and raw base64.
+  const dm = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(image);
+  const image_b64 = dm ? image.slice(dm[0].length) : image;
+  try {
+    const r = await fetch(`http://127.0.0.1:${enrollSession.port}/frame`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_b64, mode: mode === 'capture' ? 'capture' : 'preview' }),
+    });
+    const data = await r.json().catch(() => ({}));
+    return res.status(r.status).json(data);
+  } catch (_) {
+    // The helper died between the liveness check above and this call.
+    enrollSession = null;
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+});
+
+// POST /api/ai/enroll/complete - ask the helper to finalize the captures
+// into one 512-float embedding, then write enrolled_students.json with EXACTLY
+// the semantics of enroll_student.py (add_student / --overwrite): an entry
+// with the same name (case-insensitive) keeps its id and gets the embedding,
+// class, timestamp and UUID refreshed; otherwise it is appended with
+// max(existing ids)+1. Admin-only.
+app.post('/api/ai/enroll/complete', requireAdmin, async (req, res) => {
+  const { session_id } = req.body || {};
+  if (!session_id) return res.status(400).json({ error: 'session_id required' });
+  if (!enrollSession || enrollSession.id !== session_id) {
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+  if (enrollSession.child.exitCode !== null) {
+    enrollSession = null;
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+  const session = enrollSession;
+
+  let finalizeRes;
+  try {
+    finalizeRes = await fetch(`http://127.0.0.1:${session.port}/finalize`, { method: 'POST' });
+  } catch (_) {
+    // Helper died before finalize could run.
+    enrollSession = null;
+    return res.status(410).json({ error: 'Enrollment helper stopped; start again' });
+  }
+  const finalizeData = await finalizeRes.json().catch(() => ({}));
+  if (!finalizeRes.ok) {
+    // 409 = not enough captures yet: relay the helper's error + counts.
+    return res.status(finalizeRes.status).json(finalizeData);
+  }
+
+  // Contract: 200 { embedding: [512 floats], captures }.
+  const embedding = Array.isArray(finalizeData.embedding) ? finalizeData.embedding : null;
+  if (!embedding || embedding.length !== 512 || embedding.some((n) => typeof n !== 'number' || !Number.isFinite(n))) {
+    return res.status(500).json({ error: 'Enrollment helper returned an invalid embedding' });
+  }
+  if (enrollSession !== session) {
+    // The session was cancelled while finalize was in flight; discard the
+    // embedding instead of writing it for a cancelled enrollment.
+    try { fetch(`http://127.0.0.1:${session.port}/shutdown`, { method: 'POST' }).catch(() => {}); } catch (_) { /* already gone */ }
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+
+  let writeResult;
+  try {
+    writeResult = await withEnrollJsonLock(async () => {
+      const dbPath = path.join(aiPaths().aiDir, 'enrolled_students.json');
+      // Same load rule as enroll_student.load_database: a missing file is an
+      // empty database, and students must be a list.
+      let db = { students: [] };
+      if (fs.existsSync(dbPath)) {
+        db = JSON.parse(fs.readFileSync(dbPath, 'utf-8'));
+        if (!Array.isArray(db.students)) db.students = [];
+      }
+      const students = db.students;
+      const target = session.studentName.trim().toLowerCase();
+      const idx = students.findIndex((st) => (st.name || '').trim().toLowerCase() === target);
+      const enrolledAt = localEnrollTimestamp(new Date());
+      let result;
+      if (idx !== -1) {
+        // enroll_student.py --overwrite branch: keep the id, replace the
+        // embedding, refresh class + enrolled_at, and (re)link the Supabase
+        // UUID (we always have one, so the link can never be erased here).
+        const existing = students[idx];
+        existing.embedding = embedding;
+        existing.class = session.studentClass;
+        existing.enrolled_at = enrolledAt;
+        existing.student_uuid = session.studentId;
+        result = { replaced: true, id: existing.id };
+      } else {
+        // add_student branch: max(id)+1, not count+1, so ids of removed
+        // entries are never reissued.
+        const newId = Math.max(...students.map((s) => Number(s.id) || 0), 0) + 1;
+        students.push({
+          id: newId,
+          name: session.studentName,
+          class: session.studentClass,
+          student_uuid: session.studentId,
+          embedding,
+          enrolled_at: enrolledAt,
+        });
+        result = { replaced: false, id: newId };
+      }
+      // Same save rule as enroll_student.save_database: indent 2, raw UTF-8
+      // (JSON.stringify leaves non-ASCII unescaped, matching
+      // ensure_ascii=False). Written inside the lock so the whole
+      // read-modify-write cycle is atomic.
+      fs.writeFileSync(dbPath, JSON.stringify(db, null, 2), 'utf-8');
+      return result;
+    });
+  } catch (e) {
+    console.error('[ai/enroll-complete] failed:', e);
+    return res.status(500).json({ error: 'Failed to update enrolled_students.json' });
+  }
+
+  // Tell the helper to exit (best effort: it also exits by itself after
+  // answering shutdown, and idles out after 10 minutes regardless), then
+  // drop the session state.
+  try { await fetch(`http://127.0.0.1:${session.port}/shutdown`, { method: 'POST' }); } catch (_) { /* already gone */ }
+  enrollSession = null;
+  logAudit(req.actor.id, 'face.enroll', session.studentId, { name: session.studentName });
+  return res.json({
+    success: true,
+    replaced: writeResult.replaced,
+    message: `Enrolled ${session.studentName}`,
+  });
+});
+
+// DELETE /api/ai/enroll/session - cancel the active browser-enrollment
+// session: tell the helper to shut down (best effort, it also idle-exits on
+// its own) and drop the session state. Admin-only like the other routes.
+app.delete('/api/ai/enroll/session', requireAdmin, async (req, res) => {
+  const { session_id } = req.body || {};
+  if (!session_id) return res.status(400).json({ error: 'session_id required' });
+  if (!enrollSession || enrollSession.id !== session_id) {
+    return res.status(404).json({ error: 'No active enrollment session' });
+  }
+  const session = enrollSession;
+  enrollSession = null;
+  try {
+    await fetch(`http://127.0.0.1:${session.port}/shutdown`, { method: 'POST' });
+  } catch (_) {
+    // Helper already gone or unreachable: kill the child as a fallback.
+    try { session.child.kill(); } catch (_) { /* nothing left to do */ }
+  }
+  return res.json({ cancelled: true });
+});
+
 // ── Start Server ─────────────────────────────────────────────────────────────
 reconcileAiPid(); // reclaim any AI child orphaned by a previous server run (#15)
 app.listen(PORT, () => {
@@ -1536,7 +2612,9 @@ app.listen(PORT, () => {
   console.log('    GET  /api/attendance         → All live data');
   console.log('    POST /api/attendance         → AI sends data');
   console.log('    GET  /api/engagement/summary → Day engagement summaries (staff)');
-  console.log('    POST   /api/admin/users      → Invite user  (admin)');
+  console.log('    GET  /api/engagement/risk    → Rolling risk scores (staff)');
+  console.log('    GET  /api/engagement/trends  → Student risk trends (staff)');
+  console.log('    POST   /api/admin/users      → Create user  (admin)');
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
   console.log('    GET    /api/admin/users/list → List users + emails (admin)');
@@ -1545,7 +2623,12 @@ app.listen(PORT, () => {
   console.log('    GET    /api/ai/enrolled      → Face-enrollment list (staff)');
   console.log('    POST   /api/ai/start         → Start Python AI (admin/teacher)');
   console.log('    POST   /api/ai/stop          → Stop Python AI  (admin/teacher)');
+  console.log('    POST   /api/ai/restart       → Restart Python AI (admin/teacher)');
   console.log('    POST   /api/ai/enroll        → Enroll a face   (admin)');
+  console.log('    POST   /api/ai/enroll/session → Start browser enroll (admin)');
+  console.log('    POST   /api/ai/enroll/frame   → Browser enroll frame (admin)');
+  console.log('    POST   /api/ai/enroll/complete → Finish browser enroll (admin)');
+  console.log('    DELETE /api/ai/enroll/session → Cancel browser enroll (admin)');
   console.log('═══════════════════════════════════════════════════');
   console.log('');
   console.log('Waiting for AI face recognition data...');

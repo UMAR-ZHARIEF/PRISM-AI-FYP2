@@ -198,6 +198,17 @@
 .reports-page .card.chart-card.tilt-r { transform: rotate(0.6deg); }
 .reports-page .card.chart-card:hover  { transform: rotate(0); transition: transform .25s ease; }
 
+/* Chart blowout guard: when a recharts width measurement goes stale (rendered
+   on a wide viewport, then the window shrinks) the wrapper keeps an inline px
+   width far larger than the card and escapes it (Stage 3: page 980px wide at
+   390px, wrapper/legend escaping the card by 620px). clip on the x axis only
+   traps that escape inside the card without touching the y axis, so the corner
+   tape overhang stays visible; the chart itself re-renders at the real card
+   width via its ResizeObserver. */
+.reports-page .card.chart-card {
+  overflow-x: clip;
+}
+
 /* Chart header — Caveat eyebrow + Fraunces title + dashed rule */
 .chart-head {
   margin-bottom: 18px;
@@ -307,7 +318,20 @@
 .reports-page .card.list-card {
   position: relative;
   border: 2px solid var(--ink);
-  clip-path: var(--cut-3);
+  /* Height-proof variant of var(--cut-3): the global token is percentage
+     based, so on a tall panel its corner cuts scale with the card and slice
+     straight through the title. These pixel-bounded cuts keep the same
+     scissor-edge look at any height. */
+  clip-path: polygon(
+    0 20px,
+    20px 0,
+    calc(100% - 70px) 6px,
+    100% 30px,
+    calc(100% - 8px) calc(100% - 22px),
+    calc(100% - 26px) 100%,
+    12px calc(100% - 14px),
+    0 calc(100% - 26px)
+  );
   box-shadow: var(--shadow-paper);
   padding: 24px 22px 20px;
   overflow: visible;
@@ -331,6 +355,10 @@
   background: var(--ink-faint);
   border-radius: 3px;
 }
+
+/* Summary panels size to their own content; never stretch to the twin
+   column (grid default align-items: stretch caused the huge empty panel). */
+.report-list-grid { align-items: start; }
 
 .reports-page .card.list-attention {
   background: #FBE4E1; /* terracotta tinted paper */
@@ -442,7 +470,16 @@
 @media (max-width: 768px) {
   .date-range-tabs { flex-direction: column; align-items: stretch; }
   .date-range-tabs .report-flex-gap-8-ml-auto { margin-left: 0; }
-  .report-flex-gap-8 { flex-wrap: wrap; }
+  /* The two date inputs keep an intrinsic ~150px floor each even at width:100%,
+      so the pair must be allowed to wrap to its own rows or the row overflows
+      the card (Stage 3: date-range row escaped by 16-90px at 390px). */
+  .report-flex-gap-8,
+  .report-flex-gap-8-ml-auto { flex-wrap: wrap; }
+  /* The list-card tables keep an intrinsic min-content width (widest row ~324px)
+      that would floor the 1fr track past the phone column and overflow the page
+      (Stage 3/RS-E1: cards 372px wide in a 338px column, page +14px at 390px).
+      Let the items shrink; the tables already self-scroll via overflow-x. */
+  .report-list-grid > .card { min-width: 0; }
   .report-date-input, .report-class-select { max-width: unset; width: 100%; }
   .reports-page table { display: block; overflow-x: auto; }
   .reports-page .card.chart-card,

@@ -68,6 +68,7 @@ export default function ClassDetail() {
 
   const { profile } = useAuth();
   const isTeacher = profile?.role === 'teacher';
+
   // Distinguish "genuinely not found" from "not yours": when the loaded
   // sections miss the URL, re-check ALL class_sections with a separate query.
   // A class that exists but is not this teacher's renders read-only instead

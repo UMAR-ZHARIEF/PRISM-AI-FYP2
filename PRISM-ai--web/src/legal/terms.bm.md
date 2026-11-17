@@ -13,7 +13,7 @@ Jika anda tidak bersetuju, jangan gunakan PRISM-AI. Anda boleh menutup akaun pad
 Akaun PRISM-AI dikeluarkan oleh sekolah. Hanya orang berikut boleh menggunakan sistem:
 
 - **Pentadbir** yang dilantik oleh pengetua sekolah.
-- **Guru dan pembantu** yang diambil bekerja oleh sekolah.
+- **Guru** yang diambil bekerja oleh sekolah.
 - **Ibu bapa atau penjaga sah** murid yang berdaftar.
 
 **Kanak-kanak tidak mempunyai akaun sendiri.** Ibu bapa mengakses maklumat bagi pihak anak. Ini dikehendaki oleh undang-undang Malaysia kerana kanak-kanak di bawah 18 tahun tidak boleh memberi persetujuan yang sah dari segi undang-undang [Akta Kontrak 1950, Seksyen 10-11; Akta Umur Dewasa 1971].

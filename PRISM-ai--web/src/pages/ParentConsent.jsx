@@ -171,8 +171,18 @@ export default function ParentConsent() {
           {lang === 'en' ? 'Consent for' : 'Persetujuan untuk'}
         </span>
         <h1 className="pc-child-name">{student.full_name}</h1>
+        {/* P1: same Year + Class identifiers the portal banner shows (the
+            portal additionally shows age), so the two surfaces can no longer
+            disagree about how the child's class is labelled. */}
         <p className="pc-child-meta">
-          {lang === 'en' ? 'Year' : 'Tahun'} {student.year_num}
+          {[
+            student.year_num != null
+              ? `${lang === 'en' ? 'Year' : 'Tahun'} ${student.year_num}`
+              : '',
+            student.class_section && student.class_section.name
+              ? `${lang === 'en' ? 'Class' : 'Kelas'} ${student.class_section.name}`
+              : '',
+          ].filter(Boolean).join(' • ')}
         </p>
       </div>
 

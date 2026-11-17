@@ -15,6 +15,8 @@ const AuthContext = createContext(null);
 // expires. 5 minutes gives users a reasonable window to save work.
 const EXPIRY_WARNING_LEAD_MS = 5 * 60 * 1000;
 
+// Dev-only HMR rule: moving useAuth into its own file would churn many importers late in the round, so the suppression is deliberate.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (ctx === null) {

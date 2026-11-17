@@ -6,7 +6,7 @@ import {
   ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
 import { classColors } from '../data/mockData';
-import { YearContext, ScopeContext } from '../layouts/DashboardLayout';
+import { YearContext, ScopeContext } from '../layouts/dashboardContexts';
 import { useAuth } from '../contexts/AuthContext';
 import useYears from '../hooks/useYears';
 import useClassSections from '../hooks/useClassSections';
@@ -24,6 +24,35 @@ function toLocalISODate(d) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+// Perceived luminance (Rec. 601) of a #rrggbb color. Class colors like
+// Pandai yellow (#F2C744) or Cerdas orange (#EA8534) cannot carry pale-cream
+// text; those get ink text instead.
+function isLightHex(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.5;
+}
+
+// Custom recharts tooltip, shared by both comparison charts. Declared at
+// module scope so it is not recreated (and does not reset) during render.
+function ClassTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="comparison-tooltip">
+      <p className="comparison-tooltip-label">{label}</p>
+      {payload.map((p, i) => (
+        <p key={i} className="comparison-tooltip-value" style={{ color: p.color || p.fill }}>
+          {p.name}: <strong className="mono">{p.value != null ? `${p.value}${p.dataKey === 'rate' ? '%' : ''}` : '—'}</strong>
+        </p>
+      ))}
+    </div>
+  );
 }
 
 export default function ClassComparison() {
@@ -57,7 +86,7 @@ export default function ClassComparison() {
     return (classSections || [])
       .filter(s => s.homeroom_teacher_id === profile.id)
       .map(s => s.id);
-  }, [classSections, isTeacher, profile?.id]);
+  }, [classSections, isTeacher, profile]);
   const teacherHasHomeroom = teacherHomeroomIds.length > 0;
 
   // Shared view scope from the layout (ScopeContext): 'mine' maps to the old
@@ -83,21 +112,37 @@ export default function ClassComparison() {
     return (classSections || []).filter(s => allow.has(s.id));
   }, [classSections, filterToMine, teacherHomeroomIds]);
 
-  // Drop any picked classes that fall outside the visible set (e.g. teacher
-  // toggles "My homerooms only" back on after picking a class that isn't theirs).
-  useEffect(() => {
-    if (!filterToMine) return;
-    setSelectedClassIds(prev => {
-      const allow = new Set(visibleClassSections.map(c => c.id));
-      let changed = false;
-      const next = new Set();
-      prev.forEach(id => {
-        if (allow.has(id)) next.add(id);
-        else changed = true;
-      });
-      return changed ? next : prev;
+  // F1: the year filter offers the same years as the topbar picker — a
+  // homeroom teacher sees only the years their classes belong to (full list
+  // for admins and homeroom-less teachers). Needs the all-year section list:
+  // the year-filtered `classSections` above cannot reveal out-of-year
+  // homerooms. Mirrors DashboardLayout's visibleYears.
+  const { classSections: allYearSections } = useClassSections();
+  const filterYearOptions = useMemo(() => {
+    if (!isTeacher) return yearOptions || [];
+    const mine = new Set(
+      (allYearSections || [])
+        .filter(s => s.homeroom_teacher_id === profile?.id)
+        .map(s => s.year_num)
+        .filter(y => y != null)
+    );
+    if (mine.size === 0) return yearOptions || [];
+    return (yearOptions || []).filter(y => mine.has(y.year_num));
+  }, [yearOptions, allYearSections, isTeacher, profile?.id]);
+
+  // Picked classes as actually counted: when scoped to homerooms, ids that
+  // fall outside the visible set (e.g. teacher toggles "My homerooms only"
+  // back on after picking a class that isn't theirs) are ignored here instead
+  // of being pruned with a setState-in-effect.
+  const effectiveSelectedClassIds = useMemo(() => {
+    if (!filterToMine) return selectedClassIds;
+    const allow = new Set(visibleClassSections.map(c => c.id));
+    const next = new Set();
+    selectedClassIds.forEach(id => {
+      if (allow.has(id)) next.add(id);
     });
-  }, [filterToMine, visibleClassSections]);
+    return next;
+  }, [selectedClassIds, filterToMine, visibleClassSections]);
 
   /* ── Today's date (YYYY-MM-DD) for "today" counts ── */
   const todayIso = useMemo(() => toLocalISODate(new Date()), []);
@@ -128,8 +173,8 @@ export default function ClassComparison() {
 
   /* ── Active sections (only those the user toggled on, in display order) ── */
   const activeClasses = useMemo(
-    () => classSections.filter(c => selectedClassIds.has(c.id)),
-    [classSections, selectedClassIds]
+    () => classSections.filter(c => effectiveSelectedClassIds.has(c.id)),
+    [classSections, effectiveSelectedClassIds]
   );
   const needsMore = activeClasses.length < 2;
 
@@ -168,15 +213,29 @@ export default function ClassComparison() {
     return age;
   };
 
-  /* ── Attendance rate bar data (last 30 days). Shared utility counts late
-     as attended; a null rate (no records) just renders no bar. ── */
+  /* ── Attendance rate bar data (last 30 days) — HONEST per-class rate.
+     Rule: every student enrolled in the class is expected present or late on
+     every school day the class has records for (a day with at least one
+     record for the class), and UNMARKED student-days count as ABSENT. So
+     rate = (present + late records) / (enrolled students × those school
+     days): 6 present of 91 enrolled on one day is 6/91 = 6.6% -> 7%, never
+     100%. A null rate (no enrolled students or no records) just renders no
+     bar. ── */
   const attendanceRateData = useMemo(() => {
     return activeClasses.map(cls => {
       const recs = recordsBySection.get(cls.id) || [];
-      const { rate } = attendanceRate(recs);
-      return { name: cls.name, rate: rate != null ? Math.round(rate) : null };
+      const enrolled = (studentsBySection.get(cls.id) || []).length;
+      const days = new Set(recs.map(r => r.date).filter(Boolean)).size;
+      // Numerator still comes from the shared utility, which counts late as
+      // attended. The denominator never drops below the marks actually taken,
+      // so marks whose student rows are missing from the enrollment list
+      // cannot push a rate past 100%.
+      const { present, late } = attendanceRate(recs);
+      const attended = present + late;
+      const denom = Math.max(enrolled * days, attended);
+      return { name: cls.name, rate: denom > 0 ? Math.round((attended / denom) * 100) : null };
     });
-  }, [activeClasses, recordsBySection]);
+  }, [activeClasses, studentsBySection, recordsBySection]);
 
   /* ── Today's attendance counts per class ── */
   const todayData = useMemo(() => {
@@ -216,8 +275,20 @@ export default function ClassComparison() {
       const present = todayRecs.filter(r => r.status === 'present').length;
       const absent = todayRecs.filter(r => r.status === 'absent').length;
       const late = todayRecs.filter(r => r.status === 'late').length;
-      // Shared utility formula ((present + late) / total); null = no records.
-      const { rate: avgRate } = attendanceRate(allRecs);
+      // HONEST attendance rate over the last 30 days, same rule as the bar
+      // chart above: UNMARKED students count as ABSENT — (present + late
+      // records) / (enrolled students × school days with records for the
+      // class). 6 of 91 enrolled = 6.6% -> 7%, never 100%. null (no enrolled
+      // students or no records) renders as an em dash in the rate column.
+      const enrolledCount = classStudents.length;
+      const schoolDaysCount = new Set(allRecs.map(r => r.date).filter(Boolean)).size;
+      const { present: presentMarks, late: lateMarks } = attendanceRate(allRecs);
+      const attendedMarks = presentMarks + lateMarks;
+      // Denominator never drops below the marks actually taken, so marks
+      // whose student rows are missing from the enrollment list cannot push
+      // a rate past 100%.
+      const rateDenom = Math.max(enrolledCount * schoolDaysCount, attendedMarks);
+      const avgRate = rateDenom > 0 ? Math.round((attendedMarks / rateDenom) * 100) : null;
       const ages = classStudents.map(s => ageFromDob(s.dob)).filter(a => a != null);
       const avgAge = ages.length > 0
         ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length * 10) / 10
@@ -263,29 +334,15 @@ export default function ClassComparison() {
     }
   };
 
-  const SortIcon = ({ col }) => {
+  // Sort indicator (plain render function, not a component, so it is not recreated during render)
+  const renderSortIcon = (col) => {
     if (sortCol !== col) return null;
     return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
 
-  /* ── Custom tooltip ── */
-  const ClassTooltip = ({ active, payload, label }) => {
-    if (!active || !payload || !payload.length) return null;
-    return (
-      <div className="comparison-tooltip">
-        <p className="comparison-tooltip-label">{label}</p>
-        {payload.map((p, i) => (
-          <p key={i} className="comparison-tooltip-value" style={{ color: p.color || p.fill }}>
-            {p.name}: <strong className="mono">{p.value != null ? `${p.value}${p.dataKey === 'rate' ? '%' : ''}` : '—'}</strong>
-          </p>
-        ))}
-      </div>
-    );
-  };
-
   /* ── Loading + empty checks ── */
   const isLoading = sectionsLoading || studentsLoading || attendanceLoading;
-  const noPick = selectedClassIds.size === 0;
+  const noPick = effectiveSelectedClassIds.size === 0;
 
   /* ── Section color helper (DB color first, then static fallback) ── */
   const colorFor = (sectionName) => classColors[sectionName] || '#1F1A12';
@@ -367,7 +424,7 @@ export default function ClassComparison() {
               }}
             >
               <option value="all">All Years</option>
-              {(yearOptions || []).map(y => (
+              {(filterYearOptions || []).map(y => (
                 <option key={y.year_num} value={y.year_num}>Year {y.year_num}</option>
               ))}
             </select>
@@ -385,7 +442,7 @@ export default function ClassComparison() {
                 <span className="comparison-pick-hint">No classes available</span>
               ) : (
                 visibleClassSections.map(cls => {
-                  const checked = selectedClassIds.has(cls.id);
+                  const checked = effectiveSelectedClassIds.has(cls.id);
                   const cc = colorFor(cls.name);
                   return (
                     <button
@@ -394,11 +451,14 @@ export default function ClassComparison() {
                       style={{
                         '--tag-color': cc,
                         '--tag-bg': checked ? cc : 'var(--paper-light)',
-                        '--tag-text': checked ? '#FAF1DA' : cc,
+                        // Unselected tags always carry ink text: class colors
+                        // like yellow/orange are unreadable on the beige paper
+                        // (WCAG ~1.4:1). A small color dot keeps the identity.
+                        '--tag-text': checked ? (isLightHex(cc) ? 'var(--ink)' : 'var(--paper-light)') : 'var(--ink)',
                       }}
                       onClick={() => toggleClass(cls.id)}
                     >
-                      {checked && <Check size={14} />}
+                      {checked ? <Check size={14} /> : <span className="comparison-tag-dot" aria-hidden="true" />}
                       {cls.name}{yearNum == null ? ` · Y${cls.year_num}` : ''}
                     </button>
                   );
@@ -454,6 +514,11 @@ export default function ClassComparison() {
             <div className="chart-head">
               <h2><BarChart3 size={22} /> Attendance Rate Comparison</h2>
             </div>
+            {/* recharts silently renders axes with NO bars when every rate is
+                null (no records) — say so instead of drawing an empty chart. */}
+            {attendanceRateData.every(d => d.rate == null) ? (
+              <div className="comparison-empty">No attendance records in the last 30 days.</div>
+            ) : (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={attendanceRateData} barCategoryGap="20%">
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
@@ -467,6 +532,7 @@ export default function ClassComparison() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            )}
           </div>
 
           {/* ── TODAY'S ATTENDANCE STACKED BAR ── */}
@@ -475,6 +541,11 @@ export default function ClassComparison() {
             <div className="chart-head">
               <h2>Today's Attendance Breakdown</h2>
             </div>
+            {/* recharts 3.8 bug (#6235): an ALL-ZERO stacked bar chart renders
+                axes + legend but no bars at all. Guard with an honest note. */}
+            {todayData.every(d => d.Present + d.Absent + d.Late === 0) ? (
+              <div className="comparison-empty">No attendance taken today.</div>
+            ) : (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={todayData} barCategoryGap="20%">
                 <CartesianGrid strokeDasharray="4 4" stroke="#1F1A12" strokeOpacity={0.18} />
@@ -487,6 +558,7 @@ export default function ClassComparison() {
                 <Bar dataKey="Absent" stackId="a" fill="#E04A3F" radius={[3, 3, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            )}
           </div>
 
           {/* ── DEMOGRAPHICS ── */}
@@ -606,14 +678,14 @@ export default function ClassComparison() {
               <table>
                 <thead>
                   <tr>
-                    <th className="sortable" onClick={() => handleSort('class')}>Class <SortIcon col="class" /></th>
-                    <th className="sortable" onClick={() => handleSort('total')}>Total Students <SortIcon col="total" /></th>
-                    <th className="sortable" onClick={() => handleSort('present')}>Present Today <SortIcon col="present" /></th>
-                    <th className="sortable" onClick={() => handleSort('absent')}>Absent Today <SortIcon col="absent" /></th>
-                    <th className="sortable" onClick={() => handleSort('late')}>Late Today <SortIcon col="late" /></th>
-                    <th className="sortable" onClick={() => handleSort('rate')}>Attendance Rate <SortIcon col="rate" /></th>
-                    <th className="sortable" onClick={() => handleSort('avgAge')}>Avg Age <SortIcon col="avgAge" /></th>
-                    <th className="sortable" onClick={() => handleSort('mfRatio')}>M/F Ratio <SortIcon col="mfRatio" /></th>
+                    <th className="sortable" onClick={() => handleSort('class')}>Class {renderSortIcon('class')}</th>
+                    <th className="sortable" onClick={() => handleSort('total')}>Total Students {renderSortIcon('total')}</th>
+                    <th className="sortable" onClick={() => handleSort('present')}>Present Today {renderSortIcon('present')}</th>
+                    <th className="sortable" onClick={() => handleSort('absent')}>Absent Today {renderSortIcon('absent')}</th>
+                    <th className="sortable" onClick={() => handleSort('late')}>Late Today {renderSortIcon('late')}</th>
+                    <th className="sortable" onClick={() => handleSort('rate')}>Attendance Rate {renderSortIcon('rate')}</th>
+                    <th className="sortable" onClick={() => handleSort('avgAge')}>Avg Age {renderSortIcon('avgAge')}</th>
+                    <th className="sortable" onClick={() => handleSort('mfRatio')}>M/F Ratio {renderSortIcon('mfRatio')}</th>
                   </tr>
                 </thead>
                 <tbody>
