@@ -103,7 +103,7 @@
   cursor: not-allowed;
   filter: none;
 }
-.btn-outline {
+.attendance-page .btn-outline {
   background: var(--paper);
   color: var(--green);
   border: 2px solid var(--green);

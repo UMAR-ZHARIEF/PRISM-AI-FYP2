@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Camera, AlertTriangle, Activity, UserCheck, X,
-  CalendarDays, Server, Cpu, Power, Download, ScanFace, Settings, ChevronDown
+  CalendarDays, Server, Cpu, Power, Download, ScanFace, Settings, ChevronDown,
+  Users, UserX, ClipboardCheck, GraduationCap, Clock3
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { classColors } from '../data/mockData';
@@ -22,6 +23,7 @@ import useSchoolEvents from '../hooks/useSchoolEvents';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import './Dashboard.css';
+import './AlmanacDashboard.css';
 
 // ISO date helper (YYYY-MM-DD) in local time.
 function isoDate(d) {
@@ -609,33 +611,37 @@ export default function Dashboard() {
 
 
   const teacherStatCards = [
-    { label: 'Total Students', value: totalStudents, tone: 's-blue',   change: `${totalStudents} enrolled` },
-    { label: 'Present',        value: present,       tone: 's-green',  change: `${attendanceRate}% attendance` },
-    { label: 'Absent',         value: absent,        tone: 's-red',    change: `${absent} students away` },
-    { label: 'Late',           value: late,          tone: 's-orange', change: `${late} arrived late` },
+    { label: 'Your students', value: totalStudents, tone: 's-blue', icon: Users, change: `${scopedSections.length} assigned classes` },
+    { label: 'Marked present', value: present, tone: 's-green', icon: ClipboardCheck, change: `${attendanceRate}% marked present` },
+    { label: 'Marked absent', value: absent, tone: 's-red', icon: UserX, change: 'Recorded absences today' },
+    { label: 'Late arrivals', value: late, tone: 's-orange', icon: Clock3, change: 'Recorded late check-ins' },
   ];
 
   const adminStatCards = [
     {
-      label: 'Overall School Attendance',
-      value: `${attendanceRate}%`,
+      label: 'School attendance',
+      value: todayRecords.length === 0 ? '—' : `${attendanceRate}%`,
+      icon: ClipboardCheck,
       tone: attendanceRate >= 90 ? 's-green' : attendanceRate >= 75 ? 's-orange' : 's-red',
-      change: `${present} present / ${totalStudents} students today`,
+      change: todayRecords.length === 0 ? 'Awaiting today’s first check-in' : `${present} marked present / ${totalStudents} students`,
     },
     {
-      label: 'Total Enrolled Students',
+      label: 'Enrolled students',
       value: totalStudents,
+      icon: Users,
       tone: 's-blue',
-      change: `${classSections?.length || 0} classes across all grades`,
+      change: `${classSections.length} classes · ${selectedYear ? `Year ${selectedYear}` : 'all years'}`,
     },
     {
-      label: 'Assigned Homeroom Teachers',
+      label: 'Homeroom teachers',
       value: activeTeacherCount,
+      icon: GraduationCap,
       tone: 's-yellow',
-      change: 'Unique teachers in the selected classes',
+      change: 'Assigned to the selected classes',
     },
     {
-      label: 'Biometric Coverage',
+      label: 'Face registration',
+      icon: ScanFace,
       value: enrollmentLoading ? '…' : enrollmentError ? '—' : `${biometricCoverageRate}%`,
       tone: biometricCoverageRate >= 80 ? 's-green' : 's-orange',
       change: enrollmentLoading ? 'Checking enrollment' : enrollmentError ? 'Enrollment service unavailable' : `${enrolledStudentsCount}/${totalStudents} enrolled · ${unenrolledCount} pending`,
@@ -912,21 +918,20 @@ export default function Dashboard() {
     />
   );
 
+  const registerDate = new Date(`${today}T12:00:00`);
+
   return (
     <div className={`dashboard-page ${isAdmin ? 'dashboard-admin' : 'dashboard-teacher'}`}>
       <div className="page-header">
         <div>
-          <h1><span className="word k">{isAdmin ? 'School Overview' : 'Dashboard'}</span>{selectedYear
+          <p className="dashboard-eyebrow"><span aria-hidden="true" /> PRISM-AI / {isAdmin ? 'The school office' : 'The classroom journal'}</p>
+          <h1><span className="word k">{isAdmin ? <>School <em>Overview</em></> : <>Class <em>Overview</em></>}</span>{selectedYear
             ? <span className="year-badge">Year {selectedYear}</span>
             : scopeToMine
               ? <span className="year-badge">My Classes</span>
               : <span className="year-badge year-badge-all">All Years</span>}</h1>
           <p className="page-subtitle">
-            {isAdmin
-              ? `Executive Management Console • ${new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`
-              : (isTeacher && hasHomeroom
-                ? `Assigned Class: ${assignedClassLabel}`
-                : (isTeacher ? 'No class assigned yet — please contact admin' : new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })))}
+            {isAdmin ? 'A little clarity for the whole school day.' : 'Your students. Their attendance. A good start to the day.'}
           </p>
           {isTeacher && hasHomeroom && (
             <div className="scope-toggle" role="region" aria-label="Assigned Class">
@@ -946,7 +951,9 @@ export default function Dashboard() {
               <button className="btn btn-primary" onClick={() => navigate('/dashboard/admin?tab=faces')}>
                 <ScanFace size={16} /> Quick Face Enroll
               </button>
-              <details className="dashboard-actions-menu">
+              <details className="dashboard-actions-menu"
+                onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}
+                onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary').focus(); } }}>
                 <summary className="btn btn-outline">More actions <ChevronDown size={16} /></summary>
                 <div className="dashboard-actions-popover">
                   <button className="btn btn-outline" onClick={(event) => { handleExportSchoolReport(); event.currentTarget.closest('details').open = false; }}>
@@ -970,10 +977,13 @@ export default function Dashboard() {
       </div>
 
       {/* STAT CARDS */}
-      <div className="grid-4 section-gap">
+      <div className="grid-4 section-gap dashboard-metrics" aria-label="Daily overview">
         {statCards.map((s, i) => (
-          <div key={i} className={`stat-card ${s.tone} reveal reveal-${i + 1}`}>
-            <span className={`tape ${i % 2 === 0 ? 'tl' : 'tr'}`} />
+          <div key={s.label} className={`stat-card dashboard-metric ${s.tone} ${i === 0 ? 'dashboard-metric-lead' : ''}`}>
+            <div className="dashboard-metric-heading">
+              <span className="dashboard-metric-index" aria-hidden="true">0{i + 1}</span>
+              <s.icon size={19} strokeWidth={1.6} aria-hidden="true" />
+            </div>
             <div className="stat-info">
               <h3>{s.value}</h3>
               <p>{s.label}</p>
@@ -983,12 +993,13 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {noAttendanceToday && (
-        <div className="card section-gap dashboard-empty-today">
-          <span className="tape tl" />
-          <p>No attendance recorded yet today</p>
+      <div className="dashboard-register-note section-gap">
+        <div className="dashboard-register-date">
+          <CalendarDays size={17} aria-hidden="true" />
+          <time dateTime={today}>{registerDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</time>
         </div>
-      )}
+        <p><span className={`register-status-dot ${noAttendanceToday ? '' : 'has-records'}`} aria-hidden="true" />{noAttendanceToday ? 'Register open · no check-ins yet' : `${todayRecords.length} attendance records today`}</p>
+      </div>
 
       {/* CAMERA / INFRASTRUCTURE + CLASS BREAKDOWN */}
       {isTeacher && attendancePanel}
