@@ -502,8 +502,8 @@ export default function Students() {
               <option value="registered">Registered</option>
               <option value="not">Not Registered</option>
             </select>
-            <button className={`btn btn-icon ${viewMode === 'grid' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setViewMode('grid')}><Grid3X3 size={16} /></button>
-            <button className={`btn btn-icon ${viewMode === 'table' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setViewMode('table')}><List size={16} /></button>
+            <button className={`btn btn-icon student-view-toggle ${viewMode === 'grid' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setViewMode('grid')} aria-label="Grid view" aria-pressed={viewMode === 'grid'}><Grid3X3 size={16} /></button>
+            <button className={`btn btn-icon student-view-toggle ${viewMode === 'table' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setViewMode('table')} aria-label="List view" aria-pressed={viewMode === 'table'}><List size={16} /></button>
           </div>
         </div>
       </div>
