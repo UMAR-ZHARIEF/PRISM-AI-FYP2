@@ -1,6 +1,6 @@
 # Terma Perkhidmatan PRISM-AI
 
-**Versi 1.0.0 — Berkuat kuasa dari 19 Mei 2026**
+**Versi 1.1.0 — Berkuat kuasa dari 19 November 2026**
 
 Terma ini mengawal penggunaan anda terhadap PRISM-AI, sebuah sistem kehadiran sekolah rendah yang dibantu AI. Dengan log masuk, anda bersetuju dengan Terma ini dan [Dasar Privasi](/privacy?lang=bm) kami.
 
@@ -46,6 +46,15 @@ Anda **tidak boleh**:
 - Memuat naik virus, menjalankan skrip automatik terhadap sistem, atau cuba memintas kawalan keselamatan.
 
 Penyalahgunaan boleh menjadi kesalahan jenayah di bawah Akta Jenayah Komputer 1997 (Seksyen 3-5: akses tanpa kebenaran, pengubahsuaian, dan komunikasi salah — denda sehingga RM 150,000 dan/atau penjara sehingga 10 tahun).
+
+**Cara akaun dicipta.** Pentadbir sekolah mencipta setiap akaun; tiada
+pendaftaran awam. Semasa penciptaan, pentadbir merekodkan nama penuh, alamat
+e-mel, peranan, dan secara pilihan nombor telefon anda, serta menyerahkan
+kata laluan awal secara terus (tiada e-mel dihantar). Anda tidak boleh
+menukar nama, e-mel, telefon, atau kata laluan anda sendiri dalam aplikasi;
+hubungi pentadbir sekolah. Akaun ibu bapa dihubungkan dengan anak mereka
+oleh pihak sekolah; sehingga hubungan itu wujud, akaun tidak memaparkan
+maklumat murid.
 
 ## 4. Penggunaan yang boleh diterima
 

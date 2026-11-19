@@ -1,6 +1,6 @@
 # PRISM-AI Privacy Policy
 
-**Version 1.1.0, effective from 26 October 2026**
+**Version 1.2.0, effective from 19 November 2026**
 
 This Privacy Policy explains how PRISM-AI collects, uses, stores, and protects personal data, in compliance with the Malaysian **Personal Data Protection Act 2010 (Act 709)** as amended by the **Personal Data Protection (Amendment) Act 2024 (Act A1727)**.
 
@@ -46,6 +46,18 @@ We collect data from:
 - **You**, when you fill in forms in PRISM-AI.
 - **The school**, when they enrol your child.
 - **Automatic devices** in the school (camera at the entrance) when face recognition is enabled with consent.
+
+### About account creation
+PRISM-AI has no public sign-up. A school administrator creates every account.
+At creation the administrator records the person's full name, email address,
+role (administrator, teacher, or parent), and optionally a phone number. The
+email address becomes the login identifier and is stored in the authentication
+service. The administrator sets an initial password, or the system generates
+one, and hands it to the person directly; no invitation or verification email
+is sent. Users cannot change their own name, email, phone, or password inside
+the app; they must ask the school administrator. A parent account shows no
+pupil information until the school links the parent to their child in the
+pupil records; a child may be linked to more than one parent account.
 
 ## 3. Why we collect it
 

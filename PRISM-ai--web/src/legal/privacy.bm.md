@@ -1,6 +1,6 @@
 # Dasar Privasi PRISM-AI
 
-**Versi 1.1.0, berkuat kuasa dari 26 Oktober 2026**
+**Versi 1.2.0, berkuat kuasa dari 19 November 2026**
 
 Dasar Privasi ini menerangkan cara PRISM-AI mengumpul, menggunakan, menyimpan, dan melindungi data peribadi, mematuhi **Akta Perlindungan Data Peribadi 2010 (Akta 709)** Malaysia sebagaimana dipinda oleh **Akta Perlindungan Data Peribadi (Pindaan) 2024 (Akta A1727)**.
 
@@ -46,6 +46,19 @@ Kami mengumpul data daripada:
 - **Anda**, apabila anda mengisi borang dalam PRISM-AI.
 - **Sekolah**, apabila mereka mendaftar anak anda.
 - **Peranti automatik** di sekolah (kamera di pintu masuk) apabila pengecaman wajah didayakan dengan persetujuan.
+
+### Tentang penciptaan akaun
+PRISM-AI tiada pendaftaran awam. Setiap akaun dicipta oleh pentadbir sekolah.
+Semasa penciptaan, pentadbir merekodkan nama penuh, alamat e-mel, peranan
+(pentadbir, guru, atau ibu bapa), dan secara pilihan nombor telefon. Alamat
+e-mel menjadi pengenalan log masuk dan disimpan dalam perkhidmatan
+pengesahan. Pentadbir menetapkan kata laluan awal, atau sistem menjanakannya,
+dan menyerahkannya secara terus; tiada e-mel jemputan atau pengesahan
+dihantar. Pengguna tidak boleh menukar nama, e-mel, telefon, atau kata
+laluan mereka sendiri dalam aplikasi; mereka perlu meminta pentadbir sekolah.
+Akaun ibu bapa tidak memaparkan maklumat murid sehingga sekolah
+menghubungkan ibu bapa tersebut dengan anak mereka dalam rekod murid;
+seorang murid boleh dihubungkan dengan lebih daripada satu akaun ibu bapa.
 
 ## 3. Mengapa kami mengumpulnya
 

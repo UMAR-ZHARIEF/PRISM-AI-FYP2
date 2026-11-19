@@ -1,6 +1,6 @@
 # PRISM-AI Terms of Service
 
-**Version 1.0.0 — Effective from 19 May 2026**
+**Version 1.1.0 — Effective from 19 November 2026**
 
 These Terms govern your use of PRISM-AI, an AI-assisted primary-school attendance system. By signing in, you agree to these Terms and to our [Privacy Policy](/privacy).
 
@@ -46,6 +46,14 @@ You must **not**:
 - Upload viruses, run automated scripts against the system, or attempt to bypass security controls.
 
 Misuse may be a criminal offence under the Computer Crimes Act 1997 (Sections 3-5: unauthorised access, modification, and wrongful communication — fines up to RM 150,000 and/or up to 10 years jail).
+
+**How accounts are created.** The school administrator creates every account;
+there is no public sign-up. At creation the administrator records your full
+name, email address, role, and optionally a phone number, and gives you an
+initial password directly (no email is sent). You cannot change your own
+name, email, phone, or password in the app; contact the school administrator.
+A parent account is linked to their child by the school; until that link
+exists the account shows no pupil information.
 
 ## 4. Acceptable use
 
