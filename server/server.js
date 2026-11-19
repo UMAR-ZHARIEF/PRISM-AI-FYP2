@@ -23,6 +23,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const crypto = require('crypto');
+const { probeMjpegStream } = require('./streamReadiness');
 
 const app = express();
 const PORT = 3001;
@@ -1832,7 +1833,9 @@ app.post('/api/digest/run', requireAdmin, async (req, res) => {
 // server restart (orphan) — report running:true with an explanatory note so
 // the UI can offer the force-kill endpoint instead of a dead "Start" button.
 app.get('/api/ai/process', requireStaff, async (req, res) => {
-  const running = !!(aiProcess && aiProcess.exitCode === null);
+  res.set('Cache-Control', 'no-store');
+  const processSnapshot = aiProcess;
+  const running = !!(processSnapshot && processSnapshot.exitCode === null);
   const settings = await getAppSettings(); // cached, fail-safe defaults
   const baseState = {
     startedAt: aiStartedAt,
@@ -1845,20 +1848,25 @@ app.get('/api/ai/process', requireStaff, async (req, res) => {
     autorestarts_recent: recentAutoRestartCount(),
   };
   if (running) {
-    return res.json({ running, orphan: false, pid: aiProcess.pid, ...baseState });
+    const pid = processSnapshot.pid;
+    const streamReady = await probeMjpegStream();
+    // The child may have exited while the bounded readiness probe was waiting.
+    const stillRunning = !!(aiProcess && aiProcess.pid === pid && aiProcess.exitCode === null);
+    return res.json({ running: stillRunning, streamReady: stillRunning && streamReady, orphan: false, pid: stillRunning ? pid : null, ...baseState });
   }
   // No supervised child — is an orphan holding the AI stream port?
-  findPortPid(AI_PORT, (portPid) => {
+  findPortPid(AI_PORT, async (portPid) => {
     if (portPid) {
       return res.json({
         running: true,
+        streamReady: await probeMjpegStream(),
         orphan: true,
         pid: portPid,
         ...baseState,
         note: `Port ${AI_PORT} is held by PID ${portPid} from a previous server run (orphaned AI process). Use DELETE /api/ai/process to kill it.`,
       });
     }
-    return res.json({ running: false, orphan: false, pid: null, ...baseState });
+    return res.json({ running: false, streamReady: false, orphan: false, pid: null, ...baseState });
   });
 });
 
