@@ -20,8 +20,10 @@ import './AdminPanel.css';
 const PER_PAGE = 8;
 
 // System Settings defaults: mirror the seeded values in migrations
-// 0005_app_settings_and_checkout.sql, 0010_autorestart_setting.sql and
-// 0012_classroom_label.sql (single app_settings row, id = 1).
+// 0005_app_settings_and_checkout.sql, 0010_autorestart_setting.sql,
+// 0012_classroom_label.sql and the absence-email digest additions
+// (absence_email_enabled / absence_email_cutoff) — single app_settings
+// row, id = 1.
 const SETTINGS_DEFAULTS = {
   school_name: 'PRISM-AI Primary School',
   late_cutoff: '08:00',
@@ -29,6 +31,8 @@ const SETTINGS_DEFAULTS = {
   match_threshold: 0.4,
   classroom_label: 'CLASS_1A',
   autorestart_ai: true,
+  absence_email_enabled: true,
+  absence_email_cutoff: '09:30',
 };
 // Face-detection input sizes the AI service accepts (pixels).
 const DET_SIZE_OPTIONS = [320, 640, 960, 1280];
@@ -46,6 +50,21 @@ const readAiProcDetail = (d) => ({
     ? Number(d.autorestarts_recent)
     : null,
 });
+
+// Normalizes the POST /api/digest/run body for the settings tab result line.
+// Without a sending password configured the server answers as a dry run
+// (recipients it would email, nothing sent); with one configured it reports
+// the sent count. recipients may arrive as an array or a ready count, so
+// both spellings and missing fields fall through to null and the panel
+// shows an honest fallback instead of guessing.
+const readDigestRunResult = (d) => {
+  const asCount = (v) => (Number.isFinite(Number(v)) && v != null ? Number(v) : null);
+  return {
+    dryRun: d?.dryRun === true || d?.dry_run === true,
+    recipients: Array.isArray(d?.recipients) ? d.recipients.length : asCount(d?.recipients),
+    sent: asCount(d?.sent),
+  };
+};
 
 export default function AdminPanel() {
   const [tab, setTab] = useState('users');
@@ -773,6 +792,17 @@ export default function AdminPanel() {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsError, setSettingsError] = useState(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  // Read-only marker for the Parent Emails section: the date the absence
+  // digest was last sent (absence_email_last_sent). Kept out of settingsForm
+  // because it is not editable — Reset Defaults must not wipe it. null when
+  // the digest has never run or the column is absent from the row.
+  const [digestLastSent, setDigestLastSent] = useState(null);
+  // 'Run digest now' (POST /api/digest/run): confirm dialog, in-flight flag
+  // and the normalized result of the last manual run (see
+  // readDigestRunResult). Result stays visible until the next run.
+  const [digestConfirmOpen, setDigestConfirmOpen] = useState(false);
+  const [digestRunning, setDigestRunning] = useState(false);
+  const [digestResult, setDigestResult] = useState(null);
 
   useEffect(() => {
     // loading starts true and the effect runs once — no synchronous resets
@@ -780,7 +810,7 @@ export default function AdminPanel() {
     let cancelled = false;
     supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label, absence_email_enabled, absence_email_cutoff, absence_email_last_sent')
       .eq('id', 1)
       .maybeSingle()
       .then(({ data, error: queryError }) => {
@@ -798,10 +828,14 @@ export default function AdminPanel() {
             match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
             classroom_label: data.classroom_label ?? SETTINGS_DEFAULTS.classroom_label,
             autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
+            absence_email_enabled: data.absence_email_enabled ?? SETTINGS_DEFAULTS.absence_email_enabled,
+            absence_email_cutoff: (data.absence_email_cutoff || SETTINGS_DEFAULTS.absence_email_cutoff).slice(0, 5),
           });
+          setDigestLastSent(data.absence_email_last_sent ?? null);
         }
         // No row yet → keep the defaults in the form; saving will report
-        // honestly that the record is missing until migration 0005 seeds it.
+        // honestly that the record is missing from the database until
+        // migration 0005 seeds it.
         setSettingsLoading(false);
       });
     return () => { cancelled = true; };
@@ -824,6 +858,8 @@ export default function AdminPanel() {
       match_threshold: Number(settingsForm.match_threshold),
       classroom_label: settingsForm.classroom_label,
       autorestart_ai: Boolean(settingsForm.autorestart_ai),
+      absence_email_enabled: Boolean(settingsForm.absence_email_enabled),
+      absence_email_cutoff: settingsForm.absence_email_cutoff || SETTINGS_DEFAULTS.absence_email_cutoff,
     };
     const { data, error: updateError } = await supabase
       .from('app_settings')
@@ -849,6 +885,53 @@ export default function AdminPanel() {
   const handleResetSettings = () => {
     setSettingsForm({ ...SETTINGS_DEFAULTS });
     toast('Form reset to defaults. Click Save Settings to keep them.', 'info');
+  };
+
+  // --- Parent absence email digest: manual run (POST /api/digest/run) ---
+  // Admin-only server endpoint; this sends real emails once a sending
+  // password is configured, so it sits behind the same confirm-dialog
+  // pattern as the delete-user action.
+  const handleCancelDigestRun = () => {
+    if (digestRunning) return;
+    setDigestConfirmOpen(false);
+  };
+
+  const handleRunDigest = async () => {
+    if (!session?.access_token) {
+      toast('You must be signed in as an admin to do that.', 'error');
+      setDigestConfirmOpen(false);
+      return;
+    }
+
+    setDigestRunning(true);
+    setDigestResult(null);
+    try {
+      const res = await fetch('/api/digest/run', {
+        method: 'POST',
+        headers: apiHeaders(),
+      });
+
+      if (!res.ok) {
+        const msg = await parseApiError(res);
+        toast(msg, 'error');
+        setDigestRunning(false);
+        setDigestConfirmOpen(false);
+        return;
+      }
+
+      const body = await res.json().catch(() => null);
+      setDigestResult(readDigestRunResult(body));
+      setDigestRunning(false);
+      setDigestConfirmOpen(false);
+      toast(body?.dryRun === true || body?.dry_run === true
+        ? 'Digest dry run finished — no email was sent.'
+        : 'Digest sent.', 'success');
+    } catch (err) {
+      console.error('digest run failed', err);
+      toast('Could not reach the server. Is the API running?', 'error');
+      setDigestRunning(false);
+      setDigestConfirmOpen(false);
+    }
   };
 
   // Server uptime from GET /api/health uptimeSeconds, e.g. '4h 12m'.
@@ -1175,6 +1258,64 @@ export default function AdminPanel() {
                       Stamped on attendance and engagement data from this camera.
                     </p>
                   </div>
+                </div>
+
+                <div className="settings-section">
+                  <h3>Parent Emails</h3>
+                  <div className="form-group">
+                    <label className="admin-check">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(settingsForm.absence_email_enabled)}
+                        onChange={e => setSettingsForm(f => ({ ...f, absence_email_enabled: e.target.checked }))}
+                        disabled={!isAdmin || settingsSaving}
+                      />
+                      <span>Parent absence emails</span>
+                    </label>
+                    <p className="admin-check-note">
+                      Each school day at the send time, every parent linked to
+                      an absent child gets one email listing that day's
+                      absences. Until a sending account is configured, a
+                      manual run only reports what would be sent.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label>Daily send time</label>
+                    <input
+                      type="time"
+                      value={settingsForm.absence_email_cutoff}
+                      onChange={e => setSettingsForm(f => ({ ...f, absence_email_cutoff: e.target.value }))}
+                      disabled={!isAdmin || settingsSaving}
+                    />
+                  </div>
+                  {digestLastSent != null && (
+                    <div className="form-group">
+                      <label>Last digest sent</label>
+                      <p className="admin-check-note">{formatDate(digestLastSent)}</p>
+                    </div>
+                  )}
+                  {isAdmin && (
+                    <div className="form-group">
+                      <button
+                        className="btn btn-outline"
+                        onClick={() => setDigestConfirmOpen(true)}
+                        disabled={digestRunning || settingsSaving}
+                      >
+                        Run digest now
+                      </button>
+                      <p className="admin-check-note">
+                        Sends today's digest immediately, outside the daily
+                        schedule.
+                      </p>
+                      {digestResult && (
+                        <p className="digest-run-result">
+                          {digestResult.dryRun
+                            ? `Dry run — would email ${digestResult.recipients ?? '?'} parent(s) today. No email sent: configure the sending account to go live.`
+                            : `Digest sent to ${digestResult.sent ?? '?'} parent(s).`}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <p className="settings-hint">
@@ -1725,6 +1866,32 @@ export default function AdminPanel() {
               <button className="btn btn-outline" onClick={handleCancelDelete} disabled={deleting}>Cancel</button>
               <button className="btn btn-danger" onClick={handleConfirmDelete} disabled={deleting}>
                 {deleting ? 'Deleting...' : 'Delete User'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RUN DIGEST CONFIRMATION — same compact dialog pattern as the
+          delete-user dialog (user-delete-message is reused for the identical
+          message typography); it guards POST /api/digest/run, which sends
+          real parent emails once a sending account is configured. */}
+      {digestConfirmOpen && (
+        <div className="modal-overlay digest-run-modal" onClick={handleCancelDigestRun}>
+          <div className="modal digest-run-modal-card" onClick={e => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <h2>Run digest now?</h2>
+              <button className="modal-close-btn" onClick={handleCancelDigestRun} disabled={digestRunning}><X size={20} /></button>
+            </div>
+            <p className="user-delete-message">
+              Runs today's absence digest immediately. Once a sending account
+              is configured this emails <strong>real parents</strong>; until
+              then the server only reports a dry run.
+            </p>
+            <div className="admin-modal-footer">
+              <button className="btn btn-outline" onClick={handleCancelDigestRun} disabled={digestRunning}>Cancel</button>
+              <button className="btn btn-green" onClick={handleRunDigest} disabled={digestRunning}>
+                {digestRunning ? 'Running...' : 'Run Digest'}
               </button>
             </div>
           </div>

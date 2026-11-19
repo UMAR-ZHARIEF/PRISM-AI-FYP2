@@ -54,6 +54,12 @@ if (SUPABASE_URL && SUPABASE_SECRET_KEY) {
   console.warn('[Supabase] DISABLED — missing SUPABASE_URL or SUPABASE_SECRET_KEY env. Detections will be in-memory only.');
 }
 
+// Parent-absence email digest (server/email-digest.js): share the
+// service-role client above; without Supabase the digest's run returns a
+// guarded error result and the scheduler below stays idle.
+const emailDigest = require('./email-digest');
+emailDigest.init(supabase);
+
 // ── App Settings (cached) ────────────────────────────────────────────────────
 // Single editable row (id=1) managed by the Admin Panel (migration 0005). Read
 // through the service-role client and cached for 60s so the per-detection
@@ -73,6 +79,13 @@ const SETTINGS_DEFAULTS = Object.freeze({
   // decision 2026-10-21: a crashed recognizer respawns by itself unless an
   // admin turns it off here.
   autorestart_ai: true,
+  // Daily parent-absence email digest knobs (migration 0016, read by the
+  // scheduler below and server/email-digest.js). last_sent defaults to
+  // null = "no digest has completed yet"; the digest sets it to today's
+  // LOCAL date after a completed run (dry run included).
+  absence_email_enabled: true,
+  absence_email_cutoff: '09:30',
+  absence_email_last_sent: null,
 });
 const SETTINGS_TTL_MS = 60 * 1000;
 const settingsCache = { values: { ...SETTINGS_DEFAULTS }, fetchedAt: 0 };
@@ -84,7 +97,7 @@ async function getAppSettings() {
   try {
     const { data, error } = await supabase
       .from('app_settings')
-      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label')
+      .select('school_name, late_cutoff, det_size, match_threshold, autorestart_ai, classroom_label, absence_email_enabled, absence_email_cutoff, absence_email_last_sent')
       .eq('id', 1)
       .maybeSingle();
     if (error) throw error;
@@ -96,6 +109,9 @@ async function getAppSettings() {
         match_threshold: data.match_threshold ?? SETTINGS_DEFAULTS.match_threshold,
         classroom_label: data.classroom_label ?? SETTINGS_DEFAULTS.classroom_label,
         autorestart_ai: data.autorestart_ai ?? SETTINGS_DEFAULTS.autorestart_ai,
+        absence_email_enabled: data.absence_email_enabled ?? SETTINGS_DEFAULTS.absence_email_enabled,
+        absence_email_cutoff: data.absence_email_cutoff ?? SETTINGS_DEFAULTS.absence_email_cutoff,
+        absence_email_last_sent: data.absence_email_last_sent ?? SETTINGS_DEFAULTS.absence_email_last_sent,
       };
     }
   } catch (e) {
@@ -1786,7 +1802,24 @@ app.get('/api/admin/users/list', requireAdmin, async (req, res) => {
   }
 });
 
-// ── AI Process Management ────────────────────────────────────────────────────
+// POST /api/digest/run — manual "send today's absence digest now" trigger.
+// Admin only (teachers/parents get 403 from the middleware): it can force a
+// real email blast. force=true skips the once-per-day marker check (a second
+// forced run re-sends the same absences, by design, for demos/tests) but the
+// marker is still updated afterwards. Returns the digest run result JSON
+// (dryRun/bodies when GMAIL_APP_PASSWORD is unset). Never throws: send and
+// DB failures come back inside the JSON per the email-digest contract.
+app.post('/api/digest/run', requireAdmin, async (req, res) => {
+  try {
+    const result = await emailDigest.runAbsenceDigest({ force: true });
+    res.json(result);
+  } catch (e) {
+    console.error('[digest] endpoint failed:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── AI Process Management ────────────────────────────────────────────────
 // Lets the Live Camera page start/stop the Python face-recognition service
 // without dropping to a terminal. The state reported here is "is THIS Express
 // process supervising a Python child?" — distinct from /api/health which only
@@ -2599,6 +2632,44 @@ app.delete('/api/ai/enroll/session', requireAdmin, async (req, res) => {
   return res.json({ cancelled: true });
 });
 
+// ── Parent Absence Email Digest — in-process scheduler ────────────────────
+// The Express process is long-lived, so this top-level 60s interval is the
+// whole scheduler (no OS cron, no extra process). Every tick re-reads the
+// 60s-cached getAppSettings(), so the admin toggle and cutoff are
+// live-editable from the Admin Panel with at most a 60s delay. Fires the
+// digest at most once per local school day: enabled + local time past the
+// cutoff + the last_sent marker (migration 0016) not yet today. The marker
+// re-check inside runAbsenceDigest() is the authoritative one; this cached
+// check is just the cheap pre-filter. digestInFlight guarantees only one
+// run is ever in flight, whatever a tick or an overlapping force run does.
+let digestInFlight = false;
+setInterval(() => {
+  if (digestInFlight) return;
+  digestInFlight = true;
+  (async () => {
+    try {
+      const settings = await getAppSettings();
+      if (!settings.absence_email_enabled) return;
+      const now = new Date();
+      const cutoff = settings.absence_email_cutoff;
+      if (!/^\d{2}:\d{2}$/.test(cutoff || '')) {
+        console.warn(`[digest] scheduler: invalid cutoff '${cutoff}' — tick skipped (fix the setting)`);
+        return;
+      }
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      if (`${hh}:${mm}` < cutoff) return;
+      if (settings.absence_email_last_sent === localDateStr(now)) return;
+      console.log('[digest] scheduler: cutoff passed and day not sent — firing digest');
+      await emailDigest.runAbsenceDigest();
+    } catch (e) {
+      console.warn('[digest] scheduler tick failed (will retry next tick):', e.message);
+    } finally {
+      digestInFlight = false;
+    }
+  })();
+}, 60 * 1000);
+
 // ── Start Server ─────────────────────────────────────────────────────────────
 reconcileAiPid(); // reclaim any AI child orphaned by a previous server run (#15)
 app.listen(PORT, () => {
@@ -2618,6 +2689,7 @@ app.listen(PORT, () => {
   console.log('    PATCH  /api/admin/users/:id  → Update user  (admin)');
   console.log('    DELETE /api/admin/users/:id  → Delete user  (admin)');
   console.log('    GET    /api/admin/users/list → List users + emails (admin)');
+  console.log('    POST   /api/digest/run      → Send absence digest now (admin)');
   console.log('    GET    /api/ai/process       → AI child process state');
   console.log('    DELETE /api/ai/process       → Force-kill orphan AI (admin)');
   console.log('    GET    /api/ai/enrolled      → Face-enrollment list (staff)');

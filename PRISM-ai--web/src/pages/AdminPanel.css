@@ -299,6 +299,7 @@
 .settings-section:nth-child(1) { transform: rotate(-0.6deg); }
 .settings-section:nth-child(2) { transform: rotate(0.6deg); }
 .settings-section:nth-child(3) { transform: rotate(-0.4deg); }
+.settings-section:nth-child(4) { transform: rotate(0.5deg); }
 
 .settings-section h3 {
   font-family: var(--accent);
@@ -429,6 +430,27 @@
   font-size: 13px;
   line-height: 1.45;
   color: var(--ink-soft);
+}
+
+/* Parent absence email digest (settings tab): compact result line of the
+   manual POST /api/digest/run, kept next to its Run digest now button. */
+.digest-run-result {
+  margin: 10px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper-light);
+  border: 2px dashed rgba(31, 26, 18, 0.35);
+  clip-path: var(--cut-2);
+  padding: 8px 10px;
+}
+
+/* Run-digest confirmation dialog: same compact card width as the
+   delete-user dialog (the .modal base and .user-delete-message typography
+   are reused as-is in AdminPanel.jsx). */
+.digest-run-modal-card {
+  max-width: 460px;
 }
 
 /* ==========================================================================
