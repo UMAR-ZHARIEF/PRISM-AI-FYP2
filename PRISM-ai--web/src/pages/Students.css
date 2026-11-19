@@ -593,3 +593,46 @@
 .students-error-state { border-left: 4px solid var(--red, #e74c3c); }
 .students-error-headline { font-family: 'Fraunces', serif; font-weight: 900; font-size: 1.25rem; margin-bottom: 0.5rem; color: var(--text); }
 .students-error-hint { font-family: 'Caveat', cursive; font-size: 1.1rem; color: var(--text-light); }
+.btn.student-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 50%;
+  clip-path: none;
+  border: 2px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  transform: none;
+}
+
+.btn.student-view-toggle[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--paper-light);
+}
+
+.btn.student-view-toggle:hover {
+  background: var(--paper);
+  transform: none;
+}
+
+.btn.student-view-toggle[aria-pressed='true']:hover {
+  background: var(--ink);
+}
+
+.btn.student-view-toggle svg {
+  display: block;
+  flex-shrink: 0;
+  margin: 0;
+  color: inherit;
+}
+
+.btn.student-view-toggle:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}

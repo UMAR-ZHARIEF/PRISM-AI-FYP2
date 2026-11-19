@@ -1,22 +1,29 @@
-import { useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Camera, AlertTriangle, Search, Activity, ArrowUp, ArrowDown, UserCheck, X, CalendarDays } from 'lucide-react';
+import {
+  Camera, AlertTriangle, Activity, UserCheck, X,
+  CalendarDays, Server, Cpu, Power, Download, ScanFace, Settings, ChevronDown,
+  Users, UserX, ClipboardCheck, GraduationCap, Clock3
+} from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { classColors } from '../data/mockData';
 import { useToast } from '../components/Toast';
-import { useYear, ScopeContext } from '../layouts/dashboardContexts';
-import Pagination from '../components/Pagination';
+import { useYear } from '../layouts/dashboardContexts';
+import DashboardAttendance from './DashboardAttendance';
 import { SkeletonCard, SkeletonTable, SkeletonChart } from '../components/Skeleton';
 import useStudents from '../hooks/useStudents';
 import useClassSections from '../hooks/useClassSections';
 import useAttendance from '../hooks/useAttendance';
 import useEngagement, { computeEngagementStats } from '../hooks/useEngagement';
+import useEnrolledFaces from '../hooks/useEnrolledFaces';
+import Papa from 'papaparse';
 import './Engagement.css';
 import useNotifications from '../hooks/useNotifications';
 import useSchoolEvents from '../hooks/useSchoolEvents';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import './Dashboard.css';
+import './AlmanacDashboard.css';
 
 // ISO date helper (YYYY-MM-DD) in local time.
 function isoDate(d) {
@@ -114,18 +121,22 @@ export default function Dashboard() {
   // the "AI Online / AI Offline" badge on the Live Camera Feed card.
   const [aiStatus, setAiStatus] = useState('offline');
   const [liveAiCount, setLiveAiCount] = useState(0);
+  const [serverOnline, setServerOnline] = useState(null);
   const fetchAiStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/health');
       if (res.ok) {
         const data = await res.json();
+        setServerOnline(true);
         setAiStatus(data.aiStatus || 'offline');
         setLiveAiCount(data.studentsTracked || 0);
       } else {
+        setServerOnline(false);
         setAiStatus('offline');
       }
     } catch {
       // Express bridge not running — AI is offline as far as the UI is concerned.
+      setServerOnline(false);
       setAiStatus('offline');
     }
   }, []);
@@ -202,12 +213,11 @@ export default function Dashboard() {
     return weekRecords.filter(r => r.student?.year_num === selectedYear);
   }, [weekRecords, selectedYear]);
 
-  // ---------- View scope (My Classes vs All School) -----------------------
-  // Admins always see all-school data; teachers (the only other role) default
-  // to their homeroom(s) and can opt in to all-school via a toggle.
+  // Admins see the selected school scope; teachers stay within assigned classes.
   const { profile, user, session, loading: authLoading } = useAuth();
   const watchToken = session?.access_token;
   const role = profile?.role;
+  const isAdmin = role === 'admin';
   const isTeacher = role === 'teacher';
 
   // Watchlist fetch: held until the auth session is known so the card never
@@ -252,11 +262,13 @@ export default function Dashboard() {
 
   // Up to five watch/high students, worst score first (null scores sort last).
   const watchlist = useMemo(function rankWatchlist() {
+    const visibleStudents = new Set(dbStudents.map(student => String(student.id)));
     return watchlistRows
+      .filter(row => (!isTeacher && !selectedYear) || visibleStudents.has(row.id))
       .filter(function flagged(r) { return r.band === 'watch' || r.band === 'high'; })
       .sort(function byScoreDesc(a, b) { return (b.score ?? -1) - (a.score ?? -1); })
       .slice(0, 5);
-  }, [watchlistRows]);
+  }, [watchlistRows, dbStudents, isTeacher, selectedYear]);
 
   // null == "no client-side filter" (admin / non-teacher).
   // [] (empty array) == teacher with no homeroom assignment.
@@ -269,23 +281,7 @@ export default function Dashboard() {
 
   const hasHomeroom = Array.isArray(myClassSectionIds) && myClassSectionIds.length > 0;
 
-  // Shared view scope from the layout (ScopeContext): the "My Classes" vs
-  // "All School" choice now survives navigation between pages. Safe fallback
-  // mirrors the year context pattern above; falls back to all-school.
-  const scopeCtx = useContext(ScopeContext) || {};
-  const viewScope = scopeCtx.scope || 'all';
-  const setViewScope = useMemo(() => scopeCtx.setScope || (() => {}), [scopeCtx.setScope]);
-
-  // If the teacher loads in before classSections resolve, snap to "all" once
-  // we discover they have no homeroom (and keep them there).
-  useEffect(() => {
-    if (isTeacher && myClassSectionIds && myClassSectionIds.length === 0) {
-      setViewScope('all');
-    }
-  }, [isTeacher, myClassSectionIds, setViewScope]);
-
-  // Whether we should actually narrow the client-side data right now.
-  const scopeToMine = viewScope === 'mine' && hasHomeroom;
+  const scopeToMine = isTeacher;
   const myClasses = useMemo(() => {
     if (!profile?.id) return [];
     return classSections.filter(s => s.homeroom_teacher_id === profile.id);
@@ -347,6 +343,67 @@ export default function Dashboard() {
   // Total students for the selected year / scope.
   const totalStudents = scopedStudents.length;
   const attendanceRate = totalStudents > 0 ? Math.round((present / totalStudents) * 100) : 0;
+
+  // Active teachers count for admin executive KPI: unique homeroom teachers assigned across class sections
+  const activeTeacherCount = useMemo(() => {
+    const teacherIds = new Set(classSections.map(s => s.homeroom_teacher_id).filter(Boolean));
+    return teacherIds.size;
+  }, [classSections]);
+
+  // Biometric enrolment status & coverage rate
+  const { enrolledNames, enrolled: enrolledList, loading: enrollmentLoading, error: enrollmentError } = useEnrolledFaces();
+  const enrolledStudentsCount = useMemo(() => {
+    if (!scopedStudents || scopedStudents.length === 0) return enrolledList?.length || 0;
+    return scopedStudents.filter(s => enrolledNames.has((s.full_name || '').toLowerCase().trim())).length;
+  }, [scopedStudents, enrolledNames, enrolledList]);
+
+  const unenrolledCount = Math.max(0, (scopedStudents?.length || 0) - enrolledStudentsCount);
+  const biometricCoverageRate = scopedStudents?.length > 0
+    ? Math.round((enrolledStudentsCount / scopedStudents.length) * 100)
+    : 0;
+
+  // Biometric parental consent tracking
+  const [pendingConsentCount, setPendingConsentCount] = useState(0);
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    supabase
+      .from('biometric_consents')
+      .select('student_id, granted, revoked_at')
+      .is('revoked_at', null)
+      .then(({ data, error }) => {
+        if (cancelled || error) return;
+        const grantedSet = new Set((data || []).filter(r => r.granted).map(r => r.student_id));
+        const pending = (scopedStudents || []).filter(s => !grantedSet.has(s.id)).length;
+        setPendingConsentCount(pending);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAdmin, scopedStudents]);
+
+  // Restart AI engine handler for admin
+  const [restartingAi, setRestartingAi] = useState(false);
+  const handleRestartAi = async () => {
+    if (restartingAi) return;
+    setRestartingAi(true);
+    try {
+      const token = session?.access_token;
+      const res = await fetch('/api/ai/restart', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        toast('AI Edge recognition service restarted', 'success');
+        fetchAiStatus();
+      } else {
+        toast('Could not restart AI engine', 'error');
+      }
+    } catch {
+      toast('Network error connecting to bridge server', 'error');
+    } finally {
+      setRestartingAi(false);
+    }
+  };
 
   // Class-by-class stats — single attendance pass, grouped client-side by class_section_id.
   const filteredClassAttendance = useMemo(() => {
@@ -447,22 +504,57 @@ export default function Dashboard() {
       .slice(0, 12);
   }, [todayRecords, classByStudentId]);
 
+  // Map class_section_id to section name as an instant fallback
+  const classSectionNameById = useMemo(() => {
+    const map = {};
+    for (const cs of classSections || []) {
+      if (cs.id && cs.name) map[cs.id] = cs.name;
+    }
+    return map;
+  }, [classSections]);
+
   // Flatten today's records into the legacy row shape so the table renders unchanged.
   // `record` keeps the raw Supabase row so the per-row Edit modal can update by id.
   // Time Out reads time_out (added by migration 0005_app_settings_and_checkout.sql).
   const todayRows = useMemo(() => todayRecords.map(r => ({
     studentId: r.student_id,
     name: r.student?.full_name || '',
-    // D1: attendance embed lacks class_section — resolve via the students
-    // hook (classByStudentId) so real class names render here.
-    class: r.student?.class_section?.name || classByStudentId.get(r.student_id) || '',
+    class: r.student?.class_section?.name || classByStudentId.get(r.student_id) || classSectionNameById[r.student?.class_section_id] || '',
     year: r.student?.year_num,
     status: r.status,
     // HH:MM (24h) everywhere — Postgres returns time columns as HH:MM:SS.
     timeIn: (r.arrival_time || '').slice(0, 5),
     timeOut: (r.time_out || '').slice(0, 5),
     record: r,
-  })), [todayRecords, classByStudentId]);
+  })), [todayRecords, classByStudentId, classSectionNameById]);
+
+  // Export the current attendance scope as a CSV (not an official MOE template).
+  const handleExportSchoolReport = () => {
+    if (todayRows.length === 0) {
+      toast('No attendance records available for today', 'info');
+      return;
+    }
+    const csvRows = todayRows.map(r => ({
+      'Date': today,
+      'Student Name': r.name,
+      'Class': r.class || 'N/A',
+      'Year': r.year != null ? `Year ${r.year}` : 'N/A',
+      'Status': (r.status || 'absent').toUpperCase(),
+      'Arrival Time': r.timeIn || '—',
+      'Departure Time': r.timeOut || '—',
+    }));
+    const csv = Papa.unparse(csvRows);
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `PRISM-AI_Attendance_${today}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(`Exported attendance CSV (${todayRows.length} records)`, 'success');
+  };
 
   // Class filter options come from the real class_sections table (P7),
   // narrowed to the current view scope (see scopedSections) and deduped by
@@ -517,17 +609,46 @@ export default function Dashboard() {
     setPage(1);
   };
 
-  const SortIcon = ({ col }) => {
-    if (sortCol !== col) return null;
-    return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
-  };
 
-  const statCards = [
-    { label: 'Total Students', value: totalStudents, tone: 's-blue',   change: `${totalStudents} enrolled` },
-    { label: 'Present',        value: present,       tone: 's-green',  change: `${attendanceRate}% attendance` },
-    { label: 'Absent',         value: absent,        tone: 's-red',    change: `${absent} students away` },
-    { label: 'Late',           value: late,          tone: 's-orange', change: `${late} arrived late` },
+  const teacherStatCards = [
+    { label: 'Your students', value: totalStudents, tone: 's-blue', icon: Users, change: `${scopedSections.length} assigned classes` },
+    { label: 'Marked present', value: present, tone: 's-green', icon: ClipboardCheck, change: `${attendanceRate}% marked present` },
+    { label: 'Marked absent', value: absent, tone: 's-red', icon: UserX, change: 'Recorded absences today' },
+    { label: 'Late arrivals', value: late, tone: 's-orange', icon: Clock3, change: 'Recorded late check-ins' },
   ];
+
+  const adminStatCards = [
+    {
+      label: 'School attendance',
+      value: todayRecords.length === 0 ? '—' : `${attendanceRate}%`,
+      icon: ClipboardCheck,
+      tone: attendanceRate >= 90 ? 's-green' : attendanceRate >= 75 ? 's-orange' : 's-red',
+      change: todayRecords.length === 0 ? 'Awaiting today’s first check-in' : `${present} marked present / ${totalStudents} students`,
+    },
+    {
+      label: 'Enrolled students',
+      value: totalStudents,
+      icon: Users,
+      tone: 's-blue',
+      change: `${classSections.length} classes · ${selectedYear ? `Year ${selectedYear}` : 'all years'}`,
+    },
+    {
+      label: 'Homeroom teachers',
+      value: activeTeacherCount,
+      icon: GraduationCap,
+      tone: 's-yellow',
+      change: 'Assigned to the selected classes',
+    },
+    {
+      label: 'Face registration',
+      icon: ScanFace,
+      value: enrollmentLoading ? '…' : enrollmentError ? '—' : `${biometricCoverageRate}%`,
+      tone: biometricCoverageRate >= 80 ? 's-green' : 's-orange',
+      change: enrollmentLoading ? 'Checking enrollment' : enrollmentError ? 'Enrollment service unavailable' : `${enrolledStudentsCount}/${totalStudents} enrolled · ${unenrolledCount} pending`,
+    },
+  ];
+
+  const statCards = isAdmin ? adminStatCards : teacherStatCards;
 
   if (loading) {
     return (
@@ -787,22 +908,30 @@ export default function Dashboard() {
     if (refreshAttendance) refreshAttendance();
   };
 
+  const attendancePanel = (
+    <DashboardAttendance
+      rows={paged} total={filtered.length} page={page} totalPages={totalPages}
+      pageSize={PER_PAGE} onPageChange={setPage} search={search} onSearchChange={setSearch}
+      filterClass={filterClass} onClassChange={setFilterClass} classes={classFilterOptions}
+      selectedYear={selectedYear} sortCol={sortCol} sortDir={sortDir} onSort={handleSort}
+      onEdit={openEditModal}
+    />
+  );
+
+  const registerDate = new Date(`${today}T12:00:00`);
+
   return (
-    <div className="dashboard-page">
+    <div className={`dashboard-page ${isAdmin ? 'dashboard-admin' : 'dashboard-teacher'}`}>
       <div className="page-header">
         <div>
-          {/* F2-sibling (mirrors Reports.jsx): when the shared scope narrows
-              the teacher to their homerooms, the badge says so instead of the
-              misleading "All Years". */}
-          <h1><span className="word k">Dashboard</span>{selectedYear
+          <p className="dashboard-eyebrow"><span aria-hidden="true" /> PRISM-AI / {isAdmin ? 'The school office' : 'The classroom journal'}</p>
+          <h1><span className="word k">{isAdmin ? <>School <em>Overview</em></> : <>Class <em>Overview</em></>}</span>{selectedYear
             ? <span className="year-badge">Year {selectedYear}</span>
             : scopeToMine
               ? <span className="year-badge">My Classes</span>
               : <span className="year-badge year-badge-all">All Years</span>}</h1>
           <p className="page-subtitle">
-            {isTeacher && hasHomeroom
-              ? `Assigned Class: ${assignedClassLabel}`
-              : (isTeacher ? 'No class assigned yet — please contact admin' : new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}
+            {isAdmin ? 'A little clarity for the whole school day.' : 'Your students. Their attendance. A good start to the day.'}
           </p>
           {isTeacher && hasHomeroom && (
             <div className="scope-toggle" role="region" aria-label="Assigned Class">
@@ -817,18 +946,44 @@ export default function Dashboard() {
           )}
         </div>
         <div className="page-header-actions">
-          <button className="btn btn-outline" onClick={handleMarkAllPresent} disabled={bulkBusy}>
-            <UserCheck size={16} /> {bulkBusy ? `Marking ${bulkProgress.done}/${bulkProgress.total}...` : 'Mark All Present'}
-          </button>
-          <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Attendance</button>
+          {isAdmin ? (
+            <>
+              <button className="btn btn-primary" onClick={() => navigate('/dashboard/admin?tab=faces')}>
+                <ScanFace size={16} /> Quick Face Enroll
+              </button>
+              <details className="dashboard-actions-menu"
+                onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}
+                onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary').focus(); } }}>
+                <summary className="btn btn-outline">More actions <ChevronDown size={16} /></summary>
+                <div className="dashboard-actions-popover">
+                  <button className="btn btn-outline" onClick={(event) => { handleExportSchoolReport(); event.currentTarget.closest('details').open = false; }}>
+                    <Download size={16} /> Export Attendance CSV
+                  </button>
+                  <button className="btn btn-outline" onClick={() => navigate('/dashboard/admin?tab=settings')}>
+                    <Settings size={16} /> System Controls
+                  </button>
+                </div>
+              </details>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-outline" onClick={handleMarkAllPresent} disabled={bulkBusy}>
+                <UserCheck size={16} /> {bulkBusy ? `Marking ${bulkProgress.done}/${bulkProgress.total}...` : 'Mark All Present'}
+              </button>
+              <button className="btn btn-primary" onClick={() => navigate('/dashboard/attendance')}><UserCheck size={16} /> Manual Attendance</button>
+            </>
+          )}
         </div>
       </div>
 
       {/* STAT CARDS */}
-      <div className="grid-4 section-gap">
+      <div className="grid-4 section-gap dashboard-metrics" aria-label="Daily overview">
         {statCards.map((s, i) => (
-          <div key={i} className={`stat-card ${s.tone} reveal reveal-${i + 1}`}>
-            <span className={`tape ${i % 2 === 0 ? 'tl' : 'tr'}`} />
+          <div key={s.label} className={`stat-card dashboard-metric ${s.tone} ${i === 0 ? 'dashboard-metric-lead' : ''}`}>
+            <div className="dashboard-metric-heading">
+              <span className="dashboard-metric-index" aria-hidden="true">0{i + 1}</span>
+              <s.icon size={19} strokeWidth={1.6} aria-hidden="true" />
+            </div>
             <div className="stat-info">
               <h3>{s.value}</h3>
               <p>{s.label}</p>
@@ -838,32 +993,120 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {noAttendanceToday && (
-        <div className="card section-gap dashboard-empty-today">
-          <span className="tape tl" />
-          <p>No attendance recorded yet today</p>
+      <div className="dashboard-register-note section-gap">
+        <div className="dashboard-register-date">
+          <CalendarDays size={17} aria-hidden="true" />
+          <time dateTime={today}>{registerDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</time>
         </div>
-      )}
+        <p><span className={`register-status-dot ${noAttendanceToday ? '' : 'has-records'}`} aria-hidden="true" />{noAttendanceToday ? 'Register open · no check-ins yet' : `${todayRecords.length} attendance records today`}</p>
+      </div>
 
-      {/* CAMERA + CLASS BREAKDOWN */}
+      {/* CAMERA / INFRASTRUCTURE + CLASS BREAKDOWN */}
+      {isTeacher && attendancePanel}
       <div className="dashboard-grid section-gap">
-        <div className="card tilt-l">
-          <span className="tape tr" />
-          <div className="card-header">
-            <h2>Take Attendance (Camera)</h2>
-            <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}><span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Offline'}</span>
-          </div>
-          <div className="camera-feed">
-            <Camera size={56} />
-            <p>{aiStatus === 'online' ? 'AI Face Recognition is actively detecting students' : 'Start face_recognition.py to begin detection'}</p>
-            <small>{aiStatus === 'online' ? `Sending data every 10 seconds — ${liveAiCount} student(s) detected` : 'Waiting for AI connection...'}</small>
-          </div>
-        </div>
+        {isAdmin ? (
+          <div className="card tilt-l admin-system-card">
+            <span className="tape tr" />
+            <div className="card-header">
+              <div>
+                <h2>System & Enrollment</h2>
+                <p className="card-subtitle-small">Camera service and face registration</p>
+              </div>
+              <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}>
+                <span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Standby'}
+              </span>
+            </div>
 
-        <div className="card tilt-r">
+            <div className="admin-infra-grid">
+              <div className="infra-node">
+                <div className="infra-icon-wrap"><Server size={20} className="node-icon server-icon" /></div>
+                <div className="infra-info">
+                  <span className="infra-label">Express Bridge</span>
+                  <strong className="infra-val mono">{serverOnline == null ? 'Checking…' : serverOnline ? 'Connected' : 'Unavailable'}</strong>
+                </div>
+              </div>
+
+              <div className="infra-node">
+                <div className="infra-icon-wrap"><Cpu size={20} className="node-icon gpu-icon" /></div>
+                <div className="infra-info">
+                  <span className="infra-label">AI Engine</span>
+                  <strong className="infra-val mono">{aiStatus === 'online' ? 'Recognition online' : 'Not running'}</strong>
+                </div>
+              </div>
+
+              <div className="infra-node">
+                <div className="infra-icon-wrap"><ScanFace size={20} className="node-icon face-icon" /></div>
+                <div className="infra-info">
+                  <span className="infra-label">Face Database</span>
+                  <strong className="infra-val mono">{enrollmentLoading ? 'Checking…' : enrollmentError ? 'Unavailable' : `${enrolledStudentsCount} enrolled students`}</strong>
+                </div>
+              </div>
+
+              <div className="infra-node">
+                <div className="infra-icon-wrap"><Activity size={20} className="node-icon speed-icon" /></div>
+                <div className="infra-info">
+                  <span className="infra-label">Live Detections</span>
+                  <strong className="infra-val mono">{serverOnline ? `${liveAiCount} students tracked` : 'Unavailable'}</strong>
+                </div>
+              </div>
+            </div>
+
+            {!enrollmentLoading && !enrollmentError && (unenrolledCount > 0 || pendingConsentCount > 0) && (
+              <div className="admin-enroll-alert">
+                <div className="alert-content">
+                  <AlertTriangle size={18} className="alert-icon" />
+                  <span>
+                    <strong>{unenrolledCount} student{unenrolledCount === 1 ? '' : 's'}</strong> need face registration
+                    {pendingConsentCount > 0 ? ` (${pendingConsentCount} pending parental consent)` : ''}.
+                  </span>
+                </div>
+                <button
+                  className="btn btn-sm btn-yellow"
+                  onClick={() => navigate('/dashboard/admin?tab=faces')}
+                >
+                  Enroll Faces
+                </button>
+              </div>
+            )}
+
+            <div className="admin-infra-footer">
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={handleRestartAi}
+                disabled={restartingAi}
+              >
+                <Power size={14} /> {restartingAi ? 'Restarting AI...' : 'Restart AI Engine'}
+              </button>
+              <Link to="/dashboard/admin?tab=ai" className="infra-diag-link">
+                View Full Diagnostics &rarr;
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="card tilt-l">
+            <span className="tape tr" />
+            <div className="card-header">
+              <h2>Take Attendance (Camera)</h2>
+              <span className={`live-badge ${aiStatus === 'online' ? '' : 'live-badge-off'}`}><span className="live-dot" /> {aiStatus === 'online' ? 'AI Online' : 'AI Offline'}</span>
+            </div>
+            <div className="camera-feed">
+              <Camera size={56} />
+              <p>{aiStatus === 'online' ? 'Face recognition is online' : 'Ready for your next class'}</p>
+              <small>{aiStatus === 'online' ? `${liveAiCount} student(s) tracked by the bridge` : 'Open Take Attendance to start the camera.'}</small>
+              <Link className="btn btn-primary btn-sm" to="/dashboard/camera">Open Take Attendance</Link>
+            </div>
+          </div>
+        )}
+
+        <div className="card class-breakdown-card">
           <span className="tape tl" />
           <div className="card-header">
             <h2>Attendance by Class</h2>
+            {isAdmin && (
+              <Link to="/dashboard/comparison" className="class-compare-link">
+                Compare Classes &rarr;
+              </Link>
+            )}
           </div>
           <div className="class-breakdown">
             {filteredClassAttendance.length === 0 ? (
@@ -916,7 +1159,7 @@ export default function Dashboard() {
         </div>
 
         {/* ENGAGEMENT OVERVIEW — today's emotion-engine summary */}
-        <div className="card tilt-l">
+        <div className="card engagement-card">
           <span className="tape tr" />
           <div className="card-header">
             <h2>Class Engagement</h2>
@@ -944,10 +1187,10 @@ export default function Dashboard() {
         </div>
         {/* ENGAGEMENT WATCHLIST: today's risk model output, worst first.
             Rows link straight to the student profile. */}
-        <div className="card tilt-r">
+        <div className="card watchlist-card">
           <span className="tape bl" />
           <div className="card-header">
-            <h2>Watchlist</h2>
+            <h2>{isAdmin ? 'School Watchlist' : 'Class Watchlist'}</h2>
             <AlertTriangle size={18} aria-hidden="true" />
           </div>
           {watchlistLoading ? (
@@ -978,7 +1221,7 @@ export default function Dashboard() {
       </div>
 
       {/* CHARTS */}
-      <div className="dashboard-grid section-gap">
+      <div className="dashboard-grid dashboard-charts section-gap">
         <div className="card tilt-r">
           <span className="tape bl" />
           <div className="card-header"><h2>Arrival Time Distribution</h2></div>
@@ -1000,7 +1243,9 @@ export default function Dashboard() {
         <div className="card tilt-l">
           <span className="tape br" />
           <div className="card-header"><h2>Weekly Trend</h2></div>
-          <ResponsiveContainer width="100%" height={250}>
+          {scopedRecords.length === 0 ? (
+            <div className="empty-state">No attendance recorded this week.</div>
+          ) : <ResponsiveContainer width="100%" height={250}>
             <LineChart data={weeklyAttendance}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1F1A12" strokeOpacity={0.18} />
               <XAxis dataKey="day" fontSize={11} stroke="#1F1A12" />
@@ -1010,96 +1255,11 @@ export default function Dashboard() {
               <Line type="monotone" dataKey="absent"  stroke="#E04A3F" strokeWidth={3} dot={{ fill: '#E04A3F', r: 5 }} />
               <Line type="monotone" dataKey="late"    stroke="#EA8534" strokeWidth={3} dot={{ fill: '#EA8534', r: 5 }} />
             </LineChart>
-          </ResponsiveContainer>
+          </ResponsiveContainer>}
         </div>
       </div>
 
-      {/* ATTENDANCE TABLE */}
-      <div className="card section-gap dashboard-table-card">
-        <span className="tape tl" />
-        <div className="card-header">
-          <h2>Today's Attendance</h2>
-          <div className="filter-row">
-            <select
-              className="search-input filter-select"
-              value={filterClass}
-              onChange={e => setFilterClass(e.target.value)}
-            >
-              <option value="all">All Classes</option>
-              {classFilterOptions.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            <div className="search-wrapper">
-              <Search size={16} className="search-icon" />
-              <input
-                className="search-input search-input-with-icon"
-                placeholder="Search student..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
-        {/* D1: the table scrolls inside this wrapper at phone width instead
-            of stretching the page past the viewport (see Dashboard.css). */}
-        <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th className="sortable" onClick={() => handleSort('name')}>Student <SortIcon col="name" /></th>
-              <th className="sortable" onClick={() => handleSort('class')}>Class <SortIcon col="class" /></th>
-              <th className="sortable" onClick={() => handleSort('status')}>Status <SortIcon col="status" /></th>
-              <th className="sortable" onClick={() => handleSort('timeIn')}>Time In <SortIcon col="timeIn" /></th>
-              <th>Time Out</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paged.length === 0 ? (
-              <tr><td colSpan={6} className="empty-state">No students match your search or filter.</td></tr>
-            ) : paged.map((a, idx) => {
-              const colors = ['r', 'y', 'g', 'o', 'k'];
-              const c = colors[idx % colors.length];
-              return (
-                <tr key={a.studentId}>
-                  <td>
-                    <div className="student-cell">
-                      <div className={`avatar ${c}`}>{a.name.split(' ').map(n => n[0]).join('')}</div>
-                      {a.name}
-                    </div>
-                  </td>
-                  {/* R5: only link when a real class name exists — a blank
-                      class_section name built /dashboard/class/1/ with an
-                      empty slug (a guaranteed "Class Not Found"), so those
-                      rows render a plain chip instead. */}
-                  <td>
-                    {a.class ? (
-                      <Link to={`/dashboard/class/${selectedYear || a.year || 1}/${a.class}`} className="class-link">
-                        <span className="class-chip mono" style={{ borderColor: classColors[a.class], color: classColors[a.class] }}>{a.class}</span>
-                      </Link>
-                    ) : (
-                      /* D1: deliberate placeholder — this student genuinely
-                         has no class assignment in the data, so there is no
-                         name to show and nowhere to link. */
-                      <span className="class-chip mono">Unassigned</span>
-                    )}
-                  </td>
-                  <td><span className={`badge badge-${a.status}`}>{a.status.charAt(0).toUpperCase() + a.status.slice(1)}</span></td>
-                  <td className="mono">{a.timeIn}</td>
-                  <td className="mono">{a.timeOut || '—'}</td>
-                  <td><button className="btn btn-outline btn-sm" onClick={() => openEditModal(a.record)}>Edit</button></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
-        <div className="table-footer mono">
-          <span>Showing {filtered.length === 0 ? 0 : (page - 1) * PER_PAGE + 1}–{Math.min(page * PER_PAGE, filtered.length)} of {filtered.length} students</span>
-        </div>
-        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
-      </div>
+      {!isTeacher && attendancePanel}
 
       {/* ACTIVITY + NOTIFICATIONS + SCHOOL EVENTS */}
       <div className="dashboard-grid">

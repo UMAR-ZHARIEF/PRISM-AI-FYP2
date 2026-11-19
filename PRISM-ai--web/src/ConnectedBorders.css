@@ -1,0 +1,49 @@
+/* Application-wide shape rule: a CSS border cannot follow a polygon clip-path.
+   Keep real outlined surfaces uncut so their corners and focus rings connect.
+   The single !important enforces this invariant across route-loaded styles;
+   normal radius declarations remain overridable (e.g. circular icon buttons).
+   Decorative filled paper headings and avatars can retain their cut edges. */
+:where(
+  button, input, select, textarea, summary, [role="button"], .btn,
+  .card, .modal, [role="dialog"], .dropdown-panel, .badge,
+  .faq-toggle, .timeline-dot,
+  .recharts-default-tooltip, .comparison-tooltip, .att-cal-tooltip,
+  .camera-feed, .live-cam-video-frame, .live-cam-empty,
+  .live-cam-ai-error, .live-cam-hint, .live-cam-detection-row,
+  .class-card, .class-picker-card, .student-slip,
+  .infra-node, .admin-enroll-alert, .face-upload,
+  .daterange-card, .settings-section, .ai-orphan-box,
+  .face-student-card, .face-progress-year, .face-capture-status,
+  .admin-locked-icon, .pp-sibling-pill, .pp-sibling-avatar,
+  .pp-history-item, .pc-choice, .classdetail-scope-note,
+  .classdetail-chart-card, .att-cal-error,
+  .comparison-controls-card, .comparison-warning,
+  .comparison-chart-card, .comparison-age-card, .comparison-table-card,
+  .sprofile-notes-count, .sprofile-edit-date,
+  .class-chip, .classdetail-count, .comparison-class-tag,
+  .comparison-table-class, .notif-badge, .enrollcam-count,
+  .progress-bar, .report-progress, .comparison-age-bar-track,
+  .comparison-table-progress, .pie-dot, .comparison-tag-dot,
+  .comparison-gender-dot,
+  .admin-page .stat-card .icon-box,
+  .face-stats-row .stat-card .icon-box
+) {
+  clip-path: none !important;
+  border-radius: 8px;
+}
+
+:where(.class-chip, .classdetail-count, .comparison-class-tag,
+  .comparison-table-class, .notif-badge, .enrollcam-count,
+  .sprofile-notes-count, .sprofile-edit-date,
+  .progress-bar, .report-progress, .comparison-age-bar-track,
+  .comparison-table-progress, .pie-dot, .comparison-tag-dot,
+  .comparison-gender-dot, .badge, .timeline-dot, .faq-toggle) {
+  border-radius: 999px;
+}
+
+/* Consistent keyboard outlines must not be cut away by decorative shapes. */
+:where(button, a, input, select, textarea, summary, [role="button"]):focus-visible {
+  outline: 3px solid var(--blue-deep);
+  outline-offset: 3px;
+}
+:where(input[type="checkbox"], input[type="radio"]) { border-radius: 4px; }

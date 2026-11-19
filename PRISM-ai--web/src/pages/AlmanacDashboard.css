@@ -1,0 +1,172 @@
+/* The daily school journal: editorial type, numbered register cards and quiet
+   ruled-paper details. Shared workspace controls remain in WorkspacePolish.css. */
+.dashboard-layout .dashboard-page {
+  --journal-blue: #225ba0;
+  --journal-rule: rgba(31, 26, 18, 0.15);
+}
+.dashboard-layout .dashboard-page .page-header {
+  padding: 8px 0 28px;
+  border-bottom: 1px solid var(--ink);
+  gap: 24px;
+}
+.dashboard-layout .dashboard-page .dashboard-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 13px;
+  font: 500 10px/1.6 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.dashboard-eyebrow > span { width: 7px; height: 7px; background: var(--journal-blue); border-radius: 50%; }
+.dashboard-layout .dashboard-page .page-header h1 {
+  font-size: clamp(34px, 4.2vw, 58px);
+  letter-spacing: -0.045em;
+  gap: 16px;
+  line-height: 1.12;
+}
+.dashboard-layout .dashboard-page .page-header .word.k {
+  padding: 0;
+  clip-path: none;
+  background: transparent;
+  color: var(--ink);
+  transform: none;
+}
+.dashboard-layout .dashboard-page h1 em { color: var(--journal-blue); font-weight: 600; }
+.dashboard-layout .dashboard-page .year-badge {
+  font: 500 10px/1.5 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: var(--paper-light);
+  border: 1px solid var(--journal-rule);
+  padding: 6px 9px;
+  border-radius: 5px;
+  transform: none;
+}
+.dashboard-layout .dashboard-page .page-subtitle { font: 400 19px/1.5 var(--body); margin-top: 9px; }
+.dashboard-layout .dashboard-page .page-header-actions { align-self: flex-end; margin-bottom: 2px; }
+.dashboard-layout .dashboard-page .scope-toggle { margin-top: 10px; }
+.dashboard-layout .dashboard-page .scope-pill.is-active {
+  font: 500 10px/1.6 var(--mono);
+  color: var(--ink-soft);
+  background: transparent;
+  border-left: 2px solid var(--journal-blue);
+  border-radius: 0;
+  padding: 1px 10px;
+}
+
+/* Ink carries the primary metric. Supporting figures read like register entries,
+   with restrained colour accents rather than four competing coloured posters. */
+.dashboard-layout .dashboard-page .dashboard-metrics { gap: 16px; }
+.dashboard-layout .dashboard-page .dashboard-metric {
+  --metric-accent: var(--journal-blue);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 22px 22px;
+  min-height: 206px;
+  background: var(--paper-light);
+  border: 1px solid var(--journal-rule);
+  border-radius: 9px;
+  color: var(--ink);
+  position: relative;
+  overflow: hidden;
+  animation: journal-enter 420ms ease both;
+}
+.dashboard-layout .dashboard-page .dashboard-metric:nth-child(2) { animation-delay: 50ms; }
+.dashboard-layout .dashboard-page .dashboard-metric:nth-child(3) { animation-delay: 100ms; }
+.dashboard-layout .dashboard-page .dashboard-metric:nth-child(4) { animation-delay: 150ms; }
+.dashboard-layout .dashboard-page .dashboard-metric:nth-child(n),
+.dashboard-layout .dashboard-page .dashboard-metric:hover { transform: none; }
+.dashboard-layout .dashboard-page .dashboard-metric.s-green { --metric-accent: #326d42; }
+.dashboard-layout .dashboard-page .dashboard-metric.s-red { --metric-accent: #a4362e; }
+.dashboard-layout .dashboard-page .dashboard-metric.s-orange { --metric-accent: #a65316; }
+.dashboard-layout .dashboard-page .dashboard-metric.s-yellow { --metric-accent: #8c6a13; }
+.dashboard-metric-heading { display: flex; align-items: center; justify-content: space-between; color: var(--metric-accent); margin-bottom: 19px; }
+.dashboard-metric-index { font: 500 10px/1 var(--mono); letter-spacing: 0.06em; }
+.dashboard-layout .dashboard-page .dashboard-metric .stat-info h3 {
+  font: 600 clamp(38px, 4vw, 58px)/1 var(--display);
+  color: var(--ink);
+  letter-spacing: -0.06em;
+  font-variant-numeric: lining-nums tabular-nums;
+  margin-bottom: 10px;
+}
+.dashboard-layout .dashboard-page .dashboard-metric .stat-info p {
+  font: 600 11px/1.6 var(--mono);
+  letter-spacing: 0;
+  color: var(--ink);
+}
+.dashboard-layout .dashboard-page .dashboard-metric .stat-change {
+  display: block;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--journal-rule);
+  font: 400 15px/1.4 var(--body);
+  color: var(--ink-soft);
+  opacity: 1;
+  transform: none;
+}
+.dashboard-layout .dashboard-page .dashboard-metric-lead {
+  background: var(--ink);
+  border-color: var(--ink);
+  --journal-rule: rgba(250, 241, 218, 0.22);
+}
+.dashboard-layout .dashboard-page .dashboard-metric-lead :is(.stat-info h3, .stat-info p, .stat-change) { color: var(--paper-light); }
+.dashboard-metric-lead .dashboard-metric-heading { color: var(--yellow); }
+.dashboard-metric-lead::after {
+  content: '';
+  position: absolute;
+  top: -18px;
+  right: 46px;
+  width: 1px;
+  height: 88px;
+  background: rgba(242, 199, 68, 0.25);
+  transform: rotate(36deg);
+  pointer-events: none;
+}
+.dashboard-register-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 0 19px; border-bottom: 1px solid var(--journal-rule); }
+.dashboard-register-date { display: flex; gap: 9px; align-items: center; font: 500 11px/1.6 var(--mono); color: var(--ink-soft); }
+.dashboard-register-note p { display: flex; align-items: center; gap: 7px; font: 400 15px/1.5 var(--body); color: var(--ink-soft); }
+.register-status-dot { width: 6px; height: 6px; flex-shrink: 0; border: 1px solid var(--ink-faint); border-radius: 50%; }
+.register-status-dot.has-records { background: #326d42; border-color: #326d42; }
+.dashboard-layout .dashboard-page .card-header h2 { font-weight: 600; font-size: 21px; }
+.dashboard-layout .dashboard-page .infra-label { color: var(--ink-soft); }
+.dashboard-layout .dashboard-page .infra-val { font-weight: 500; color: var(--ink); }
+.dashboard-layout .dashboard-page .class-card { border-left-width: 3px; padding: 15px; }
+.dashboard-layout .dashboard-page .class-counts { font: 400 14px/1.5 var(--body); }
+.dashboard-layout .dashboard-page .class-progress { height: 3px; }
+.dashboard-layout .dashboard-page .live-badge-off { color: var(--ink-faint); }
+.dashboard-layout .dashboard-page .live-badge-off .live-dot { background: var(--ink-faint); animation: none; }
+.dashboard-layout .dashboard-page .table-footer { font-size: 10px; letter-spacing: 0.04em; }
+
+@keyframes journal-enter {
+  from { opacity: 0; translate: 0 8px; }
+  to { opacity: 1; translate: 0 0; }
+}
+@media (max-width: 1100px) {
+  .dashboard-layout .dashboard-page .dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 768px) {
+  /* Tables scroll in their own wrappers; the page must not crop focus rings. */
+  .dashboard-layout .dashboard-page { overflow-x: visible; }
+  .dashboard-layout .dashboard-page .page-header { padding-top: 2px; padding-bottom: 22px; gap: 18px; }
+  .dashboard-layout .dashboard-page .page-header h1 { font-size: 36px; gap: 9px; }
+  .dashboard-layout .dashboard-page .dashboard-eyebrow { font-size: 9px; margin-bottom: 9px; }
+  .dashboard-layout .dashboard-page .page-subtitle { font-size: 17px; }
+  .dashboard-layout .dashboard-page .dashboard-metrics { gap: 10px; }
+  .dashboard-layout .dashboard-page .dashboard-metric { padding: 15px; min-height: 200px; }
+  .dashboard-metric-heading { margin-bottom: 15px; }
+  .dashboard-layout .dashboard-page .dashboard-metric .stat-info h3 { font-size: 42px; }
+  .dashboard-layout .dashboard-page .dashboard-metric .stat-info p { font-size: 10px; }
+  .dashboard-layout .dashboard-page .dashboard-metric .stat-change { font-size: 14px; margin-top: 11px; padding-top: 10px; }
+  .dashboard-register-note { align-items: flex-start; flex-direction: column; gap: 7px; padding-bottom: 16px; }
+  .dashboard-register-date { font-size: 10px; }
+}
+@media (max-width: 359px) {
+  .dashboard-layout .dashboard-page .page-header h1 { font-size: 30px; }
+  .dashboard-layout .dashboard-page .dashboard-metric { padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-layout .dashboard-page .dashboard-metric { animation: none; }
+}

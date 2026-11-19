@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { UserCog, Plus, X, Shield, Activity, Settings, Trash2, Edit3, Download, Cpu, Wifi, Server, CheckCircle, Power, Users, ArrowUp, ArrowDown, Camera, UserCheck, UserX, ScanFace, Check, Filter, ShieldAlert, ShieldCheck, Lock } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { classColors } from '../data/mockData';
@@ -67,7 +68,17 @@ const readDigestRunResult = (d) => {
 };
 
 export default function AdminPanel() {
-  const [tab, setTab] = useState('users');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryTab = searchParams.get('tab');
+  const tab = ['users', 'settings', 'logs', 'ai', 'faces'].includes(queryTab) ? queryTab : 'users';
+
+  const handleTabClick = (newTab) => {
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.set('tab', newTab);
+      return next;
+    });
+  };
   const [showModal, setShowModal] = useState(false);
   const [logFilter, setLogFilter] = useState('all');
 
@@ -595,7 +606,7 @@ export default function AdminPanel() {
   // scrollIntoView the Register Face buttons use).
   const handleReenrollFaces = () => {
     pendingEnrollScrollRef.current = true;
-    setTab('faces');
+    handleTabClick('faces');
   };
 
   useEffect(() => {
@@ -1048,7 +1059,7 @@ export default function AdminPanel() {
           <button
             key={t.key}
             className={`admin-tab tab-${t.color} ${tab === t.key ? 'active' : ''}`}
-            onClick={() => setTab(t.key)}
+            onClick={() => handleTabClick(t.key)}
           >
             <t.icon size={16} /> {t.label}
           </button>
