@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { RefreshCw, Video, VideoOff, AlertTriangle, Play, Square, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import './Camera.css';
+import { cameraStreamReducer, initialStreamState, STREAM_STARTUP_TIMEOUT_MS, STREAM_RETRY_DELAY_MS } from './cameraStreamState';
 
 // Live Camera page — Express (port 3001) supervises the Python face-recognition
 // process. Python owns the webcam exclusively and serves an MJPEG stream on
@@ -16,29 +17,15 @@ export default function Camera() {
   // Process-management state for the Python child that Express supervises.
   // `running` = Express has a live child PID; distinct from `ai.status`
   // which only flips to 'online' once Python actually POSTs detections.
-  const [proc, setProc] = useState({ running: false, pid: null, startedAt: null, lastError: null });
+  const [proc, setProc] = useState({ available: null, running: false, streamReady: false, pid: null, startedAt: null, lastError: null });
   const [procBusy, setProcBusy] = useState(false); // true during start/stop in-flight
   const [procError, setProcError] = useState('');
 
-  // MJPEG stream readiness — flipped true on the first <img onLoad>, reset
-  // to 'error' if the connection drops. Used to swap the "Connecting…" overlay
-  // for the live feed once Python actually starts pushing frames.
-  // 'idle' | 'connecting' | 'live' | 'error'
-  const [streamState, setStreamState] = useState('idle');
-
-  // Auto-retry state. The MJPEG stream can fail on the first attempt because
-  // a cold Python start (spawn + InsightFace model load + HTTP server bind)
-  // takes roughly 60-90s before the first frame is served. We exponentially
-  // back off + remount the <img> until either it connects or we give up.
-  const MAX_RETRIES = 15; // ~40 seconds of total reconnection window (1+1.5+2+2.5, then 3s caps)
-  const [retryAttempt, setRetryAttempt] = useState(0);
-  const retryTimerRef = useRef(null);
-  const clearRetryTimer = () => {
-    if (retryTimerRef.current) {
-      clearTimeout(retryTimerRef.current);
-      retryTimerRef.current = null;
-    }
-  };
+  const [stream, dispatchStream] = useReducer(cameraStreamReducer, initialStreamState);
+  const procRequestRef = useRef(0);
+  const processKey = proc.running ? `${proc.pid}:${proc.startedAt || 'running'}` : null;
+  const currentStream = stream.sessionKey === processKey ? stream : { ...initialStreamState, sessionKey: processKey };
+  const streamState = !proc.running ? 'idle' : currentStream.phase;
 
   const { session } = useAuth();
 
@@ -48,6 +35,7 @@ export default function Camera() {
   const authHeaders = useCallback(() => (
     session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
   ), [session]);
+  const invalidateProcRequest = useCallback(() => { ++procRequestRef.current; }, []);
 
   const fetchAi = useCallback(async () => {
     try {
@@ -73,13 +61,18 @@ export default function Camera() {
 
   // Poll the supervised child process status alongside health/detections.
   const fetchProc = useCallback(async () => {
+    const requestId = ++procRequestRef.current;
     try {
-      const r = await fetch('/api/ai/process', { headers: authHeaders() });
-      if (!r.ok) return;
+      const r = await fetch('/api/ai/process', { headers: authHeaders(), signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error(`AI status unavailable (${r.status})`);
       const d = await r.json();
-      setProc({ running: !!d.running, pid: d.pid ?? null, startedAt: d.startedAt ?? null, lastError: d.lastError ?? null });
+      if (requestId !== procRequestRef.current) return;
+      setProc({ available: true, running: !!d.running, streamReady: d.running === true && d.streamReady === true, pid: d.pid ?? null, startedAt: d.startedAt ?? null, lastError: d.lastError ?? null });
     } catch {
-      // Express down — leave state as-is.
+      if (requestId !== procRequestRef.current) return;
+      // Fail closed: never retain a stale running/ready snapshot after a
+      // backend outage or auth failure, which would keep requesting /stream.
+      setProc({ available: false, running: false, streamReady: false, pid: null, startedAt: null, lastError: 'Cannot check the AI service. Check the backend connection and your sign-in session, then retry.' });
     }
   }, [authHeaders]);
 
@@ -90,55 +83,42 @@ export default function Camera() {
     const a = setInterval(fetchAi, 5000);
     const b = setInterval(fetchDetections, 5000);
     const c = setInterval(fetchProc, 5000);
-    return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
-  }, [fetchAi, fetchDetections, fetchProc]);
+    return () => { clearInterval(a); clearInterval(b); clearInterval(c); invalidateProcRequest(); };
+  }, [fetchAi, fetchDetections, fetchProc, invalidateProcRequest]);
 
-  // Reset the stream state every time the Python process transitions between
-  // running and stopped — this is what triggers a fresh <img> mount via the
-  // key prop below, so the browser re-opens the MJPEG connection cleanly.
   useEffect(() => {
-    clearRetryTimer();
-    setRetryAttempt(0);
-    setStreamState(proc.running ? 'connecting' : 'idle');
-    return clearRetryTimer; // cleanup on unmount
-  }, [proc.running, proc.startedAt]);
+    dispatchStream({ type: 'reset', sessionKey: processKey });
+  }, [processKey]);
 
-  // <img> error → schedule an auto-retry instead of giving up. Python's MJPEG
-  // server isn't reachable during the ~60-90s cold start while the InsightFace
-  // models load; we silently retry until it comes up or we run out of attempts.
-  const handleStreamError = useCallback(() => {
-    if (!proc.running) {
-      setStreamState('idle');
-      return;
-    }
-    setRetryAttempt((prev) => {
-      if (prev >= MAX_RETRIES) {
-        setStreamState('error');
-        return prev;
-      }
-      // Backoff: 1s, 1.5s, 2s, 2.5s, then cap at 3s
-      const delay = Math.min(1000 + prev * 500, 3000);
-      clearRetryTimer();
-      retryTimerRef.current = setTimeout(() => {
-        retryTimerRef.current = null;
-        setRetryAttempt((n) => n + 1);
-        setStreamState('connecting');
-      }, delay);
-      return prev;
-    });
-  }, [proc.running]);
+  const waitingForStream = proc.running && streamState !== 'live' && streamState !== 'error';
+  useEffect(() => {
+    if (!waitingForStream) return undefined;
+    const timer = setTimeout(() => dispatchStream({ type: 'timeout', sessionKey: processKey }), STREAM_STARTUP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [processKey, waitingForStream, currentStream.retryEpoch]);
 
-  const handleStreamLoad = useCallback(() => {
-    clearRetryTimer();
-    setRetryAttempt(0);
-    setStreamState('live');
-  }, []);
+  useEffect(() => {
+    if (!proc.streamReady) dispatchStream({ type: 'disconnected', sessionKey: processKey });
+  }, [processKey, proc.streamReady]);
 
-  const handleManualRetry = useCallback(() => {
-    clearRetryTimer();
-    setRetryAttempt(0);
-    setStreamState('connecting');
-  }, []);
+  useEffect(() => {
+    if (!proc.running || streamState !== 'retry') return undefined;
+    const timer = setTimeout(async () => {
+      await fetchProc();
+      dispatchStream({ type: 'retry', sessionKey: processKey });
+    }, STREAM_RETRY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [proc.running, processKey, streamState, fetchProc]);
+
+  const handleStreamError = () => {
+    dispatchStream({ type: 'failed', sessionKey: processKey });
+    fetchProc();
+  };
+  const handleStreamLoad = () => dispatchStream({ type: 'loaded', sessionKey: processKey });
+  const handleManualRetry = () => {
+    dispatchStream({ type: 'manual', sessionKey: processKey });
+    fetchProc();
+  };
 
   // --- Start / Stop AI handlers --------------------------------------------
   const callAiAction = useCallback(async (action) => {
@@ -175,7 +155,7 @@ export default function Camera() {
   const stopAi  = useCallback(() => callAiAction('stop'),  [callAiAction]);
 
   // --- Helpers -------------------------------------------------------------
-  const aiOnline = ai.status === 'online';
+  const aiOnline = proc.available === true && proc.running && ai.status === 'online';
   // What to show in the error box: an immediate start/stop failure wins;
   // otherwise the server-side reason the last AI run died (e.g. the GPU
   // gate's "Incompatible hardware — GPU required"). Only shown while the
@@ -204,7 +184,7 @@ export default function Camera() {
   // connection is freshly negotiated (otherwise a stale cached response can
   // linger after Python restarts). retryAttempt is mixed in so each retry
   // also remounts.
-  const streamKey = `${proc.startedAt || (proc.running ? 'running' : 'idle')}-r${retryAttempt}`;
+  const streamKey = `${processKey}-r${currentStream.attempt}-${currentStream.retryEpoch}`;
 
   return (
     <div className="live-cam-page">
@@ -239,9 +219,9 @@ export default function Camera() {
           </div>
 
           <div className={`live-cam-video-frame is-${proc.running ? streamState : 'idle'}`}>
-            {/* Only render the <img> when Python is actually running —
-                otherwise the browser shows the broken-image icon. */}
-            {proc.running && streamState !== 'error' && (
+            {/* PID alone is insufficient: the backend must first confirm the
+                MJPEG server is producing bytes. Never probe via a broken img. */}
+            {proc.running && proc.streamReady && stream.sessionKey === processKey && (streamState === 'connecting' || streamState === 'live') && (
               <img
                 key={streamKey}
                 src="/stream"
@@ -255,16 +235,17 @@ export default function Camera() {
             {!proc.running && (
               <div className="live-cam-overlay">
                 <VideoOff size={56} />
-                <p>AI service is not running</p>
-                <small>Click <strong>Start AI</strong> to launch the Python face-recognition service. The annotated feed will appear here once it's live.</small>
+                <p>{proc.available === false ? 'AI status unavailable' : proc.available === null ? 'Checking AI service…' : 'AI service is not running'}</p>
+                <small>{proc.available === false ? 'Check that the backend is running and you are signed in. No camera connection will be attempted.' : proc.available === null ? 'Waiting for the backend status check.' : <>Click <strong>Start AI</strong> when you are ready to use recognition. Manual attendance works without it.</>}</small>
+                {proc.available === false && <button className="btn btn-outline" onClick={fetchProc}>Retry status check</button>}
               </div>
             )}
 
-            {proc.running && streamState === 'connecting' && (
+            {proc.running && (streamState === 'connecting' || streamState === 'retry') && (
               <div className="live-cam-overlay">
                 <Loader2 size={48} className="live-cam-spin" />
-                <p>Starting the AI service…</p>
-                <small>The first start takes about a minute, sometimes a little longer. The face-recognition models are loading and the feed will appear here as soon as it's ready.</small>
+                <p>{streamState === 'retry' ? 'Reconnecting to the camera…' : 'Waiting for the camera stream…'}</p>
+                <small>The first start may take 60–90 seconds while models load. We wait up to two minutes for a ready stream before asking you to retry.</small>
               </div>
             )}
 
@@ -272,7 +253,7 @@ export default function Camera() {
               <div className="live-cam-overlay live-cam-overlay-warn">
                 <AlertTriangle size={56} />
                 <p>Live feed unavailable</p>
-                <small>The AI process is running but the MJPEG stream on port 5174 isn't reachable yet. It usually recovers on its own — if not, restart the AI service.</small>
+                <small>The stream did not become ready in time, or repeated connections failed. Automatic preview retries have stopped. Check the backend's AI startup messages, then retry.</small>
                 <button
                   className="btn btn-outline live-cam-retry"
                   type="button"
@@ -299,6 +280,8 @@ export default function Camera() {
           <div className="live-cam-status-row">
             <span className="live-cam-status-key">Service</span>
             {(() => {
+              if (proc.available === false) return <span className="badge badge-absent">Status unavailable</span>;
+              if (proc.available === null) return <span className="badge badge-late">Checking…</span>;
               // Tri-state: process not running → Offline. Process running but
               // no detections yet → Starting. Both true → Online.
               if (aiOnline) {
@@ -337,7 +320,7 @@ export default function Camera() {
                 type="button"
                 className="btn btn-primary live-cam-ai-btn"
                 onClick={startAi}
-                disabled={procBusy}
+                disabled={procBusy || proc.available !== true}
               >
                 {procBusy ? <Loader2 size={16} className="live-cam-spin" /> : <Play size={16} />}
                 {procBusy ? 'Starting…' : 'Start AI'}
